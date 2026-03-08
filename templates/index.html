@@ -8,6 +8,46 @@
 {% block content %}
 <h1>Welcome to Cards App</h1>
 <p>A unique learning app using flashcards!</p>
+<p>Click the card below to increment the counter!</p>
+
+<!-- Clickable Card Box -->
+<div class="row mt-4">
+    <div class="col-md-4">
+        <!-- Bootstrap card component -->
+        <div class="card text-center">
+            <div class="card-body">
+                <!-- Display current click count (id used for JavaScript updates) -->
+                <h2 id="clickCount">{{ clicks }}</h2>
+
+                <!-- Button triggers JavaScript function on click -->
+                <button onclick="incrementCounter()" class="btn btn-primary">
+                    Click Me
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Function to increment counter without page refresh using AJAX
+function incrementCounter() {
+    // Send POST request to Flask backend
+    fetch('{{ url_for("increment") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    // Convert response to JSON
+    .then(response => response.json())
+    .then(data => {
+        // Update the displayed count on the page dynamically
+        document.getElementById('clickCount').textContent = data.clicks;
+    })
+    // Log any errors to console
+    .catch(error => console.error('Error:', error));
+}
+</script>
 {% endblock %}
 
 
