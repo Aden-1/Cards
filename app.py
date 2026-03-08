@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 
 app = Flask(__name__, instance_relative_config=True)
 
@@ -8,10 +9,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cards.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
-
-# Initialize the database
-with app.app_context():
-    db.create_all()
+migrate = Migrate(app, db)
 
 
 @app.route('/')
