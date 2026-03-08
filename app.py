@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from sqlalchemy import func
 
 app = Flask(__name__, instance_relative_config=True)
 
@@ -15,6 +16,16 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
 
+# Database Models
+class FlashCard(db.Model):
+    FCid = db.Column(db.Integer, primary_key=True)
+    question = db.Column(db.Text, nullable=False)
+    answer = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(50), nullable=True)
+    created_at = db.Column(db.DateTime, default=func.current_timestamp())
+
+
+# Routes
 @app.route('/')
 def index():
     # Initialize click count for this user's session if it doesn't exist
