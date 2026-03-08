@@ -36,6 +36,18 @@ def increment():
     # Return JSON response for AJAX request
     return jsonify({'clicks': session['click_count']})
 
+@app.route('/resetCounter', methods=['POST'])
+def resetCounter():
+    # Initialize if not exists
+    if 'click_count' not in session:
+        session['click_count'] = 0
+
+    # Reset this user's session counter
+    session['click_count'] = 0
+
+    # Return JSON response for AJAX request
+    return jsonify({'clicks': session['click_count']})
+
 
 if __name__ == '__main__':
     app.run(debug=True)

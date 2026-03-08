@@ -21,7 +21,11 @@
 
                 <!-- Button triggers JavaScript function on click -->
                 <button onclick="incrementCounter()" class="btn btn-primary">
-                    Click Me
+                    Increment Counter
+                </button>
+                <!-- Button triggers JavaScript function to clear the counter -->
+                <button onclick="resetCounter()" class="btn btn-primary">
+                    Reset Counter
                 </button>
             </div>
         </div>
@@ -33,6 +37,24 @@
 function incrementCounter() {
     // Send POST request to Flask backend
     fetch('{{ url_for("increment") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    // Convert response to JSON
+    .then(response => response.json())
+    .then(data => {
+        // Update the displayed count on the page dynamically
+        document.getElementById('clickCount').textContent = data.clicks;
+    })
+    // Log any errors to console
+    .catch(error => console.error('Error:', error));
+}
+// Function to reset counter without page refresh using AJAX
+function resetCounter() {
+    // Send POST request to Flask backend
+    fetch('{{ url_for("resetCounter") }}', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
