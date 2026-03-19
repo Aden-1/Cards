@@ -8,7 +8,6 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Study flashcards with interactive learning tools
 - Track your progress and learning patterns
 - Personalized learning experience optimized for retention
-- Built with Flask, Bootstrap 5, and SQLAlchemy
 
 ## Tech Stack
 
