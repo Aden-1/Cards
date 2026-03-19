@@ -26,14 +26,14 @@ flask db downgrade   # Rollback to previous migration
 ## Models
 
 Current database models in production include:
-- `Flashcard`: Represents flashcards with fields for question, answer, and category.
+- `FlashCard`: Represents flashcards with fields for question, answer, and category.
 
 ### Alchemy Model
 #### FlashCard
 ```python
 class FlashCard(db.Model):
-    FCid = db.Column(db.Integer, primary_key=True)
-    question = db.Colum(db.Text, nullable=False)
+    FCid = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    question = db.Column(db.Text, nullable=False)
     answer = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(50), nullable=True)
     created_at = db.Column(db.DateTime, default=func.current_timestamp())
@@ -44,9 +44,9 @@ FlashCards (FlashCardID PK, Question, Answer, Category, TimeStamp)
 
 ## Usage
 
-Models are defined in `app.py` and can be imported with:
+Models are defined in `models.py` and can be imported with:
 ```python
-from app import db, Card
+from models import db, FlashCard
 ```
 
 ## Notes
