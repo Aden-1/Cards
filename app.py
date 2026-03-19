@@ -1,7 +1,8 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from sqlalchemy import func
+from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
@@ -25,39 +26,8 @@ class FlashCard(db.Model):
     created_at = db.Column(db.DateTime, default=func.current_timestamp())
 
 
-# Routes
-@app.route('/')
-def index():
-    # Initialize click count for this user's session if it doesn't exist
-    if 'click_count' not in session:
-        session['click_count'] = 0
-
-    return render_template('index.html', clicks=session['click_count'])
-
-
-@app.route('/increment', methods=['POST'])
-def increment():
-    # Initialize if not exists
-    if 'click_count' not in session:
-        session['click_count'] = 0
-
-    # Increment this user's session counter
-    session['click_count'] += 1
-
-    # Return JSON response for AJAX request
-    return jsonify({'clicks': session['click_count']})
-
-@app.route('/resetCounter', methods=['POST'])
-def resetCounter():
-    # Initialize if not exists
-    if 'click_count' not in session:
-        session['click_count'] = 0
-
-    # Reset this user's session counter
-    session['click_count'] = 0
-
-    # Return JSON response for AJAX request
-    return jsonify({'clicks': session['click_count']})
+# Register all application routes.
+register_routes(app)
 
 
 if __name__ == '__main__':
