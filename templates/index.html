@@ -6,69 +6,169 @@
 
 <!-- Main content block -->
 {% block content %}
-<h1>Welcome to Cards App</h1>
-<p>A unique learning app using flashcards!</p>
-<p>Click the card below to increment the counter!</p>
+<h1>Welcome to Cards App!</h1>
+<h3>A unique learning app using flashcards!</h3>
 
-<!-- Clickable Card Box -->
-<div class="row mt-4">
-    <div class="col-md-4">
-        <!-- Bootstrap card component -->
-        <div class="card text-center">
-            <div class="card-body">
-                <!-- Display current click count (id used for JavaScript updates) -->
-                <h2 id="clickCount">{{ clicks }}</h2>
+<!-- Add Flashcard to DB -->
+<div class="container">
+    <div class="row">
+        <div class="col-md-6">
+            <h2>Add a Flashcard</h2>
+            <form id="cardForm">
+                <div class="mb-3">
+                    <label for="question" class="form-label">Question</label>
+                    <input type="text" class="form-control" id="question" name="question" required>
+                </div>
+                <div class="mb-3">
+                    <label for="answer" class="form-label">Answer</label>
+                    <input type="text" class="form-control" id="answer" name="answer" required>
+                </div>
+                <div class="mb-3">
+                    <label for="addCategory" class="form-label">Category</label>
+                    <input type="text" class="form-control" id="addCategory" name="addCategory">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="addCard()">Add Card</button>
+            </form>
+        </div>
+    </div>
+</div>
 
-                <!-- Button triggers JavaScript function on click -->
-                <button onclick="incrementCounter()" class="btn btn-primary">
-                    Increment Counter
-                </button>
-                <!-- Button triggers JavaScript function to clear the counter -->
-                <button onclick="resetCounter()" class="btn btn-primary">
-                    Reset Counter
-                </button>
+<!-- Delete Flashcard from the DB -->
+<div class="container">
+    <div class="row">
+        <div class="col-md-6">
+            <h2>Delete a Flashcard</h2>
+            <form id="cardForm">
+                <div class="mb-3">
+                    <label for="cardID" class="form-label">Enter a CardID to delete!</label>
+                    <input type="text" class="form-control" id="cardID" name="cardID" required>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="deleteCard()">Remove Card</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- List all flashcards from DB by category -->
+<div class="container">
+    <div class="row">
+        <div class="col-md-6">
+            <h2>List Flashcards!</h2>
+            <form id="cardForm">
+                <div class="mb-3">
+                    <label for="category" class="form-label">Enter a category to list!</label>
+                    <input type="text" class="form-control" id="category" name="category" required>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="listCard()">List Cards</button>
+            </form>
+            <div id="cardList" class="mt-3">
+                <!-- Flashcards will be listed here -->
             </div>
         </div>
     </div>
 </div>
 
 <script>
-// Function to increment counter without page refresh using AJAX
-function incrementCounter() {
-    // Send POST request to Flask backend
-    fetch('{{ url_for("increment") }}', {
+// Add a new flashcard to the database.
+function addCard() {
+    const question = document.getElementById('question').value.trim();
+    const answer = document.getElementById('answer').value.trim();
+    const category = document.getElementById('addCategory').value.trim();
+
+    // Send POST request to Flask backend with form data.
+    fetch('{{ url_for("addCard") }}', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-        }
+        },
+        body: JSON.stringify({ question: question, answer: answer, category: category })
     })
-    // Convert response to JSON
     .then(response => response.json())
     .then(data => {
-        // Update the displayed count on the page dynamically
-        document.getElementById('clickCount').textContent = data.clicks;
+        if (data.success) {
+            // Clear input fields after successful submission.
+            document.getElementById('question').value = '';
+            document.getElementById('answer').value = '';
+            document.getElementById('addCategory').value = '';
+            console.log('Card added with ID:', data.cardId);
+        } else {
+            console.error('Error:', data.error);
+        }
     })
-    // Log any errors to console
-    .catch(error => console.error('Error:', error));
+    .catch(error => console.error('Network error:', error));
 }
-// Function to reset counter without page refresh using AJAX
-function resetCounter() {
-    // Send POST request to Flask backend
-    fetch('{{ url_for("resetCounter") }}', {
+
+
+// Delete a flashcard from the database by ID.
+function deleteCard() {
+    const cardID = document.getElementById('cardID').value.trim();
+
+    // Send POST request to Flask backend with form data.
+    fetch('{{ url_for("deleteCard") }}', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-        }
+        },
+        body: JSON.stringify({ cardId: cardID})
     })
-    // Convert response to JSON
     .then(response => response.json())
     .then(data => {
-        // Update the displayed count on the page dynamically
-        document.getElementById('clickCount').textContent = data.clicks;
+        if (data.success) {
+            // Clear input fields after successful submission.
+            document.getElementById('cardID').value = '';
+            console.log('Card removed with ID:', data.cardId);
+        } else {
+            console.error('Error:', data.error);
+        }
     })
-    // Log any errors to console
-    .catch(error => console.error('Error:', error));
+    .catch(error => console.error('Network error:', error));
 }
+
+// List cards by category from the database.
+function listCard() {
+    const cardCat = document.getElementById('category').value.trim();
+
+    // Send POST request to Flask backend with form data.
+    fetch('{{ url_for("listCard") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ cardCat: cardCat})
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Clear previous cards immediately (before checking results).
+        const cardListDiv = document.getElementById('cardList');
+        cardListDiv.innerHTML = '';
+
+        if (data.success) {
+            // Clear input fields after successful submission.
+            document.getElementById('category').value = '';
+
+            // Display cards in the cardList element.
+
+            data.cards.forEach(card => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'card mb-2';
+                cardElement.innerHTML = `
+                    <div class="card-body">
+                        <h5 class="card-title">Q: ${card.question}</h5>
+                        <p class="card-text">A: ${card.answer}</p>
+                        <small class="text-muted">Category: ${card.category} (ID: ${card.id})</small>
+                    </div>
+                `;
+                cardListDiv.appendChild(cardElement);
+            });
+        } else {
+            console.error('Error:', data.error);
+        }
+    })
+    .catch(error => console.error('Network error:', error));
+}
+
+
+
 </script>
 {% endblock %}
 
