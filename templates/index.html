@@ -1,175 +1,35 @@
-<!-- Inherit from base template -->
 {% extends "base.html" %}
 
-<!-- Override the title block -->
 {% block title %}Home - Cards App{% endblock %}
 
-<!-- Main content block -->
 {% block content %}
-<h1>Welcome to Cards App!</h1>
-<h3>A unique learning app using flashcards!</h3>
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <h1>Cards App</h1>
+        <p class="lead">A unique learning app using flashcards!</p>
 
-<!-- Add Flashcard to DB -->
-<div class="container">
-    <div class="row">
-        <div class="col-md-6">
-            <h2>Add a Flashcard</h2>
-            <form id="cardForm">
-                <div class="mb-3">
-                    <label for="question" class="form-label">Question</label>
-                    <input type="text" class="form-control" id="question" name="question" required>
-                </div>
-                <div class="mb-3">
-                    <label for="answer" class="form-label">Answer</label>
-                    <input type="text" class="form-control" id="answer" name="answer" required>
-                </div>
-                <div class="mb-3">
-                    <label for="addCategory" class="form-label">Category</label>
-                    <input type="text" class="form-control" id="addCategory" name="addCategory">
-                </div>
-                <button type="button" class="btn btn-primary" onclick="addCard()">Add Card</button>
-            </form>
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">How to use</h5>
+                <ol>
+                    <li>Go to "Manage Decks" to create a new deck</li>
+                    <li>Add flashcards with questions and answers</li>
+                    <li>Go to "Study Cards" to review your flashcards</li>
+                    <li>Click the button to reveal answers</li>
+                </ol>
+            </div>
         </div>
-    </div>
-</div>
 
-<!-- Delete Flashcard from the DB -->
-<div class="container">
-    <div class="row">
-        <div class="col-md-6">
-            <h2>Delete a Flashcard</h2>
-            <form id="cardForm">
-                <div class="mb-3">
-                    <label for="cardID" class="form-label">Enter a CardID to delete!</label>
-                    <input type="text" class="form-control" id="cardID" name="cardID" required>
-                </div>
-                <button type="button" class="btn btn-primary" onclick="deleteCard()">Remove Card</button>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- List all flashcards from DB by category -->
-<div class="container">
-    <div class="row">
-        <div class="col-md-6">
-            <h2>List Flashcards!</h2>
-            <form id="cardForm">
-                <div class="mb-3">
-                    <label for="category" class="form-label">Enter a category to list!</label>
-                    <input type="text" class="form-control" id="category" name="category" required>
-                </div>
-                <button type="button" class="btn btn-primary" onclick="listCard()">List Cards</button>
-            </form>
-            <div id="cardList" class="mt-3">
-                <!-- Flashcards will be listed here -->
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <a href="{{ url_for('edit') }}" class="btn btn-primary btn-lg w-100">Manage Decks</a>
+            </div>
+            <div class="col-md-6 mb-3">
+                <a href="{{ url_for('view') }}" class="btn btn-success btn-lg w-100">Study Cards</a>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-// Add a new flashcard to the database.
-function addCard() {
-    const question = document.getElementById('question').value.trim();
-    const answer = document.getElementById('answer').value.trim();
-    const category = document.getElementById('addCategory').value.trim();
-
-    // Send POST request to Flask backend with form data.
-    fetch('{{ url_for("addCard") }}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ question: question, answer: answer, category: category })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Clear input fields after successful submission.
-            document.getElementById('question').value = '';
-            document.getElementById('answer').value = '';
-            document.getElementById('addCategory').value = '';
-            console.log('Card added with ID:', data.cardId);
-        } else {
-            console.error('Error:', data.error);
-        }
-    })
-    .catch(error => console.error('Network error:', error));
-}
-
-
-// Delete a flashcard from the database by ID.
-function deleteCard() {
-    const cardID = document.getElementById('cardID').value.trim();
-
-    // Send POST request to Flask backend with form data.
-    fetch('{{ url_for("deleteCard") }}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ cardId: cardID})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Clear input fields after successful submission.
-            document.getElementById('cardID').value = '';
-            console.log('Card removed with ID:', data.cardId);
-        } else {
-            console.error('Error:', data.error);
-        }
-    })
-    .catch(error => console.error('Network error:', error));
-}
-
-// List cards by category from the database.
-function listCard() {
-    const cardCat = document.getElementById('category').value.trim();
-
-    // Send POST request to Flask backend with form data.
-    fetch('{{ url_for("listCard") }}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ cardCat: cardCat})
-    })
-    .then(response => response.json())
-    .then(data => {
-        // Clear previous cards immediately (before checking results).
-        const cardListDiv = document.getElementById('cardList');
-        cardListDiv.innerHTML = '';
-
-        if (data.success) {
-            // Clear input fields after successful submission.
-            document.getElementById('category').value = '';
-
-            // Display cards in the cardList element.
-
-            data.cards.forEach(card => {
-                const cardElement = document.createElement('div');
-                cardElement.className = 'card mb-2';
-                cardElement.innerHTML = `
-                    <div class="card-body">
-                        <h5 class="card-title">Q: ${card.question}</h5>
-                        <p class="card-text">A: ${card.answer}</p>
-                        <small class="text-muted">Category: ${card.category} (ID: ${card.id})</small>
-                    </div>
-                `;
-                cardListDiv.appendChild(cardElement);
-            });
-        } else {
-            console.error('Error:', data.error);
-        }
-    })
-    .catch(error => console.error('Network error:', error));
-}
-
-
-
-</script>
 {% endblock %}
 
 

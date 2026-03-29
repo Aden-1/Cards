@@ -1,0 +1,608 @@
+<!-- Inherit from base template -->
+{% extends "base.html" %}
+
+<!-- Override the title block -->
+{% block title %}Edit Decks & Cards - Cards App{% endblock %}
+
+<!-- Main content block -->
+{% block content %}
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <h1>Edit Decks & Cards</h1>
+
+        <!-- Create a New Deck Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Create a New Deck</h5>
+                <button type="button" class="btn btn-sm btn-light" onclick="toggleCreateDeck()">Show/Hide</button>
+            </div>
+            <div class="card-body" id="createDeckForm" style="display: none;">
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label for="deckDescription" class="form-label">Deck Name</label>
+                            <input type="text" class="form-control" id="deckDescription"
+                                   placeholder="e.g., Spanish Vocabulary" required>
+                        </div>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="button" class="btn btn-success w-100" onclick="createDeck()">
+                            Create Deck
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="deckSortable">
+                    <label class="form-check-label" for="deckSortable">Ordered (cards must be studied in order)</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- View and Manage Decks Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Your Decks</h5>
+                <div>
+                    <button type="button" class="btn btn-sm btn-light" onclick="loadDecks()">Refresh</button>
+                    <button type="button" class="btn btn-sm btn-light" onclick="toggleDecksList()">Show/Hide</button>
+                </div>
+            </div>
+            <div class="card-body" id="decksListBody">
+                <div id="deckList">
+                    <p class="text-muted">Loading decks...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Deck Section -->
+        <div class="card mb-4" id="editDeckSection" style="display: none;">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">Edit Deck: <span id="editDeckName"></span></h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="editDeckDescription" class="form-label">Deck Name</label>
+                    <input type="text" class="form-control" id="editDeckDescription" required>
+                </div>
+
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="editDeckSortable">
+                    <label class="form-check-label" for="editDeckSortable">Ordered (cards must be studied in order)</label>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-primary" onclick="saveDeckEdit()">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="cancelDeckEdit()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Card to Selected Deck Section -->
+        <div class="card mb-4" id="addCardSection" style="display: none;">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">Add a Card to: <span id="selectedDeckName"></span></h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="question" class="form-label">Question</label>
+                    <input type="text" class="form-control" id="question"
+                           placeholder="Enter the question" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="answersInput" class="form-label">Answers (comma-separated)</label>
+                    <textarea class="form-control" id="answersInput" rows="3"
+                              placeholder="Enter answers separated by commas"
+                              required></textarea>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-primary" onclick="addCardToDeck()">
+                        Add Card
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="cancelAddCard()">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Card Section -->
+        <div class="card mb-4" id="editCardSection" style="display: none;">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">Edit Card</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="editQuestion" class="form-label">Question</label>
+                    <input type="text" class="form-control" id="editQuestion" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="editAnswersInput" class="form-label">Answers (comma-separated)</label>
+                    <textarea class="form-control" id="editAnswersInput" rows="3"
+                              placeholder="Enter answers separated by commas"
+                              required></textarea>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-primary" onclick="saveCardEdit()">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="cancelCardEdit()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- View and Edit Cards in Selected Deck -->
+        <div class="card mb-4" id="cardsSection" style="display: none;">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Cards in: <span id="deckNameDisplay"></span></h5>
+                <div>
+                    <button type="button" class="btn btn-sm btn-warning" id="editDeckBtn" onclick="editDeckFromView()">Edit Deck</button>
+                    <button type="button" class="btn btn-sm btn-info" id="addCardBtn" onclick="addCardFromView()">Add Card</button>
+                    <button type="button" class="btn btn-sm btn-danger" id="deleteDeckBtn" onclick="deleteDeckFromView()">Delete Deck</button>
+                    <button type="button" class="btn btn-sm btn-light" onclick="closeDeckView()">Back to Decks</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="cardList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Load decks when page loads
+    window.onload = function() {
+        loadDecks();
+    };
+
+    const userId = {{ userId }};
+    let selectedDeckId = null;
+    let currentDeckId = null;
+    let currentDeckName = null;
+
+    // Toggle create deck form visibility
+    function toggleCreateDeck() {
+        const form = document.getElementById('createDeckForm');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // Toggle decks list visibility
+    function toggleDecksList() {
+        const body = document.getElementById('decksListBody');
+        body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // Load and display all decks for the user
+    function loadDecks() {
+        fetch('{{ url_for("getDecks") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ userId: userId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            const deckListDiv = document.getElementById('deckList');
+            deckListDiv.innerHTML = '';
+
+            if (data.success && data.decks.length > 0) {
+                data.decks.forEach(deck => {
+                    const deckCard = document.createElement('div');
+                    deckCard.className = 'card mb-3';
+
+                    const cardBody = document.createElement('div');
+                    cardBody.className = 'card-body';
+
+                    const row = document.createElement('div');
+                    row.className = 'row';
+
+                    const colLeft = document.createElement('div');
+                    colLeft.className = 'col-md-8';
+                    colLeft.innerHTML = `
+                        <h5 class="card-title">${escapeHtml(deck.description)}</h5>
+                        <p class="card-text text-muted"><small>${deck.cardCount} cards</small></p>
+                    `;
+
+                    const colRight = document.createElement('div');
+                    colRight.className = 'col-md-4 text-end';
+
+                    const btnView = document.createElement('button');
+                    btnView.className = 'btn btn-sm btn-secondary';
+                    btnView.textContent = 'View';
+                    btnView.onclick = () => viewDeckCards(deck.deckID, deck.description);
+
+                    colRight.appendChild(btnView);
+
+                    row.appendChild(colLeft);
+                    row.appendChild(colRight);
+                    cardBody.appendChild(row);
+                    deckCard.appendChild(cardBody);
+                    deckListDiv.appendChild(deckCard);
+                });
+            } else {
+                deckListDiv.innerHTML = '<p class="text-muted">No decks found.</p>';
+            }
+
+            document.getElementById('editDeckSection').style.display = 'none';
+            document.getElementById('addCardSection').style.display = 'none';
+            document.getElementById('editCardSection').style.display = 'none';
+            document.getElementById('cardsSection').style.display = 'none';
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Create a new deck
+    function createDeck() {
+        const description = document.getElementById('deckDescription').value.trim();
+        const sortable = document.getElementById('deckSortable').checked;
+
+        // Validate input
+        if (!description) {
+            alert('Please enter a deck name');
+            return;
+        }
+
+        // Send request to create the deck
+        fetch('{{ url_for("createDeck") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ userId: userId, description: description, sortable: sortable })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('deckDescription').value = '';
+                document.getElementById('deckSortable').checked = false;
+                alert('Deck created');
+                toggleCreateDeck();
+                loadDecks();
+            } else {
+                alert('Error: ' + data.error);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Show form to add a card to selected deck
+    function selectDeckForAdding(deckId, deckDescription) {
+        selectedDeckId = deckId;
+        document.getElementById('selectedDeckName').textContent = deckDescription;
+        document.getElementById('addCardSection').style.display = 'block';
+        document.getElementById('question').focus();
+    }
+
+    // Cancel adding a card
+    function cancelAddCard() {
+        selectedDeckId = null;
+        document.getElementById('addCardSection').style.display = 'none';
+        document.getElementById('question').value = '';
+        document.getElementById('answersInput').value = '';
+    }
+
+    // Show edit form for a deck
+    function editDeckForm(deckId, deckDescription, sortable) {
+        selectedDeckId = deckId;
+        document.getElementById('editDeckName').textContent = deckDescription;
+        document.getElementById('editDeckDescription').value = deckDescription;
+        document.getElementById('editDeckSortable').checked = sortable;
+        document.getElementById('editDeckSection').style.display = 'block';
+        document.getElementById('editDeckDescription').focus();
+    }
+
+    // Save deck edits
+    function saveDeckEdit() {
+        const description = document.getElementById('editDeckDescription').value.trim();
+        const sortable = document.getElementById('editDeckSortable').checked;
+
+        if (!description) {
+            alert('Please enter a deck name');
+            return;
+        }
+
+        fetch('{{ url_for("editDeck") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ deckId: selectedDeckId, description: description, sortable: sortable })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Deck updated');
+                cancelDeckEdit();
+                loadDecks();
+            } else {
+                alert('Error: ' + data.error);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Cancel deck edit
+    function cancelDeckEdit() {
+        selectedDeckId = null;
+        document.getElementById('editDeckSection').style.display = 'none';
+    }
+
+    // Add a card to the selected deck
+    function addCardToDeck() {
+        const question = document.getElementById('question').value.trim();
+        const answersText = document.getElementById('answersInput').value.trim();
+
+        // Validate input
+        if (!question || !answersText) {
+            alert('Please enter a question and at least one answer');
+            return;
+        }
+
+        // Parse answers (split by comma and trim whitespace)
+        const answers = answersText.split(',').map(ans => ans.trim()).filter(ans => ans.length > 0);
+
+        if (answers.length === 0) {
+            alert('Please enter at least one answer');
+            return;
+        }
+
+        // Send request to add the card
+        fetch('{{ url_for("addCard") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ deckId: selectedDeckId, question: question, answers: answers })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('question').value = '';
+                document.getElementById('answersInput').value = '';
+                alert('Card added');
+                viewDeckCards(selectedDeckId, document.getElementById('selectedDeckName').textContent);
+                cancelAddCard();
+            } else {
+                alert('Error: ' + data.error);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Load and display all cards from a deck
+    function viewDeckCards(deckId, deckDescription) {
+        fetch('{{ url_for("listCards") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ deckId: deckId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            currentDeckId = deckId;
+            currentDeckName = deckDescription;
+            const cardListDiv = document.getElementById('cardList');
+            document.getElementById('deckNameDisplay').textContent = deckDescription;
+            document.getElementById('cardsSection').style.display = 'block';
+            document.getElementById('decksListBody').style.display = 'none';
+            cardListDiv.innerHTML = '';
+
+            if (data.success && data.cards.length > 0) {
+                data.cards.forEach((card, index) => {
+                    const cardDiv = document.createElement('div');
+                    cardDiv.className = 'card mb-3';
+
+                    const cardBody = document.createElement('div');
+                    cardBody.className = 'card-body';
+
+                    const row = document.createElement('div');
+                    row.className = 'row';
+
+                    const colLeft = document.createElement('div');
+                    colLeft.className = 'col-md-9';
+
+                    const title = document.createElement('h6');
+                    title.className = 'card-title';
+                    title.textContent = `Q: ${card.question}`;
+
+                    const answers = document.createElement('p');
+                    answers.className = 'card-text';
+
+                    const answersLabel = document.createElement('strong');
+                    answersLabel.textContent = 'Answers:';
+                    answers.appendChild(answersLabel);
+
+                    const answersList = document.createElement('ul');
+                    answersList.className = 'ms-3 mb-0';
+                    card.answers.forEach(ans => {
+                        const li = document.createElement('li');
+                        li.textContent = ans;
+                        answersList.appendChild(li);
+                    });
+                    answers.appendChild(answersList);
+
+                    colLeft.appendChild(title);
+                    colLeft.appendChild(answers);
+
+                    const colRight = document.createElement('div');
+                    colRight.className = 'col-md-3 text-end';
+
+                    const btnEdit = document.createElement('button');
+                    btnEdit.className = 'btn btn-sm btn-warning';
+                    btnEdit.textContent = 'Edit';
+                    btnEdit.onclick = () => editCardForm(card.cardID, card.question, card.answers);
+
+                    const btnDelete = document.createElement('button');
+                    btnDelete.className = 'btn btn-sm btn-danger';
+                    btnDelete.textContent = 'Delete';
+                    btnDelete.onclick = () => deleteCardConfirm(card.cardID, card.question);
+
+                    colRight.appendChild(btnEdit);
+                    colRight.appendChild(btnDelete);
+
+                    row.appendChild(colLeft);
+                    row.appendChild(colRight);
+                    cardBody.appendChild(row);
+                    cardDiv.appendChild(cardBody);
+                    cardListDiv.appendChild(cardDiv);
+                });
+            } else {
+                cardListDiv.innerHTML = '<p class="text-muted">No cards in this deck.</p>';
+            }
+
+            document.getElementById('addCardSection').style.display = 'none';
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Hide deck view and return to deck list
+    function closeDeckView() {
+        document.getElementById('cardsSection').style.display = 'none';
+        document.getElementById('decksListBody').style.display = 'block';
+        currentDeckId = null;
+        currentDeckName = null;
+        selectedDeckId = null;
+        loadDecks();
+    }
+
+    // Show edit form for a card
+    function editCardForm(cardId, question, answers) {
+        document.getElementById('editQuestion').value = question;
+        document.getElementById('editAnswersInput').value = answers.join(', ');
+        document.getElementById('editCardSection').style.display = 'block';
+        document.getElementById('editQuestion').dataset.cardId = cardId;
+        document.getElementById('editQuestion').focus();
+    }
+
+    // Save card edits
+    function saveCardEdit() {
+        const cardId = document.getElementById('editQuestion').dataset.cardId;
+        const question = document.getElementById('editQuestion').value.trim();
+        const answersText = document.getElementById('editAnswersInput').value.trim();
+
+        if (!question || !answersText) {
+            alert('Please enter a question and at least one answer');
+            return;
+        }
+
+        const answers = answersText.split(',').map(ans => ans.trim()).filter(ans => ans.length > 0);
+
+        if (answers.length === 0) {
+            alert('Please enter at least one answer');
+            return;
+        }
+
+        fetch('{{ url_for("editCard") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ cardId: cardId, question: question, answers: answers })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Card updated');
+                cancelCardEdit();
+                const deckName = document.getElementById('deckNameDisplay').textContent;
+                const deckId = selectedDeckId;
+                viewDeckCards(deckId, deckName);
+            } else {
+                alert('Error: ' + data.error);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Cancel card edit
+    function cancelCardEdit() {
+        document.getElementById('editCardSection').style.display = 'none';
+        document.getElementById('editQuestion').value = '';
+        document.getElementById('editAnswersInput').value = '';
+        document.getElementById('editQuestion').dataset.cardId = '';
+    }
+
+    // Edit deck from deck view header
+    function editDeckFromView() {
+        selectedDeckId = currentDeckId;
+        editDeckForm(currentDeckId, currentDeckName, false);
+    }
+
+    // Add card from deck view header
+    function addCardFromView() {
+        selectedDeckId = currentDeckId;
+        selectDeckForAdding(currentDeckId, currentDeckName);
+    }
+
+    // Delete deck from deck view header
+    function deleteDeckFromView() {
+        if (confirm('Delete this deck and all its cards?')) {
+            deleteDeckConfirm(currentDeckId);
+        }
+    }
+
+    // Delete a card after confirmation
+    function deleteCardConfirm(cardId, cardQuestion) {
+        if (confirm(`Delete card: "${cardQuestion}"?`)) {
+            fetch('{{ url_for("deleteCard") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ cardId: cardId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Card deleted');
+                    const deckName = document.getElementById('deckNameDisplay').textContent;
+                    const deckId = selectedDeckId;
+                    viewDeckCards(deckId, deckName);
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    }
+
+    // Delete a deck after confirmation
+    function deleteDeckConfirm(deckId) {
+        if (confirm('Delete this deck and all its cards?')) {
+            fetch('{{ url_for("deleteDeck") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ deckId: deckId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Deck deleted');
+                    loadDecks();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    }
+
+    // Escape HTML to prevent XSS attacks
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
+    }
+</script>
+{% endblock %}

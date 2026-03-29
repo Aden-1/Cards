@@ -1,66 +1,40 @@
 # Cards App
 
-A Flask/Python application that uses flashcards to help you learn using unique and effective methods.
 
+
+A Flask/Python application that uses flashcards to help you learn using unique and effective methods.
 ## What It Does (In progress)
 
-- Create and manage flashcards for any subject
-- Study flashcards with interactive learning tools
-- Track your progress and learning patterns
-- Personalized learning experience optimized for retention
+- Create and organize decks of flashcards
+- Add cards with multiple answers per card
+- Study cards one at a time with hidden answers
+- Track progress through decks
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Initialize database
+python -m flask db upgrade
+
+# Run the app
+python -m flask run
+```
+
+Visit `http://localhost:5000`
+
+## Usage
+
+1. **Create a Deck**: Go to "Manage Decks" and create a new deck
+2. **Add Cards**: Click "Add Card" and enter questions and answers
+3. **Study**: Go to "Study Cards" and select a deck to review
 
 ## Tech Stack
 
-- **Backend**: Flask
-- **Database**: SQLite with SQLAlchemy ORM
-- **Frontend**: HTML, Jinja2 Templates, Bootstrap
+- Backend: Flask (Python)
+- Database: SQLite with SQLAlchemy ORM
+- Frontend: HTML, Jinja2 Templates, Bootstrap, JavaScript
 
-## Installation
-
-### Prerequisites
-- Python 3.8+
-- pip (Python package manager)
-
-### Website coming soon&trade;!
-
-### Setup Local Instance
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Cards
-   ```
-
-2. **Create a virtual environment**
-   ```bash
-   python -m venv .venv
-   ```
-
-3. **Activate the virtual environment**
-   - **Windows:**
-     ```bash
-     .venv\Scripts\activate
-     ```
-   - **macOS/Linux:**
-     ```bash
-     source .venv/bin/activate
-     ```
-
-4. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-5. **Initialize the database**
-   ```bash
-   flask db upgrade
-   ```
-
-6. **Run the application**
-   ```bash
-   python app.py
-   ```
-
-
-
-Visit `http://127.0.0.1:5000/` to start learning with flashcards!
+### Website coming soon™!
