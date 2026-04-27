@@ -278,6 +278,40 @@ def getCardRoute():
         return jsonify({'error': 'Card not found'}), 404
 
 
+# Match an answer to a question (for matching game - does NOT delete from database)
+def matchAnswerRoute():
+    from models import CardAnswer
+
+    data = _request_data()
+    answerId = _int_value(data.get('answerId'))
+    selectedQuestionId = _int_value(data.get('selectedQuestionId'))
+
+    if not answerId:
+        return jsonify({'error': 'Answer ID is required'}), 400
+
+    answer = CardAnswer.query.get(answerId)
+    if not answer:
+        return jsonify({'error': 'Answer not found'}), 404
+
+    if not selectedQuestionId:
+        return jsonify({'error': 'Select a question tile first'}), 400
+
+    if answer.cardID != selectedQuestionId:
+        return jsonify({'error': 'That answer does not match the selected question'}), 400
+
+    # Check if this is the last answer for the card
+    remainingAnswers = CardAnswer.query.filter_by(cardID=selectedQuestionId).count() - 1
+    cardDeleted = remainingAnswers == 0
+
+    return jsonify({
+        'success': True,
+        'answerDeleted': True,
+        'cardDeleted': cardDeleted,
+        'cardID': selectedQuestionId,
+        'remainingAnswers': remainingAnswers
+    })
+
+
 # Delete a single answer from a card
 def deleteAnswerRoute():
     from app import deleteAnswer
@@ -331,6 +365,7 @@ def registerRoutes(app):
     # Card operations
     app.add_url_rule('/add_card', endpoint='addCard', view_func=addCardRoute, methods=['POST'])
     app.add_url_rule('/delete_card', endpoint='deleteCard', view_func=deleteCardRoute, methods=['POST'])
+    app.add_url_rule('/match_answer', endpoint='matchAnswer', view_func=matchAnswerRoute, methods=['POST'])
     app.add_url_rule('/delete_answer', endpoint='deleteAnswer', view_func=deleteAnswerRoute, methods=['POST'])
     app.add_url_rule('/list_cards', endpoint='listCards', view_func=listCardsRoute, methods=['POST'])
     app.add_url_rule('/get_card', endpoint='getCard', view_func=getCardRoute, methods=['POST'])

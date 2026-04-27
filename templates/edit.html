@@ -3,204 +3,337 @@
 {% block title %}Edit Decks & Cards - Cards App{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-lg-10 mx-auto">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h1 class="mb-1">Edit Decks & Cards</h1>
-                <p class="text-muted mb-0">Decks and cards are rendered by the server. Card answers can be removed individually.</p>
-            </div>
-        </div>
+<style>
+    .edit-container {
+        max-width: 1100px;
+        margin: 0 auto;
+    }
 
-        <div class="accordion mb-4" id="deckToolsAccordion">
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="createDeckHeading">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#createDeckCollapse">
-                        Create a New Deck
-                    </button>
-                </h2>
-                <div id="createDeckCollapse" class="accordion-collapse collapse" data-bs-parent="#deckToolsAccordion">
-                    <div class="accordion-body">
-                        <form method="post" action="{{ url_for('createDeck') }}" class="row g-3 align-items-end">
-                            <input type="hidden" name="userId" value="{{ userId }}">
-                            <div class="col-md-8">
-                                <label for="deckDescription" class="form-label">Deck Name</label>
-                                <input type="text" class="form-control" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-check mb-3">
-                                    <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
-                                    <label class="form-check-label" for="deckSortable">Keep cards in order</label>
-                                </div>
-                                <button type="submit" class="btn btn-success w-100">Create Deck</button>
-                            </div>
-                        </form>
+    .page-header {
+        margin-bottom: var(--space-xl);
+    }
+
+    .page-header h1 {
+        margin-bottom: var(--space-sm);
+    }
+
+    .section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-xl);
+        overflow: hidden;
+    }
+
+    .section-header {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+        color: white;
+        padding: var(--space-lg);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-header small {
+        opacity: 0.9;
+    }
+
+    .section-body {
+        padding: var(--space-lg);
+    }
+
+    .deck-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: var(--space-lg);
+    }
+
+    .deck-item {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-lg);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        transition: all var(--transition-base);
+    }
+
+    .deck-item:hover {
+        box-shadow: var(--shadow-md);
+        border-color: var(--primary);
+    }
+
+    .deck-item-header {
+        flex-grow: 1;
+    }
+
+    .deck-item-title {
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: var(--space-sm);
+    }
+
+    .deck-item-meta {
+        font-size: 0.875rem;
+        color: var(--text-muted);
+        line-height: 1.6;
+    }
+
+    .deck-item-actions {
+        display: flex;
+        gap: var(--space-sm);
+    }
+
+    .form-section {
+        background: var(--surface-alt);
+        padding: var(--space-lg);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-lg);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: var(--space-lg);
+        align-items: end;
+    }
+
+    .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+        gap: var(--space-lg);
+    }
+
+    .card-item {
+        background: var(--surface-alt);
+        border-left: 4px solid var(--primary);
+        border-radius: var(--radius-md);
+        padding: var(--space-lg);
+        margin-bottom: var(--space-lg);
+    }
+
+    .card-item-question {
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: var(--space-md);
+    }
+
+    .answer-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-md);
+    }
+
+    .answer-badge {
+        background: white;
+        border: 1px solid var(--danger);
+        color: var(--danger);
+        padding: var(--space-sm) var(--space-md);
+        border-radius: var(--radius-lg);
+        font-size: 0.875rem;
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+    }
+
+    .answer-badge:hover {
+        background: #fee2e2;
+    }
+
+    .card-item-actions {
+        display: flex;
+        gap: var(--space-sm);
+    }
+
+    @media (max-width: 768px) {
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .cards-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .section-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: var(--space-md);
+        }
+    }
+</style>
+
+<div class="edit-container">
+    <div class="page-header">
+        <h1>Manage Decks & Cards</h1>
+        <p class="text-secondary">Create and organize your learning materials</p>
+    </div>
+
+    <!-- Create Deck Section -->
+    <div class="section">
+        <div class="section-header">
+            <h5 class="mb-0">Create New Deck</h5>
+        </div>
+        <div class="section-body">
+            <div class="form-section">
+                <form method="post" action="{{ url_for('createDeck') }}" class="form-row">
+                    <input type="hidden" name="userId" value="{{ userId }}">
+                    <div class="form-group mb-0">
+                        <label for="deckDescription" class="mb-1">Deck Name</label>
+                        <input type="text" class="form-control" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="accordion mb-4" id="yourDecksAccordion">
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="yourDecksHeading">
-                    <button class="accordion-button {% if selectedDeck %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#yourDecksCollapse" aria-expanded="{{ 'false' if selectedDeck else 'true' }}" aria-controls="yourDecksCollapse">
-                        Your Decks
-                    </button>
-                </h2>
-                <div id="yourDecksCollapse" class="accordion-collapse collapse {% if not selectedDeck %}show{% endif %}" aria-labelledby="yourDecksHeading" data-bs-parent="#yourDecksAccordion">
-                    <div class="accordion-body">
-                        {% if decks %}
-                        <div class="row g-3">
-                            {% for deck in decks %}
-                            <div class="col-md-6">
-                                <div class="card h-100">
-                                    <div class="card-body d-flex justify-content-between gap-3">
-                                        <div>
-                                            <h5 class="card-title mb-1">{{ deck.description }}</h5>
-                                            <p class="card-text text-muted mb-1">{{ deck.cardCount }} question card{{ '' if deck.cardCount == 1 else 's' }}</p>
-                                            <small class="text-muted">{{ 'Ordered' if deck.sortable else 'Shuffled in study mode' }}</small>
-                                        </div>
-                                        <div class="d-flex flex-column gap-2 align-items-end">
-                                            <a class="btn btn-sm btn-primary" href="{{ url_for('edit', deck_id=deck.deckID) }}">Edit Cards</a>
-                                            <form method="post" action="{{ url_for('deleteDeck') }}" onsubmit="return confirm('Delete this deck and all of its cards?');">
-                                                <input type="hidden" name="deckId" value="{{ deck.deckID }}">
-                                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endfor %}
+                    <div>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
+                            <label class="form-check-label" for="deckSortable">Keep in order</label>
                         </div>
-                        {% else %}
-                        <p class="text-muted mb-0">No decks found.</p>
-                        {% endif %}
+                        <button type="submit" class="btn btn-success">Create</button>
                     </div>
-                </div>
+                </form>
             </div>
         </div>
+    </div>
 
-        {% if selectedDeck %}
-        <div class="card mb-4">
-            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
-                <div>
-                    <h5 class="mb-0">Managing: {{ selectedDeck.description }}</h5>
-                    <small>{{ selectedDeck.cardCount }} cards • {{ selectedDeck.answerCount }} answers</small>
+    <!-- Your Decks Section -->
+    <div class="section">
+        <div class="section-header">
+            <h5 class="mb-0">Your Decks</h5>
+        </div>
+        <div class="section-body">
+            {% if decks %}
+            <div class="deck-grid">
+                {% for deck in decks %}
+                <div class="deck-item">
+                    <div class="deck-item-header">
+                        <div class="deck-item-title">{{ deck.description }}</div>
+                        <div class="deck-item-meta">
+                            <div>{{ deck.cardCount }} card{{ '' if deck.cardCount == 1 else 's' }}</div>
+                            <div>{{ 'Ordered' if deck.sortable else 'Shuffled' }}</div>
+                        </div>
+                    </div>
+                    <div class="deck-item-actions">
+                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deckID) }}">Edit</a>
+                        <form method="post" action="{{ url_for('deleteDeck') }}" onsubmit="return confirm('Delete deck?');" style="flex-grow: 1;">
+                            <input type="hidden" name="deckId" value="{{ deck.deckID }}">
+                            <button type="submit" class="btn btn-danger btn-sm w-100">Delete</button>
+                        </form>
+                    </div>
                 </div>
-                <div class="d-flex gap-2">
-                    <a class="btn btn-sm btn-secondary" href="{{ url_for('edit') }}">Back to deck list</a>
-                </div>
+                {% endfor %}
             </div>
-            <div class="card-body">
-                <div class="card mb-4 border-primary">
-                    <div class="card-header bg-primary text-white">Deck Settings</div>
-                    <div class="card-body">
-                        <form method="post" action="{{ url_for('editDeck') }}" class="row g-3 align-items-end">
+            {% else %}
+            <div class="empty-state">No decks yet. Create one to get started!</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Editing Selected Deck -->
+    {% if selectedDeck %}
+    <div class="section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">{{ selectedDeck.description }}</h5>
+                <small>{{ selectedDeck.cardCount }} cards • {{ selectedDeck.answerCount }} answers</small>
+            </div>
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit') }}">Back</a>
+        </div>
+        <div class="section-body">
+            <!-- Deck Settings -->
+            <div class="form-section">
+                <h5 class="mb-3">Deck Settings</h5>
+                <form method="post" action="{{ url_for('editDeck') }}" class="form-row">
+                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                    <div class="form-group mb-0">
+                        <label for="editDeckDescription" class="mb-1">Name</label>
+                        <input type="text" class="form-control" id="editDeckDescription" name="description" value="{{ selectedDeck.description }}" required>
+                    </div>
+                    <div>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selectedDeck.sortable %}checked{% endif %}>
+                            <label class="form-check-label" for="editDeckSortable">Keep in order</label>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="cards-grid">
+                <!-- Add Card -->
+                <div>
+                    <div class="form-section">
+                        <h5 class="mb-3">Add Card</h5>
+                        <form method="post" action="{{ url_for('addCard') }}">
                             <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
-                            <div class="col-md-8">
-                                <label for="editDeckDescription" class="form-label">Deck Name</label>
-                                <input type="text" class="form-control" id="editDeckDescription" name="description" value="{{ selectedDeck.description }}" required>
+                            <div class="form-group">
+                                <label for="question" class="form-label">Question</label>
+                                <input type="text" class="form-control" id="question" name="question" required>
                             </div>
-                            <div class="col-md-4">
-                                <div class="form-check mb-3">
-                                    <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selectedDeck.sortable %}checked{% endif %}>
-                                    <label class="form-check-label" for="editDeckSortable">Keep cards in order</label>
-                                </div>
-                                <button type="submit" class="btn btn-primary w-100">Save Deck</button>
+                            <div class="form-group">
+                                <label for="answersInput" class="form-label">Answers</label>
+                                <textarea class="form-control" id="answersInput" name="answers" rows="4" placeholder="Separate multiple answers with commas" required></textarea>
+                                <div class="form-text">e.g., "The Capital, Paris, France's capital"</div>
                             </div>
+                            <button type="submit" class="btn btn-success w-100">Add Card</button>
                         </form>
                     </div>
                 </div>
 
-                <div class="row g-4">
-                    <div class="col-lg-4">
-                        <div class="card h-100 border-success">
-                            <div class="card-header bg-success text-white">Add a Card</div>
-                            <div class="card-body">
-                                <form method="post" action="{{ url_for('addCard') }}">
+                <!-- Cards List -->
+                <div>
+                    <h5 class="mb-3">Cards in Deck</h5>
+                    {% if selectedCards %}
+                    <div class="mb-3">
+                        {% for card in selectedCards %}
+                        <div class="card-item">
+                            <div class="card-item-question">{{ card.question }}</div>
+                            {% if card.answerObjects %}
+                            <div class="answer-badges">
+                                {% for answer in card.answerObjects %}
+                                <form method="post" action="{{ url_for('deleteAnswer') }}" class="d-inline">
+                                    <input type="hidden" name="answerId" value="{{ answer.answerID }}">
                                     <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
-                                    <div class="mb-3">
-                                        <label for="question" class="form-label">Question</label>
-                                        <input type="text" class="form-control" id="question" name="question" required>
+                                    <button type="submit" class="answer-badge">{{ answer.answer }} ×</button>
+                                </form>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            <div class="card-item-actions">
+                                <details class="flex-grow-1">
+                                    <summary class="btn btn-sm btn-primary">Edit</summary>
+                                    <div class="mt-3 p-3 bg-surface rounded">
+                                        <form method="post" action="{{ url_for('editCard') }}">
+                                            <input type="hidden" name="cardId" value="{{ card.cardID }}">
+                                            <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                                            <div class="form-group">
+                                                <label class="form-label">Question</label>
+                                                <input type="text" class="form-control" name="question" value="{{ card.question }}" required>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Answers</label>
+                                                <textarea class="form-control" name="answers" rows="3" required>{{ card.answers | join(', ') }}</textarea>
+                                                <div class="form-text">Leave blank to delete card</div>
+                                            </div>
+                                            <button type="submit" class="btn btn-primary">Save</button>
+                                        </form>
                                     </div>
-                                    <div class="mb-3">
-                                        <label for="answersInput" class="form-label">Answers</label>
-                                        <textarea class="form-control" id="answersInput" name="answers" rows="4" placeholder="Enter answers separated by commas" required></textarea>
-                                        <div class="form-text">Use commas to add multiple answers for the same question.</div>
-                                    </div>
-                                    <button type="submit" class="btn btn-success w-100">Add Card</button>
+                                </details>
+                                <form method="post" action="{{ url_for('deleteCard') }}" onsubmit="return confirm('Delete card?');" style="flex-grow: 1; margin-left: 0.5rem;">
+                                    <input type="hidden" name="cardId" value="{{ card.cardID }}">
+                                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                                    <button type="submit" class="btn btn-danger btn-sm w-100">Delete</button>
                                 </form>
                             </div>
                         </div>
+                        {% endfor %}
                     </div>
-
-                    <div class="col-lg-8">
-                        <div class="card h-100">
-                            <div class="card-header bg-dark text-white">Cards in this Deck</div>
-                            <div class="card-body">
-                                {% if selectedCards %}
-                                {% for card in selectedCards %}
-                                <div class="card mb-3">
-                                    <div class="card-body">
-                                        <div class="d-flex justify-content-between gap-3 align-items-start">
-                                            <div class="flex-grow-1">
-                                                <h5 class="card-title mb-2">{{ card.question }}</h5>
-                                                <div class="d-flex flex-wrap gap-2 mb-2">
-                                                    {% for answer in card.answerObjects %}
-                                                    <form method="post" action="{{ url_for('deleteAnswer') }}" class="d-inline">
-                                                        <input type="hidden" name="answerId" value="{{ answer.answerID }}">
-                                                        <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
-                                                        <button type="submit" class="btn btn-outline-secondary btn-sm">
-                                                            {{ answer.answer }} &times;
-                                                        </button>
-                                                    </form>
-                                                    {% endfor %}
-                                                </div>
-                                                {% if not card.answerObjects %}
-                                                <p class="text-muted mb-0">This card has no answers left and will be removed automatically.</p>
-                                                {% endif %}
-                                            </div>
-                                            <div class="d-flex flex-column gap-2">
-                                                <details>
-                                                    <summary class="btn btn-sm btn-outline-warning">Edit</summary>
-                                                    <div class="mt-3">
-                                                        <form method="post" action="{{ url_for('editCard') }}">
-                                                            <input type="hidden" name="cardId" value="{{ card.cardID }}">
-                                                            <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
-                                                            <div class="mb-3">
-                                                                <label class="form-label">Question</label>
-                                                                <input type="text" class="form-control" name="question" value="{{ card.question }}" required>
-                                                            </div>
-                                                            <div class="mb-3">
-                                                                <label class="form-label">Answers</label>
-                                                                <textarea class="form-control" name="answers" rows="4" required>{{ card.answers | join(', ') }}</textarea>
-                                                                <div class="form-text">Leave blank and save to remove the card entirely.</div>
-                                                            </div>
-                                                            <button type="submit" class="btn btn-warning">Save</button>
-                                                        </form>
-                                                    </div>
-                                                </details>
-
-                                                <form method="post" action="{{ url_for('deleteCard') }}" onsubmit="return confirm('Delete this card?');">
-                                                    <input type="hidden" name="cardId" value="{{ card.cardID }}">
-                                                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
-                                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                                                </form>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                                {% else %}
-                                <p class="text-muted mb-0">No cards in this deck yet.</p>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
+                    {% else %}
+                    <div class="empty-state">No cards yet. Add one to get started!</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
-        {% endif %}
     </div>
+    {% endif %}
 </div>
 {% endblock %}

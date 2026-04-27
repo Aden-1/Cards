@@ -3,112 +3,275 @@
 {% block title %}Study Cards - Cards App{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-lg-10 mx-auto">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h1 class="mb-1">Study Cards</h1>
-                <p class="text-muted mb-0">View cards one at a time, reveal the answers, and move through the deck.</p>
-            </div>
-        </div>
+<style>
+    .study-container {
+        max-width: 1000px;
+        margin: 0 auto;
+    }
 
-        <div class="card mb-4">
-            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Choose a deck</h5>
-                {% if selectedDeckId %}
-                <a class="btn btn-sm btn-light" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                {% if decks %}
-                <form method="get" action="{{ url_for('view') }}" class="row g-3 align-items-end">
-                    <div class="col-md-8">
-                        <label for="deck_id" class="form-label">Your decks</label>
-                        <select class="form-select" id="deck_id" name="deck_id" required>
-                            <option value="" {% if not selectedDeckId %}selected{% endif %}>Select a deck...</option>
-                            {% for deck in decks %}
-                            <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
-                                {{ deck.description }} ({{ deck.cardCount }} cards)
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-4 d-flex gap-2">
-                        <button type="submit" class="btn btn-success flex-grow-1">Study</button>
-                        {% if selectedDeckId %}
-                        <a class="btn btn-outline-secondary flex-grow-1" href="{{ url_for('match', deck_id=selectedDeckId) }}">Match</a>
-                        {% endif %}
-                    </div>
-                </form>
-                {% else %}
-                <p class="text-muted mb-0">No decks available yet.</p>
-                {% endif %}
-            </div>
-        </div>
+    .section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-xl);
+        overflow: hidden;
+    }
 
-        {% if studyDeck %}
-        <div class="card mb-4" id="studySection">
-            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-                <div>
-                    <h5 class="mb-0">{{ studyDeck.description }}</h5>
-                    <small>Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ studyDeck.cardCount }}</span></small>
+    .section-header {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+        color: white;
+        padding: var(--space-lg);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-header small {
+        opacity: 0.9;
+    }
+
+    .section-body {
+        padding: var(--space-lg);
+    }
+
+    .deck-selector-form {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: var(--space-md);
+        align-items: end;
+    }
+
+    .form-group label {
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: var(--space-sm);
+    }
+
+    .form-buttons {
+        display: flex;
+        gap: var(--space-sm);
+    }
+
+    .progress-container {
+        margin-bottom: var(--space-xl);
+    }
+
+    .progress {
+        height: 30px;
+        border-radius: var(--radius-md);
+        background: var(--surface-alt);
+        overflow: hidden;
+        margin-bottom: var(--space-md);
+    }
+
+    .progress-bar {
+        background: linear-gradient(90deg, var(--primary) 0%, var(--primary-dark) 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 0.875rem;
+    }
+
+    .card-display {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: var(--space-lg);
+        margin-bottom: var(--space-lg);
+    }
+
+    .card-section {
+        background: var(--surface-alt);
+        border-radius: var(--radius-lg);
+        padding: var(--space-lg);
+        border: 2px dashed var(--border);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        text-align: center;
+        min-height: 280px;
+    }
+
+    .card-section.revealed {
+        border-style: solid;
+        border-color: var(--primary);
+        background: var(--primary-light);
+    }
+
+    .card-label {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: var(--space-md);
+    }
+
+    .card-content {
+        font-size: 1.25rem;
+        color: var(--text-primary);
+        font-weight: 500;
+        line-height: 1.6;
+        word-wrap: break-word;
+    }
+
+    .answer-item {
+        background: white;
+        padding: var(--space-md);
+        border-radius: var(--radius-md);
+        border-left: 3px solid var(--primary);
+        margin-bottom: var(--space-md);
+    }
+
+    .answer-item:last-child {
+        margin-bottom: 0;
+    }
+
+    .button-group {
+        display: flex;
+        gap: var(--space-md);
+        margin-bottom: var(--space-lg);
+    }
+
+    .button-group.full {
+        flex-direction: column;
+    }
+
+    .button-group.navigation {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .card-counter {
+        color: var(--text-muted);
+        font-weight: 600;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: var(--space-xl);
+        color: var(--text-muted);
+    }
+
+    @media (max-width: 768px) {
+        .deck-selector-form {
+            grid-template-columns: 1fr;
+        }
+
+        .form-buttons {
+            flex-direction: column;
+        }
+
+        .card-display {
+            grid-template-columns: 1fr;
+        }
+
+        .button-group.navigation {
+            flex-direction: column;
+            gap: var(--space-md);
+        }
+
+        .button-group.navigation .btn {
+            width: 100%;
+        }
+    }
+</style>
+
+<div class="study-container">
+    <!-- Deck Selector -->
+    <div class="section">
+        <div class="section-header">
+            <h5 class="mb-0">Select Deck</h5>
+            {% if selectedDeckId %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
+            {% endif %}
+        </div>
+        <div class="section-body">
+            {% if decks %}
+            <form method="get" action="{{ url_for('view') }}" class="deck-selector-form">
+                <div class="form-group mb-0">
+                    <label for="deck_id">Your Decks</label>
+                    <select class="form-select" id="deck_id" name="deck_id" required>
+                        <option value="" {% if not selectedDeckId %}selected{% endif %}>Choose a deck...</option>
+                        {% for deck in decks %}
+                        <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
+                            {{ deck.description }} ({{ deck.cardCount }} cards)
+                        </option>
+                        {% endfor %}
+                    </select>
                 </div>
-                <a class="btn btn-sm btn-light" href="{{ url_for('view') }}">Clear selection</a>
+                <div class="form-buttons">
+                    <button type="submit" class="btn btn-success">Study</button>
+                    {% if selectedDeckId %}
+                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Play</a>
+                    {% endif %}
+                </div>
+            </form>
+            {% else %}
+            <div class="empty-state">No decks yet. Create one to get started!</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Study Section -->
+    {% if studyDeck %}
+    <div class="section" id="studySection">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">{{ studyDeck.description }}</h5>
+                <small>Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ studyDeck.cardCount }}</span></small>
             </div>
-            <div class="card-body">
-                {% if studyDeck.cardCount == 0 %}
-                <div class="alert alert-warning mb-0">This deck has no cards yet.</div>
-                {% else %}
-                <div class="progress mb-4" style="height: 25px;">
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('view') }}">Clear</a>
+        </div>
+        <div class="section-body">
+            {% if studyDeck.cardCount == 0 %}
+            <div class="empty-state">This deck is empty. Add some cards to study!</div>
+            {% else %}
+
+            <!-- Progress -->
+            <div class="progress-container">
+                <div class="progress">
                     <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
                         <span id="progressText">0%</span>
                     </div>
                 </div>
-
-                <div class="row mb-3 g-3">
-                    <div class="col-md-6">
-                        <div class="card bg-light h-100">
-                            <div class="card-body p-5 d-flex flex-column justify-content-center text-center" style="min-height: 250px;">
-                                <p class="text-muted mb-2">QUESTION</p>
-                                <h3 id="cardQuestion" class="mb-0">Loading...</h3>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-md-6">
-                        <div class="card bg-light h-100" id="answerCard" style="display: none;">
-                            <div class="card-body p-5" style="min-height: 250px; display: flex; flex-direction: column; justify-content: center; text-align: center;">
-                                <p class="mb-2">ANSWERS</p>
-                                <div id="cardAnswers"></div>
-                            </div>
-                        </div>
-                        <div class="card bg-light h-100" id="answerPlaceholder" style="display: block;">
-                            <div class="card-body p-5 text-center" style="min-height: 250px; display: flex; align-items: center; justify-content: center;">
-                                <p class="text-muted mb-0">Reveal Answer to See</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row mb-3">
-                    <div class="col-12">
-                        <button type="button" class="btn btn-lg btn-warning w-100" id="showAnswerBtn" onclick="revealAnswer()">Reveal Answer</button>
-                        <button type="button" class="btn btn-lg btn-secondary w-100" id="hideAnswerBtn" onclick="hideAnswer()" style="display: none;">Hide Answer</button>
-                    </div>
-                </div>
-
-                <div class="d-flex justify-content-between gap-2">
-                    <button type="button" class="btn btn-lg btn-outline-primary flex-grow-1" id="prevBtn" onclick="previousCard()" disabled>Previous Card</button>
-                    <div class="d-flex align-items-center">
-                        <span id="cardCounter" class="text-muted px-3">Card 0/0</span>
-                    </div>
-                    <button type="button" class="btn btn-lg btn-outline-primary flex-grow-1" id="nextBtn" onclick="nextCard()">Next Card</button>
-                </div>
-                {% endif %}
             </div>
+
+            <!-- Card Display -->
+            <div class="card-display">
+                <div class="card-section">
+                    <p class="card-label">Question</p>
+                    <div class="card-content" id="cardQuestion">Loading...</div>
+                </div>
+
+                <div class="card-section" id="answerCard" style="display: none;">
+                    <p class="card-label">Answers</p>
+                    <div id="cardAnswers"></div>
+                </div>
+                <div class="card-section" id="answerPlaceholder" style="display: block;">
+                    <p class="card-label">Answers</p>
+                    <p class="text-muted">Reveal to see answers</p>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="button-group full">
+                <button type="button" class="btn btn-warning w-100" id="showAnswerBtn" onclick="revealAnswer()">Reveal Answer</button>
+                <button type="button" class="btn btn-secondary w-100" id="hideAnswerBtn" onclick="hideAnswer()" style="display: none;">Hide Answer</button>
+            </div>
+
+            <div class="button-group navigation">
+                <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>← Previous</button>
+                <span class="card-counter" id="cardCounter">Card 0/0</span>
+                <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next →</button>
+            </div>
+
+            {% endif %}
         </div>
-        {% endif %}
     </div>
+    {% endif %}
 </div>
 
 <script>
@@ -131,8 +294,8 @@
 
         const nextBtn = document.getElementById('nextBtn');
         const isLastCard = currentCardIndex === currentCards.length - 1;
-        nextBtn.textContent = isLastCard ? 'Restart Deck' : 'Next Card';
-        nextBtn.className = isLastCard ? 'btn btn-lg btn-danger flex-grow-1' : 'btn btn-lg btn-outline-primary flex-grow-1';
+        nextBtn.textContent = isLastCard ? 'Restart Deck →' : 'Next →';
+        nextBtn.className = isLastCard ? 'btn btn-success' : 'btn btn-primary';
     }
 
     function revealAnswer() {
@@ -141,14 +304,10 @@
         answersDiv.innerHTML = '';
 
         currentCard.answers.forEach((answer) => {
-            const answerElement = document.createElement('div');
-            answerElement.className = 'mb-2';
-
-            const heading = document.createElement('h5');
-            heading.textContent = answer;
-
-            answerElement.appendChild(heading);
-            answersDiv.appendChild(answerElement);
+            const answerDiv = document.createElement('div');
+            answerDiv.className = 'answer-item';
+            answerDiv.textContent = answer;
+            answersDiv.appendChild(answerDiv);
         });
 
         document.getElementById('answerPlaceholder').style.display = 'none';
