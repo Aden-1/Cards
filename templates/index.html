@@ -3,116 +3,39 @@
 {% block title %}Home - Cards App{% endblock %}
 
 {% block content %}
-<style>
-    .hero-section {
-        max-width: 700px;
-        margin: 0 auto;
-        padding: 2rem 0;
-    }
-
-    .hero-title {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: var(--text-primary);
-        margin-bottom: 0.5rem;
-    }
-
-    .hero-subtitle {
-        font-size: 1.25rem;
-        color: var(--text-secondary);
-        margin-bottom: 2rem;
-    }
-
-    .feature-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        padding: var(--space-lg);
-        margin-bottom: var(--space-lg);
-        box-shadow: var(--shadow-sm);
-    }
-
-    .feature-card h5 {
-        color: var(--primary);
-        margin-bottom: var(--space-md);
-        font-weight: 700;
-    }
-
-    .feature-card ol {
-        margin-left: var(--space-lg);
-        color: var(--text-secondary);
-        line-height: 1.8;
-    }
-
-    .feature-card li {
-        margin-bottom: var(--space-sm);
-    }
-
-    .button-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: var(--space-lg);
-        margin-top: var(--space-xl);
-    }
-
-    .btn-hero {
-        padding: var(--space-lg) var(--space-xl);
-        font-size: 1rem;
-        font-weight: 700;
-        text-decoration: none;
-        border-radius: var(--radius-lg);
-        transition: all var(--transition-base);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border: none;
-        cursor: pointer;
-    }
-
-    .btn-hero .icon {
-        margin-right: var(--space-md);
-        font-size: 1.25rem;
-    }
-
-    @media (max-width: 768px) {
-        .hero-title {
-            font-size: 2rem;
-        }
-
-        .hero-subtitle {
-            font-size: 1rem;
-        }
-
-        .button-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-</style>
-
 <div class="hero-section">
-    <h1 class="hero-title">Learn Smarter</h1>
-    <p class="hero-subtitle">Master any subject with interactive flashcards</p>
+    <div class="hero-surface app-stack">
+        <div class="hero-grid">
+            <div>
+                <h1 class="hero-title">Learn faster with cards that feel alive</h1>
+                <p class="hero-subtitle">Build decks, study with focus mode, and reinforce memory with a playful matching challenge.</p>
 
-    <div class="feature-card">
-        <h5>Getting Started</h5>
-        <ol>
-            <li><strong>Create a Deck</strong> – Set up a new deck of flashcards for any topic</li>
-            <li><strong>Add Cards</strong> – Enter questions with one or more correct answers</li>
-            <li><strong>Study Mode</strong> – Review cards one at a time and reveal answers</li>
-            <li><strong>Matching Game</strong> – Challenge yourself with an interactive matching game</li>
-        </ol>
-    </div>
+                <div class="button-grid">
+                    <a class="btn-hero app-btn app-btn-primary" href="{{ url_for('edit') }}">
+                        <span class="icon">→</span> Manage Decks
+                    </a>
+                    <a class="btn-hero app-btn app-btn-mint" href="{{ url_for('view') }}">
+                        <span class="icon">→</span> Study Mode
+                    </a>
+                    <a class="btn-hero app-btn app-btn-soft" href="{{ url_for('match') }}">
+                        <span class="icon">→</span> Matching Game
+                    </a>
+                </div>
+            </div>
+            <div>
+                <img class="hero-illustration" src="{{ url_for('static', filename='learning-hero.svg') }}" alt="Learning app illustration">
+            </div>
+        </div>
 
-    <div class="button-grid">
-        <button class="btn-hero btn-primary" onclick="window.location.href='{{ url_for('edit') }}'">
-            <span class="icon">→</span> Manage Decks
-        </button>
-        <button class="btn-hero btn-success" onclick="window.location.href='{{ url_for('view') }}'">
-            <span class="icon">→</span> Study Now
-        </button>
-        <button class="btn-hero btn-primary" onclick="window.location.href='{{ url_for('match') }}'">
-            <span class="icon">→</span> Play Game
-        </button>
+        <div class="feature-card">
+            <h5>How It Flows</h5>
+            <ol>
+                <li><strong>Create a deck</strong> for one topic</li>
+                <li><strong>Add question cards</strong> with one or more accepted answers</li>
+                <li><strong>Study mode</strong> for focused review</li>
+                <li><strong>Matching mode</strong> to actively recall and reinforce</li>
+            </ol>
+        </div>
     </div>
 </div>
 {% endblock %}
