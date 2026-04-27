@@ -1,3 +1,5 @@
+import random
+
 from flask import Flask
 from flask_migrate import Migrate
 from models import db, User, Deck, Card, CardAnswer
@@ -14,6 +16,65 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 migrate = Migrate(app, db)
+
+
+def _normalize_answers(answers):
+    if answers is None:
+        return []
+    if isinstance(answers, str):
+        answers = [part.strip() for part in answers.split(',')]
+    return [answer.strip() for answer in answers if str(answer).strip()]
+
+
+def _serialize_card(card, detailed=False):
+    answer_objects = [{'answerID': answer.answerID, 'answer': answer.answer} for answer in card.answers]
+    payload = {
+        'cardID': card.cardID,
+        'question': card.question,
+        'answers': [answer['answer'] for answer in answer_objects],
+        'position': card.position,
+    }
+    if detailed:
+        payload['answerObjects'] = answer_objects
+    return payload
+
+
+def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_answers=False):
+    cards = list(deck.cards)
+    cards.sort(key=lambda card: card.position)
+    if shuffle_cards:
+        random.shuffle(cards)
+
+    serialized_cards = []
+    flattened_answers = []
+    for card in cards:
+        serialized_card = _serialize_card(card, detailed=detailed_cards or shuffle_answers)
+        if shuffle_answers:
+            serialized_card['answerObjects'] = [
+                {'answerID': answer.answerID, 'answer': answer.answer}
+                for answer in card.answers
+            ]
+        serialized_cards.append(serialized_card)
+        for answer in card.answers:
+            flattened_answers.append({
+                'answerID': answer.answerID,
+                'answer': answer.answer,
+                'cardID': card.cardID,
+                'question': card.question,
+            })
+
+    if shuffle_answers:
+        random.shuffle(flattened_answers)
+
+    return {
+        'deckID': deck.deckID,
+        'description': deck.description,
+        'sortable': deck.sortable,
+        'cardCount': len(cards),
+        'answerCount': len(flattened_answers),
+        'cards': serialized_cards,
+        'answers': flattened_answers,
+    }
 
 
 ## User database operations
@@ -85,10 +146,10 @@ def addCard(deckId, question, answers):
     db.session.add(card)
     db.session.flush()
     
-    # Convert single answer to list if needed
-    if isinstance(answers, str):
-        answers = [answers]
-    
+    answers = _normalize_answers(answers)
+    if not answers:
+        raise ValueError('At least one answer is required')
+
     # Add each answer to the database
     for answer_text in answers:
         cardAnswer = CardAnswer(cardID=card.cardID, answer=answer_text)
@@ -109,6 +170,29 @@ def addAnswerToCard(cardId, answer):
     return None
 
 
+# Delete a single answer and remove the card if it no longer has answers.
+def deleteAnswer(answerId):
+    answer = CardAnswer.query.get(answerId)
+    if not answer:
+        return None
+
+    card = answer.card
+    deckId = card.deckID if card else None
+    cardId = card.cardID if card else None
+
+    db.session.delete(answer)
+    db.session.flush()
+
+    cardDeleted = False
+    remainingAnswers = CardAnswer.query.filter_by(cardID=cardId).count() if cardId else 0
+    if card and remainingAnswers == 0:
+        db.session.delete(card)
+        cardDeleted = True
+
+    db.session.commit()
+    return {'answerDeleted': True, 'cardDeleted': cardDeleted, 'cardID': cardId, 'deckID': deckId}
+
+
 # Delete a card and all its answers
 def deleteCard(cardId):
     card = Card.query.get(cardId)
@@ -124,11 +208,16 @@ def editCard(cardId, question, answers):
     card = Card.query.get(cardId)
     if card:
         card.question = question
+        answers = _normalize_answers(answers)
+        if not answers:
+            deckId = card.deckID
+            db.session.delete(card)
+            db.session.commit()
+            return {'deleted': True, 'cardID': cardId, 'deckID': deckId}
+
         # Delete old answers
         CardAnswer.query.filter_by(cardID=cardId).delete()
         # Add new answers
-        if isinstance(answers, str):
-            answers = [answers]
         for answer_text in answers:
             cardAnswer = CardAnswer(cardID=cardId, answer=answer_text)
             db.session.add(cardAnswer)
@@ -138,38 +227,47 @@ def editCard(cardId, question, answers):
 
 
 # Get a single card with all its answers
-def getCardFromDeck(cardId):
+def getCardFromDeck(cardId, detailed=False):
     card = Card.query.get(cardId)
     if card:
-        answers = [ans.answer for ans in card.answers]
+        if detailed:
+            return _serialize_card(card, detailed=True)
         return {
             'cardID': card.cardID,
             'question': card.question,
-            'answers': answers,
+            'answers': [answer.answer for answer in card.answers],
             'deckID': card.deckID,
-            'position': card.position
+            'position': card.position,
         }
     return None
 
 
+def getDeckStudyData(deckId, shuffle=True):
+    deck = Deck.query.get(deckId)
+    if not deck:
+        return None
+
+    return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle, shuffle_answers=shuffle)
+
+
 # Get all cards from a deck ordered by position
-def listCardsFromDeck(deckId):
-    cards = Card.query.filter_by(deckID=deckId).order_by(Card.position).all()
-    result = []
-    for card in cards:
-        answers = [ans.answer for ans in card.answers]
-        result.append({
-            'cardID': card.cardID,
-            'question': card.question,
-            'answers': answers,
-            'position': card.position
-        })
-    return result
+def listCardsFromDeck(deckId, detailed=False, shuffle=False):
+    deck = Deck.query.get(deckId)
+    if not deck:
+        return []
+    return _serialize_deck(deck, detailed_cards=detailed, shuffle_cards=shuffle, shuffle_answers=False)['cards']
+
+
+def getDeckDetails(deckId, shuffle_cards=False, shuffle_answers=False):
+    deck = Deck.query.get(deckId)
+    if not deck:
+        return None
+    return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle_cards, shuffle_answers=shuffle_answers)
 
 
 # Register all application routes
 registerRoutes(app)
 
 
-if __name__ == '__app__':
+if __name__ == '__main__':
     app.run(debug=True)

@@ -22,6 +22,10 @@ The Cards App provides a REST API for managing decks and flashcards. All API end
 **GET** `/view`
 - Card study interface
 
+### Matching Game Page
+**GET** `/match`
+- Clickable question-and-answer tile matching interface
+
 ---
 
 ## Deck Endpoints
@@ -202,6 +206,30 @@ Response:
 {
     "success": true,
     "cardId": 1
+}
+```
+
+---
+
+### Delete Answer
+**POST** `/delete_answer`
+
+```json
+{
+    "answerId": 12
+}
+```
+
+If this was the card's last answer, the parent card is deleted automatically.
+
+Response:
+```json
+{
+    "success": true,
+    "answerDeleted": true,
+    "cardDeleted": false,
+    "cardID": 5,
+    "deckID": 1
 }
 ```
 

@@ -7,8 +7,9 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 
 - Create and organize decks of flashcards
 - Add cards with multiple answers per card
-- Study cards one at a time with hidden answers
-- Track progress through decks
+- Study cards one at a time on a flashcard page
+- Play a separate matching game with clickable question and answer tiles
+- Remove individual answers; when a card has no answers left, it is removed automatically
 
 ## Quick Start
 
@@ -29,7 +30,7 @@ Visit `http://localhost:5000`
 
 1. **Create a Deck**: Go to "Manage Decks" and create a new deck
 2. **Add Cards**: Click "Add Card" and enter questions and answers
-3. **Study**: Go to "Study Cards" and select a deck to review
+3. **Study**: Go to "Study Cards" for flashcards or "Matching Game" for tile matching
 
 ## Tech Stack
 

@@ -14,8 +14,8 @@
                 <ol>
                     <li>Go to "Manage Decks" to create a new deck</li>
                     <li>Add flashcards with questions and answers</li>
-                    <li>Go to "Study Cards" to review your flashcards</li>
-                    <li>Click the button to reveal answers</li>
+                    <li>Go to "Study Cards" to review cards one at a time</li>
+                    <li>Go to "Matching Game" to match question and answer tiles</li>
                 </ol>
             </div>
         </div>
@@ -26,6 +26,9 @@
             </div>
             <div class="col-md-6 mb-3">
                 <a href="{{ url_for('view') }}" class="btn btn-success btn-lg w-100">Study Cards</a>
+            </div>
+            <div class="col-md-6 mb-3">
+                <a href="{{ url_for('match') }}" class="btn btn-warning btn-lg w-100">Matching Game</a>
             </div>
         </div>
     </div>
