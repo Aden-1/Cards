@@ -7,8 +7,8 @@
     <div class="section">
         <div class="section-header">
             <h5 class="mb-0">Select Deck</h5>
-            {% if selectedDeckId %}
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
+            {% if selected_deck_id %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
             {% endif %}
         </div>
         <div class="section-body">
@@ -17,19 +17,19 @@
                 <div class="form-group mb-0">
                     <label for="deck_id">Your Decks</label>
                     <select class="form-select" id="deck_id" name="deck_id" required>
-                        <option value="" {% if not selectedDeckId %}selected{% endif %}>Choose a deck...</option>
+                        <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
                         {% for deck in decks %}
-                        <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
-                            {{ deck.description }} ({{ deck.cardCount }} cards)
+                        <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>
+                            {{ deck.description }} ({{ deck.card_count }} cards)
                         </option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-buttons">
                     <button type="submit" class="btn btn-success">Start Studying</button>
-                    {% if selectedDeckId %}
-                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Match Game</a>
-                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selectedDeckId) }}">Memorize Order</a>
+                    {% if selected_deck_id %}
+                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>
+                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>
                     {% endif %}
                 </div>
             </form>
@@ -42,17 +42,17 @@
         </div>
     </div>
 
-    {% if studyDeck %}
+    {% if study_deck %}
     <div class="section" id="studySection">
         <div class="section-header">
             <div>
-                <h5 class="mb-0">{{ studyDeck.description }}</h5>
-                <small>Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ studyDeck.cardCount }}</span></small>
+                <h5 class="mb-0">{{ study_deck.description }}</h5>
+                <small>Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ study_deck.card_count }}</span></small>
             </div>
             <a class="btn btn-secondary btn-sm" href="{{ url_for('view') }}">Clear</a>
         </div>
         <div class="section-body">
-            {% if studyDeck.cardCount == 0 %}
+            {% if study_deck.card_count == 0 %}
             <div class="empty-state">This deck is empty. Add some cards to study!</div>
             {% else %}
 
@@ -80,7 +80,7 @@
 
             <div class="button-group navigation">
                 <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>&larr; Previous</button>
-                <span class="card-counter" id="cardCounter">Card 0/0</span>
+                <span class="card-counter" id="card_counter">Card 0/0</span>
                 <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next &rarr;</button>
             </div>
             <div class="shortcut-hint">Shortcuts: <strong>A</strong>/<strong>←</strong> previous, <strong>D</strong>/<strong>→</strong> next, <strong>Space</strong> reveal/hide answer</div>
@@ -92,14 +92,14 @@
 </div>
 
 <script>
-    const currentCards = {{ (studyDeck.cards if studyDeck else []) | tojson }};
+    const currentCards = {{ (study_deck.cards if study_deck else []) | tojson }};
     let currentCardIndex = 0;
     let isAnswerVisible = false;
 
     function displayCurrentCard() {
         const currentCard = currentCards[currentCardIndex];
         document.getElementById('currentCardNumber').textContent = currentCardIndex + 1;
-        document.getElementById('cardCounter').textContent = `Card ${currentCardIndex + 1} of ${currentCards.length}`;
+        document.getElementById('card_counter').textContent = `Card ${currentCardIndex + 1} of ${currentCards.length}`;
 
         const progress = ((currentCardIndex + 1) / currentCards.length) * 100;
         document.getElementById('progressBar').style.width = progress + '%';

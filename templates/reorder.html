@@ -7,8 +7,8 @@
     <div class="section">
         <div class="section-header">
             <h5>Select Deck</h5>
-            {% if selectedDeckId %}
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
+            {% if selected_deck_id %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
             {% endif %}
         </div>
         <div class="section-body">
@@ -17,19 +17,19 @@
                 <div class="form-group mb-0">
                     <label for="deck_id">Sortable Decks</label>
                     <select class="form-select" id="deck_id" name="deck_id" required>
-                        <option value="" {% if not selectedDeckId %}selected{% endif %}>Choose a deck...</option>
+                        <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
                         {% for deck in decks %}
-                        <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
-                            {{ deck.description }} ({{ deck.cardCount }} cards)
+                        <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>
+                            {{ deck.description }} ({{ deck.card_count }} cards)
                         </option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-buttons">
                     <button type="submit" class="btn btn-success">Memorize Order</button>
-                    {% if selectedDeckId %}
-                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selectedDeckId) }}">Study Cards</a>
-                    <a class="btn btn-secondary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Match Game</a>
+                    {% if selected_deck_id %}
+                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selected_deck_id) }}">Study Cards</a>
+                    <a class="btn btn-secondary" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>
                     {% endif %}
                 </div>
             </form>
@@ -42,20 +42,20 @@
         </div>
     </div>
 
-    {% if reorderDeck %}
+    {% if reorder_deck %}
     <div class="section" id="reorderSection">
         <div class="section-header success">
             <div>
-                <h5 class="mb-0">{{ reorderDeck.description }}</h5>
+                <h5 class="mb-0">{{ reorder_deck.description }}</h5>
                 <small class="opacity-75" style="font-size: 0.85rem;">Rebuild the original card order using drag/drop or arrows.</small>
             </div>
             <button type="button" class="btn-shuffle" id="reshuffleBtn">Reshuffle</button>
         </div>
         <div class="section-body">
-            {% if reorderDeck.cardCount == 0 %}
+            {% if reorder_deck.card_count == 0 %}
             <div class="empty-state">
                 <p>This deck is empty. Add some cards to play!</p>
-                <a class="btn btn-primary btn-sm" href="{{ url_for('edit', deck_id=reorderDeck.deckID) }}#deck-editor">Add cards to this deck</a>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit', deck_id=reorder_deck.deck_id) }}#deck-editor">Add cards to this deck</a>
             </div>
             {% else %}
             <div class="instructions">
@@ -76,12 +76,12 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const reorderDeck = {{ (reorderDeck if reorderDeck else {}) | tojson }};
+    const reorder_deck = {{ (reorder_deck if reorder_deck else {}) | tojson }};
     const reorderSection = document.getElementById('reorderSection');
-    if (reorderSection && reorderDeck.deckID) {
+    if (reorderSection && reorder_deck.deck_id) {
         reorderSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    if (!reorderDeck.cards || reorderDeck.cards.length === 0) {
+    if (!reorder_deck.cards || reorder_deck.cards.length === 0) {
         return;
     }
 
@@ -94,7 +94,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let activePointerDrag = null;
 
     // We keep the working order entirely in memory and re-render after every move.
-    let cardsInPlay = reorderDeck.cards.map((card) => ({ ...card }));
+    let cardsInPlay = reorder_deck.cards.map((card) => ({ ...card }));
 
     function shuffleCards() {
         for (let i = cardsInPlay.length - 1; i > 0; i--) {
@@ -132,14 +132,14 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         // Arrow moves should behave like direct swaps for consistent UX feedback.
-        const currentCardId = cardsInPlay[fromIndex].cardID;
-        const targetCardId = cardsInPlay[toIndex].cardID;
-        swapCards(currentCardId, targetCardId);
+        const currentcard_id = cardsInPlay[fromIndex].card_id;
+        const targetcard_id = cardsInPlay[toIndex].card_id;
+        swapCards(currentcard_id, targetcard_id);
     }
 
-    function swapCards(firstCardId, secondCardId) {
-        const firstIndex = cardsInPlay.findIndex((card) => card.cardID === firstCardId);
-        const secondIndex = cardsInPlay.findIndex((card) => card.cardID === secondCardId);
+    function swapCards(firstcard_id, secondcard_id) {
+        const firstIndex = cardsInPlay.findIndex((card) => card.card_id === firstcard_id);
+        const secondIndex = cardsInPlay.findIndex((card) => card.card_id === secondcard_id);
         if (firstIndex < 0 || secondIndex < 0 || firstIndex === secondIndex) {
             return;
         }
@@ -147,13 +147,13 @@ document.addEventListener('DOMContentLoaded', function() {
         // Swap two cards directly so drag/drop does not shift the whole list.
         [cardsInPlay[firstIndex], cardsInPlay[secondIndex]] = [cardsInPlay[secondIndex], cardsInPlay[firstIndex]];
         // Track exactly which two cards were swapped for targeted visual feedback.
-        lastSwappedCardIds = [firstCardId, secondCardId];
+        lastSwappedCardIds = [firstcard_id, secondcard_id];
         setStatus('Order updated. Check when you are ready.', null);
         clearHighlights();
         renderList();
     }
 
-    function beginPointerDrag(event, item, cardId) {
+    function beginPointerDrag(event, item, card_id) {
         if (event.button !== 0 || event.target.closest('.reorder-controls')) {
             return;
         }
@@ -168,7 +168,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Keep click offset so the card is grabbed exactly where user clicked.
         activePointerDrag = {
-            cardId,
+            card_id,
             sourceElement: item,
             dragGhost,
             offsetX: event.clientX - rect.left,
@@ -212,7 +212,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const { cardId, targetCardId, sourceElement, dragGhost } = activePointerDrag;
+        const { card_id, targetCardId, sourceElement, dragGhost } = activePointerDrag;
         sourceElement.classList.remove('dragging');
         sourceElement.style.visibility = '';
 
@@ -223,8 +223,8 @@ document.addEventListener('DOMContentLoaded', function() {
         clearDragOverState();
         document.body.classList.remove('dragging-active', 'dragging-invalid');
 
-        if (targetCardId && targetCardId !== cardId) {
-            swapCards(cardId, targetCardId);
+        if (targetCardId && targetCardId !== card_id) {
+            swapCards(card_id, targetCardId);
         }
 
         activePointerDrag = null;
@@ -236,7 +236,7 @@ document.addEventListener('DOMContentLoaded', function() {
         cardsInPlay.forEach((card, index) => {
             const item = document.createElement('div');
             item.className = 'reorder-item';
-            item.dataset.cardId = String(card.cardID);
+            item.dataset.cardId = String(card.card_id);
 
             const indexBadge = document.createElement('div');
             indexBadge.className = 'reorder-index';
@@ -285,7 +285,7 @@ document.addEventListener('DOMContentLoaded', function() {
             item.appendChild(controls);
 
             // Custom pointer-drag flow keeps full opacity and consistent grab-hand cursor.
-            item.addEventListener('pointerdown', (event) => beginPointerDrag(event, item, card.cardID));
+            item.addEventListener('pointerdown', (event) => beginPointerDrag(event, item, card.card_id));
 
             reorderList.appendChild(item);
         });
@@ -293,8 +293,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (lastSwappedCardIds.length === 2) {
             const [firstId, secondId] = lastSwappedCardIds;
             document.querySelectorAll('.reorder-item').forEach((item) => {
-                const cardId = Number(item.dataset.cardId);
-                if (cardId === firstId || cardId === secondId) {
+                const card_id = Number(item.dataset.cardId);
+                if (card_id === firstId || card_id === secondId) {
                     item.classList.add('just-swapped');
                 }
             });
@@ -311,16 +311,16 @@ document.addEventListener('DOMContentLoaded', function() {
         clearHighlights();
         setStatus('Checking order...', null);
 
-        const orderedCardIds = cardsInPlay.map((card) => card.cardID);
+        const ordered_card_ids = cardsInPlay.map((card) => card.card_id);
 
-        fetch('{{ url_for("checkReorder") }}', {
+        fetch('{{ url_for("check_reorder") }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                deckId: reorderDeck.deckID,
-                orderedCardIds: orderedCardIds,
+                deck_id: reorder_deck.deck_id,
+                ordered_card_ids: ordered_card_ids,
             }),
         })
             .then((response) => response.json())
@@ -335,10 +335,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                const incorrectIds = new Set((data.incorrectCardIds || []).map((id) => Number(id)));
+                 const incorrectIds = new Set((data.incorrect_card_ids || []).map((id) => Number(id)));
                 document.querySelectorAll('.reorder-item').forEach((item) => {
-                    const itemCardId = Number(item.dataset.cardId);
-                    if (incorrectIds.has(itemCardId)) {
+                    const itemcard_id = Number(item.dataset.cardId);
+                    if (incorrectIds.has(itemcard_id)) {
                         item.classList.add('incorrect');
                     }
                 });

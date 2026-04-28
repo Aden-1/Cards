@@ -15,8 +15,8 @@
         </div>
         <div class="section-body">
             <div class="form-section">
-                <form method="post" action="{{ url_for('createDeck') }}" class="form-row track-unsaved-form">
-                    <input type="hidden" name="userId" value="{{ userId }}">
+                <form method="post" action="{{ url_for('create_deck') }}" class="form-row track-unsaved-form">
+                    <input type="hidden" name="user_id" value="{{ user_id }}">
                     <div class="form-group mb-0">
                         <label for="deckDescription" class="mb-1">Deck Name</label>
                         <input type="text" class="form-control" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
@@ -39,30 +39,30 @@
                 <h5 class="mb-0">Your Decks</h5>
                 <small>{{ decks|length }} total deck{{ '' if decks|length == 1 else 's' }}</small>
             </div>
-            <button id="decksToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#yourDecksCollapse" aria-expanded="{{ 'false' if selectedDeck else 'true' }}" aria-controls="yourDecksCollapse">
-                {{ 'Open' if selectedDeck else 'Close' }}
+            <button id="decksToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#yourDecksCollapse" aria-expanded="{{ 'false' if selected_deck else 'true' }}" aria-controls="yourDecksCollapse">
+                {{ 'Open' if selected_deck else 'Close' }}
             </button>
         </div>
-        <div id="yourDecksCollapse" class="collapse {{ '' if selectedDeck else 'show' }}">
+        <div id="yourDecksCollapse" class="collapse {{ '' if selected_deck else 'show' }}">
             <div class="section-body">
                 {% if decks %}
                 <div class="deck-grid polished">
                     {% for deck in decks %}
-                    <article class="deck-card {{ 'active' if selectedDeckId == deck.deckID else '' }}">
+                    <article class="deck-card {{ 'active' if selected_deck_id == deck.deck_id else '' }}">
                         <div class="deck-card-top">
                             <h6 class="deck-card-title">{{ deck.description }}</h6>
                             <span class="deck-card-mode {{ 'sortable' if deck.sortable else 'shuffled' }}">{{ 'Sortable' if deck.sortable else 'Shuffled' }}</span>
                         </div>
-                        <div class="deck-card-meta">{{ deck.cardCount }} card{{ '' if deck.cardCount == 1 else 's' }}</div>
+                        <div class="deck-card-meta">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
                         <div class="deck-card-actions">
-                            <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deckID) }}#deck-editor">Edit</a>
+                            <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deck_id) }}#deck-editor">Edit</a>
                             <details class="delete-confirm">
                                 <summary class="btn btn-danger btn-sm">Delete</summary>
                                 <div class="delete-confirm-panel">
                                     <p class="mb-2">Delete this entire deck and all cards?</p>
                                     <div class="delete-confirm-actions">
-                                        <form method="post" action="{{ url_for('deleteDeck') }}">
-                                            <input type="hidden" name="deckId" value="{{ deck.deckID }}">
+                                        <form method="post" action="{{ url_for('delete_deck') }}">
+                                            <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
                                             <button type="submit" class="btn btn-danger btn-sm">Yes, delete deck</button>
                                         </form>
                                         <button type="button" class="btn btn-secondary btn-sm close-delete-panel">Cancel</button>
@@ -83,29 +83,29 @@
         </div>
     </div>
 
-    {% if selectedDeck %}
+    {% if selected_deck %}
     <div class="section" id="deck-editor">
         <div class="section-header success">
             <div>
-                <h5 class="mb-0">Editing: {{ selectedDeck.description }}</h5>
-                <small>{{ selectedDeck.cardCount }} cards and {{ selectedDeck.answerCount }} answers</small>
+                <h5 class="mb-0">Editing: {{ selected_deck.description }}</h5>
+                <small>{{ selected_deck.card_count }} cards and {{ selected_deck.answer_count }} answers</small>
             </div>
             <a class="btn btn-secondary btn-sm" href="{{ url_for('edit') }}#decks-section">Done</a>
         </div>
         <div class="section-body">
             <div class="form-section mb-3">
                 <h6 class="mb-3">Deck Settings</h6>
-                <form method="post" action="{{ url_for('editDeck') }}" class="deck-settings-form track-unsaved-form">
-                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                <form method="post" action="{{ url_for('edit_deck') }}" class="deck-settings-form track-unsaved-form">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
                     <div class="deck-settings-top-row">
                         <div class="form-group mb-0">
                             <label for="editDeckDescription" class="mb-1">Name</label>
-                            <input type="text" class="form-control" id="editDeckDescription" name="description" value="{{ selectedDeck.description }}" required>
+                            <input type="text" class="form-control" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
                         </div>
                     </div>
                     <div class="deck-settings-bottom-row">
                         <div class="form-check mb-0">
-                            <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selectedDeck.sortable %}checked{% endif %}>
+                            <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}>
                             <label class="form-check-label" for="editDeckSortable">Keep in order (sortable)</label>
                         </div>
                         <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
@@ -115,8 +115,8 @@
 
             <div class="form-section mb-4">
                 <h6 class="mb-3">Add Card</h6>
-                <form method="post" action="{{ url_for('addCard') }}" class="add-card-form track-unsaved-form">
-                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                <form method="post" action="{{ url_for('add_card') }}" class="add-card-form track-unsaved-form">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
                     <div class="add-card-fields-grid">
                         <div class="form-group mb-0 add-card-question-field">
                             <label for="question" class="form-label">Question</label>
@@ -135,43 +135,43 @@
             </div>
 
             <h6 class="mb-3">Cards in Deck</h6>
-            {% if selectedDeck.sortable %}
+            {% if selected_deck.sortable %}
             <div class="drag-instructions mb-2">Drag one card onto another to swap order. Swapped cards are briefly highlighted.</div>
             {% endif %}
 
-            {% if selectedCards %}
+            {% if selected_cards %}
             <div class="cards-list-stack" id="editableCardsList">
-                {% for card in selectedCards %}
-                <article class="card-editor-item {% if selectedDeck.sortable %}sortable-card{% endif %}" data-card-id="{{ card.cardID }}">
+                {% for card in selected_cards %}
+                <article class="card-editor-item {% if selected_deck.sortable %}sortable-card{% endif %}" data-card-id="{{ card.card_id }}">
                     <div class="card-editor-head">
                         <div>
                             <div class="card-item-question mb-1">{{ card.question }}</div>
-                            {% if selectedDeck.sortable %}
+                            {% if selected_deck.sortable %}
                             <div class="card-order-meta" data-role="card-position">Position {{ card.position }}</div>
                             {% endif %}
                         </div>
-                        {% if selectedDeck.sortable %}
+                        {% if selected_deck.sortable %}
                         <div class="drag-grip" aria-hidden="true">::</div>
                         {% endif %}
                     </div>
 
-                    {% if card.answerObjects %}
+                    {% if card.answer_objects %}
                     <div class="answer-management-block">
                         <div class="answer-management-label">
-                            {{ card.answerObjects|length }} answer{{ '' if card.answerObjects|length == 1 else 's' }} for this question
+                            {{ card.answer_objects|length }} answer{{ '' if card.answer_objects|length == 1 else 's' }} for this question
                         </div>
                         <div class="answer-management-help">Choose "Remove answer" to delete one specific answer from this question.</div>
                         <div class="answer-list">
-                            {% for answer in card.answerObjects %}
+                            {% for answer in card.answer_objects %}
                             <div class="answer-row">
                                 <span class="answer-row-text">{{ answer.answer }}</span>
                                 <details class="delete-confirm compact">
                                     <summary class="btn btn-outline-danger btn-sm">Remove answer</summary>
                                     <div class="delete-confirm-panel compact">
                                         <p class="mb-2">Remove this answer from the current question?</p>
-                                        <form method="post" action="{{ url_for('deleteAnswer') }}">
-                                            <input type="hidden" name="answerId" value="{{ answer.answerID }}">
-                                            <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                                        <form method="post" action="{{ url_for('delete_answer') }}">
+                                            <input type="hidden" name="answer_id" value="{{ answer.answer_id }}">
+                                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
                                             <input type="hidden" name="context" value="edit">
                                             <button type="submit" class="btn btn-danger btn-sm">Yes, remove answer</button>
                                         </form>
@@ -187,9 +187,9 @@
                         <details class="flex-grow-1">
                             <summary class="btn btn-sm btn-primary">Edit Question + Answers</summary>
                             <div class="mt-3 p-3 bg-surface rounded">
-                                <form method="post" action="{{ url_for('editCard') }}" class="track-unsaved-form">
-                                    <input type="hidden" name="cardId" value="{{ card.cardID }}">
-                                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                                <form method="post" action="{{ url_for('edit_card') }}" class="track-unsaved-form">
+                                    <input type="hidden" name="card_id" value="{{ card.card_id }}">
+                                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
                                     <div class="form-group">
                                         <label class="form-label">Question</label>
                                         <input type="text" class="form-control" name="question" value="{{ card.question }}" required>
@@ -207,9 +207,9 @@
                             <summary class="btn btn-danger btn-sm">Delete Card</summary>
                             <div class="delete-confirm-panel">
                                 <p class="mb-2">Delete this card and all of its answers?</p>
-                                <form method="post" action="{{ url_for('deleteCard') }}">
-                                    <input type="hidden" name="cardId" value="{{ card.cardID }}">
-                                    <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
+                                <form method="post" action="{{ url_for('delete_card') }}">
+                                    <input type="hidden" name="card_id" value="{{ card.card_id }}">
+                                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
                                     <button type="submit" class="btn btn-danger btn-sm">Yes, delete card</button>
                                 </form>
                             </div>
@@ -230,7 +230,7 @@
     {% endif %}
 </div>
 
-{% if selectedDeck %}
+{% if selected_deck %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const editor = document.getElementById('deck-editor');
@@ -298,7 +298,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     const cardsList = document.getElementById('editableCardsList');
-    const sortableEnabled = {{ 'true' if selectedDeck and selectedDeck.sortable else 'false' }};
+    const sortableEnabled = {{ 'true' if selected_deck and selected_deck.sortable else 'false' }};
     if (!cardsList || !sortableEnabled) {
         return;
     }
@@ -333,7 +333,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         activeDrag = {
             source: item,
-            cardId: Number(item.dataset.cardId),
+            card_id: Number(item.dataset.cardId),
             ghost,
             offsetX: event.clientX - rect.left,
             offsetY: event.clientY - rect.top,
@@ -372,7 +372,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const { source, target, cardId, ghost } = activeDrag;
+        const { source, target, card_id, ghost } = activeDrag;
         source.classList.remove('dragging');
         source.style.visibility = '';
         if (ghost.parentNode) {
@@ -382,7 +382,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.body.classList.remove('dragging-active', 'dragging-invalid');
 
         if (target && target !== source) {
-            const targetCardId = Number(target.dataset.cardId);
+            const targetcard_id = Number(target.dataset.cardId);
             const sourceNext = source.nextSibling;
             const targetNext = target.nextSibling;
 
@@ -404,12 +404,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 target.classList.remove('just-swapped');
             }, 700);
 
-            try {
-                const response = await fetch('{{ url_for("swapCards") }}', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cardId: cardId, targetCardId: targetCardId }),
-                });
+             try {
+                 const response = await fetch('{{ url_for("swap_cards") }}', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ card_id: card_id, target_card_id: targetcard_id }),
+                 });
                 const data = await response.json();
                 if (!data.success) {
                     window.location.reload();

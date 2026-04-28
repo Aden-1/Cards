@@ -26,129 +26,129 @@ def index():
 
 # Display the deck and card management page
 def edit():
-    userId = 1  # Default user for now
-    from app import getUserDecks, getDeckDetails
+    user_id = 1  # Default user for now
+    from app import get_user_decks, get_deck_details
 
-    decks = getUserDecks(userId)
-    deckData = [{
-        'deckID': deck.deckID,
+    decks = get_user_decks(user_id)
+    deck_data = [{
+        'deck_id': deck.deck_id,
         'description': deck.description,
         'sortable': deck.sortable,
-        'cardCount': len(deck.cards),
+        'card_count': len(deck.cards),
     } for deck in decks]
 
-    selectedDeckId = _int_value(request.args.get('deck_id'))
-    selectedDeck = None
-    selectedCards = []
-    if selectedDeckId:
-        selectedDeck = getDeckDetails(selectedDeckId, shuffle_cards=False, shuffle_answers=False)
-        if selectedDeck and selectedDeck['deckID']:
-            selectedCards = selectedDeck['cards']
+    selected_deck_id = _int_value(request.args.get('deck_id'))
+    selected_deck = None
+    selected_cards = []
+    if selected_deck_id:
+        selected_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False)
+        if selected_deck and selected_deck['deck_id']:
+            selected_cards = selected_deck['cards']
         else:
-            selectedDeck = None
+            selected_deck = None
 
-    return render_template('edit.html', userId=userId, decks=deckData, selectedDeck=selectedDeck, selectedCards=selectedCards, selectedDeckId=selectedDeckId)
+    return render_template('edit.html', user_id=user_id, decks=deck_data, selected_deck=selected_deck, selected_cards=selected_cards, selected_deck_id=selected_deck_id)
 
 
 # Display the study page for learning cards
 def view():
-    userId = 1  # Default user for now
-    from app import getUserDecks, getDeckDetails
+    user_id = 1  # Default user for now
+    from app import get_user_decks, get_deck_details
 
-    decks = getUserDecks(userId)
-    deckData = [{
-        'deckID': deck.deckID,
+    decks = get_user_decks(user_id)
+    deck_data = [{
+        'deck_id': deck.deck_id,
         'description': deck.description,
         'sortable': deck.sortable,
-        'cardCount': len(deck.cards),
+        'card_count': len(deck.cards),
     } for deck in decks]
 
-    selectedDeckId = _int_value(request.args.get('deck_id'))
-    studyDeck = getDeckDetails(selectedDeckId, shuffle_cards=False, shuffle_answers=False) if selectedDeckId else None
+    selected_deck_id = _int_value(request.args.get('deck_id'))
+    study_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False) if selected_deck_id else None
 
-    return render_template('view.html', userId=userId, decks=deckData, studyDeck=studyDeck, selectedDeckId=selectedDeckId)
+    return render_template('view.html', user_id=user_id, decks=deck_data, study_deck=study_deck, selected_deck_id=selected_deck_id)
 
 
 # Display the matching game page
 def match():
-    userId = 1  # Default user for now
-    from app import getUserDecks, getDeckStudyData
+    user_id = 1  # Default user for now
+    from app import get_user_decks, get_deck_study_data
 
-    decks = getUserDecks(userId)
-    deckData = [{
-        'deckID': deck.deckID,
+    decks = get_user_decks(user_id)
+    deck_data = [{
+        'deck_id': deck.deck_id,
         'description': deck.description,
         'sortable': deck.sortable,
-        'cardCount': len(deck.cards),
+        'card_count': len(deck.cards),
     } for deck in decks]
 
-    selectedDeckId = _int_value(request.args.get('deck_id'))
-    selectedQuestionId = _int_value(request.args.get('selected_question'))
-    errorMessage = request.args.get('error')
-    matchDeck = getDeckStudyData(selectedDeckId, shuffle=True) if selectedDeckId else None
+    selected_deck_id = _int_value(request.args.get('deck_id'))
+    selected_question_id = _int_value(request.args.get('selected_question'))
+    error_message = request.args.get('error')
+    match_deck = get_deck_study_data(selected_deck_id, shuffle=True) if selected_deck_id else None
 
     return render_template(
         'match.html',
-        userId=userId,
-        decks=deckData,
-        matchDeck=matchDeck,
-        selectedDeckId=selectedDeckId,
-        selectedQuestionId=selectedQuestionId,
-        errorMessage=errorMessage,
+        user_id=user_id,
+        decks=deck_data,
+        match_deck=match_deck,
+        selected_deck_id=selected_deck_id,
+        selected_question_id=selected_question_id,
+        error_message=error_message,
     )
 
 
 def reorder():
-    userId = 1  # Default user for now
-    from app import getUserDecks, getDeckDetails
+    user_id = 1  # Default user for now
+    from app import get_user_decks, get_deck_details
 
-    decks = getUserDecks(userId)
+    decks = get_user_decks(user_id)
     # Reorder game is only valid for decks explicitly marked sortable.
-    sortableDecks = [deck for deck in decks if deck.sortable]
-    deckData = [{
-        'deckID': deck.deckID,
+    sortable_decks = [deck for deck in decks if deck.sortable]
+    deck_data = [{
+        'deck_id': deck.deck_id,
         'description': deck.description,
         'sortable': deck.sortable,
-        'cardCount': len(deck.cards),
-    } for deck in sortableDecks]
+        'card_count': len(deck.cards),
+    } for deck in sortable_decks]
 
-    selectedDeckId = _int_value(request.args.get('deck_id'))
-    sortableDeckIds = {deck['deckID'] for deck in deckData}
-    if selectedDeckId not in sortableDeckIds:
-        selectedDeckId = None
+    selected_deck_id = _int_value(request.args.get('deck_id'))
+    sortable_deck_ids = {deck['deck_id'] for deck in deck_data}
+    if selected_deck_id not in sortable_deck_ids:
+        selected_deck_id = None
 
     # Start each round with a shuffled card list for the reorder challenge.
-    reorderDeck = getDeckDetails(selectedDeckId, shuffle_cards=True, shuffle_answers=False) if selectedDeckId else None
+    reorder_deck = get_deck_details(selected_deck_id, shuffle_cards=True, shuffle_answers=False) if selected_deck_id else None
 
     return render_template(
         'reorder.html',
-        userId=userId,
-        decks=deckData,
-        reorderDeck=reorderDeck,
-        selectedDeckId=selectedDeckId,
+        user_id=user_id,
+        decks=deck_data,
+        reorder_deck=reorder_deck,
+        selected_deck_id=selected_deck_id,
     )
 
 
 ## Deck route handlers
 
 # Create a new deck
-def createDeckRoute():
-    from app import createDeck
-    
+def create_deck_route():
+    from app import create_deck
+
     data = _request_data()
-    userId = _int_value(data.get('userId'))
+    user_id = _int_value(data.get('user_id'))
     description = data.get('description')
     sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
 
-    if not userId or not description:
+    if not user_id or not description:
         return jsonify({'error': 'User ID and description are required'}), 400
     
-    deck = createDeck(userId, description, sortable)
+    deck = create_deck(user_id, description, sortable)
     if request.is_json:
-        return jsonify({'success': True, 'deckID': deck.deckID, 'description': deck.description})
+        return jsonify({'success': True, 'deck_id': deck.deck_id, 'description': deck.description})
     return _redirect_with_fragment(
         'edit',
-        deck_id=deck.deckID,
+        deck_id=deck.deck_id,
         fragment='deck-editor',
         notice='Deck created',
         level='success',
@@ -156,61 +156,61 @@ def createDeckRoute():
 
 
 # Get all decks for a user
-def getDeckListRoute():
-    from app import getUserDecks
-    
-    data = _request_data()
-    userId = _int_value(data.get('userId'))
+def get_deck_list_route():
+    from app import get_user_decks
 
-    if not userId:
+    data = _request_data()
+    user_id = _int_value(data.get('user_id'))
+
+    if not user_id:
         return jsonify({'error': 'User ID is required'}), 400
     
-    decks = getUserDecks(userId)
+    decks = get_user_decks(user_id)
     if decks:
-        decksData = [{'deckID': d.deckID, 'description': d.description, 'sortable': d.sortable, 'cardCount': len(d.cards)} for d in decks]
-        return jsonify({'success': True, 'decks': decksData})
+        decks_data = [{'deck_id': d.deck_id, 'description': d.description, 'sortable': d.sortable, 'card_count': len(d.cards)} for d in decks]
+        return jsonify({'success': True, 'decks': decks_data})
     else:
         return jsonify({'success': True, 'decks': []})
 
 
 # Delete a deck
-def deleteDeckRoute():
-    from app import deleteDeck
-    
-    data = _request_data()
-    deckId = _int_value(data.get('deckId'))
+def delete_deck_route():
+    from app import delete_deck
 
-    if not deckId:
+    data = _request_data()
+    deck_id = _int_value(data.get('deck_id'))
+
+    if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
     
-    deleted = deleteDeck(deckId)
+    deleted = delete_deck(deck_id)
     if deleted:
         if request.is_json:
-            return jsonify({'success': True, 'deckId': deckId})
+            return jsonify({'success': True, 'deck_id': deck_id})
         return _redirect_with_fragment('edit', fragment='decks-section', notice='Deck deleted', level='success')
     else:
         return jsonify({'error': 'Deck not found'}), 404
 
 
 # Edit a deck
-def editDeckRoute():
-    from app import editDeck
-    
+def edit_deck_route():
+    from app import edit_deck
+
     data = _request_data()
-    deckId = _int_value(data.get('deckId'))
+    deck_id = _int_value(data.get('deck_id'))
     description = data.get('description')
     sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
 
-    if not deckId or not description:
+    if not deck_id or not description:
         return jsonify({'error': 'Deck ID and description are required'}), 400
     
-    deck = editDeck(deckId, description, sortable)
+    deck = edit_deck(deck_id, description, sortable)
     if deck:
         if request.is_json:
-            return jsonify({'success': True, 'deckID': deck.deckID})
+            return jsonify({'success': True, 'deck_id': deck.deck_id})
         return _redirect_with_fragment(
             'edit',
-            deck_id=deck.deckID,
+            deck_id=deck.deck_id,
             fragment='deck-editor',
             notice='Deck saved',
             level='success',
@@ -222,89 +222,89 @@ def editDeckRoute():
 ## Card route handlers
 
 # Add a new card to a deck
-def addCardRoute():
-    from app import addCard
-    
+def add_card_route():
+    from app import add_card
+
     data = _request_data()
-    deckId = _int_value(data.get('deckId'))
+    deck_id = _int_value(data.get('deck_id'))
     question = data.get('question')
     answers = data.get('answers')
     
-    if not deckId or not question or not answers:
+    if not deck_id or not question or not answers:
         return jsonify({'error': 'Deck ID, question, and answers are required'}), 400
     try:
-        card = addCard(deckId, question, answers)
+        card = add_card(deck_id, question, answers)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
     if request.is_json:
-        return jsonify({'success': True, 'cardID': card.cardID})
-    return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card added', level='success')
+        return jsonify({'success': True, 'card_id': card.card_id})
+    return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card added', level='success')
 
 
 # Delete a card
-def deleteCardRoute():
-    from app import deleteCard
-    
-    data = _request_data()
-    cardId = _int_value(data.get('cardId'))
-    deckId = _int_value(data.get('deckId'))
+def delete_card_route():
+    from app import delete_card
 
-    if not cardId:
+    data = _request_data()
+    card_id = _int_value(data.get('card_id'))
+    deck_id = _int_value(data.get('deck_id'))
+
+    if not card_id:
         return jsonify({'error': 'Card ID is required'}), 400
     
-    deleted = deleteCard(cardId)
+    deleted = delete_card(card_id)
     if deleted:
         if request.is_json:
-            return jsonify({'success': True, 'cardId': cardId})
-        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card deleted', level='success') if deckId else _redirect_with_fragment('edit', fragment='decks-section', notice='Card deleted', level='success')
+            return jsonify({'success': True, 'card_id': card_id})
+        return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card deleted', level='success') if deck_id else _redirect_with_fragment('edit', fragment='decks-section', notice='Card deleted', level='success')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
 
 # Edit a card
-def editCardRoute():
-    from app import editCard
-    
+def edit_card_route():
+    from app import edit_card
+
     data = _request_data()
-    cardId = _int_value(data.get('cardId'))
-    deckId = _int_value(data.get('deckId'))
+    card_id = _int_value(data.get('card_id'))
+    deck_id = _int_value(data.get('deck_id'))
     question = data.get('question')
     answers = data.get('answers')
     
-    if not cardId or not question:
+    if not card_id or not question:
         return jsonify({'error': 'Card ID and question are required'}), 400
     
-    card = editCard(cardId, question, answers)
+    card = edit_card(card_id, question, answers)
     if card:
         if isinstance(card, dict) and card.get('deleted'):
             if request.is_json:
-                return jsonify({'success': True, 'cardID': cardId, 'deleted': True})
-            return _redirect_with_fragment('edit', deck_id=card.get('deckID') or deckId, fragment='deck-editor', notice='Card updated', level='success')
+                return jsonify({'success': True, 'card_id': card_id, 'deleted': True})
+            return _redirect_with_fragment('edit', deck_id=card.get('deck_id') or deck_id, fragment='deck-editor', notice='Card updated', level='success')
         if request.is_json:
-            return jsonify({'success': True, 'cardID': card.cardID})
-        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card updated', level='success')
+            return jsonify({'success': True, 'card_id': card.card_id})
+        return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card updated', level='success')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
 
 # Get all cards from a deck
-def listCardsRoute():
-    from app import listCardsFromDeck, getDeckDetails
+def list_cards_route():
+    from app import list_cards_from_deck, get_deck_details
 
     data = _request_data()
-    deckId = _int_value(data.get('deckId'))
+    deck_id = _int_value(data.get('deck_id'))
     shuffle = str(data.get('shuffle', False)).lower() in ('1', 'true', 'yes', 'on')
     detailed = str(data.get('detailed', False)).lower() in ('1', 'true', 'yes', 'on')
 
-    if not deckId:
+    if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
     
     if detailed:
-        deck = getDeckDetails(deckId, shuffle_cards=shuffle, shuffle_answers=shuffle)
+        deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
         cards = deck['cards'] if deck else None
     else:
-        cards = listCardsFromDeck(deckId, detailed=False, shuffle=shuffle)
+        cards = list_cards_from_deck(deck_id, detailed=False, shuffle=shuffle)
     if cards is not None:
         return jsonify({'success': True, 'cards': cards})
     else:
@@ -312,16 +312,16 @@ def listCardsRoute():
 
 
 # Get a single card with all answers
-def getCardRoute():
-    from app import getCardFromDeck
-    
-    data = _request_data()
-    cardId = _int_value(data.get('cardId'))
+def get_card_route():
+    from app import get_card_from_deck
 
-    if not cardId:
+    data = _request_data()
+    card_id = _int_value(data.get('card_id'))
+
+    if not card_id:
         return jsonify({'error': 'Card ID is required'}), 400
     
-    card = getCardFromDeck(cardId)
+    card = get_card_from_deck(card_id)
     if card:
         return jsonify({'success': True, 'card': card})
     else:
@@ -329,155 +329,155 @@ def getCardRoute():
 
 
 # Match an answer to a question (for matching game - does NOT delete from database)
-def matchAnswerRoute():
+def match_answer_route():
     from models import CardAnswer
 
     data = _request_data()
-    answerId = _int_value(data.get('answerId'))
-    selectedQuestionId = _int_value(data.get('selectedQuestionId'))
+    answer_id = _int_value(data.get('answer_id'))
+    selected_question_id = _int_value(data.get('selected_question_id'))
 
-    if not answerId:
+    if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answerId)
+    answer = CardAnswer.query.get(answer_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
 
-    if not selectedQuestionId:
+    if not selected_question_id:
         return jsonify({'error': 'Select a question tile first'}), 400
 
-    if answer.cardID != selectedQuestionId:
+    if answer.card_id != selected_question_id:
         return jsonify({'error': 'That answer does not match the selected question'}), 400
 
     # Check if this is the last answer for the card
-    remainingAnswers = CardAnswer.query.filter_by(cardID=selectedQuestionId).count() - 1
-    cardDeleted = remainingAnswers == 0
+    remaining_answers = CardAnswer.query.filter_by(card_id=selected_question_id).count() - 1
+    card_deleted = remaining_answers == 0
 
     return jsonify({
         'success': True,
-        'answerDeleted': True,
-        'cardDeleted': cardDeleted,
-        'cardID': selectedQuestionId,
-        'remainingAnswers': remainingAnswers
+        'answer_deleted': True,
+        'card_deleted': card_deleted,
+        'card_id': selected_question_id,
+        'remaining_answers': remaining_answers
     })
 
 
 # Delete a single answer from a card
-def deleteAnswerRoute():
-    from app import deleteAnswer
+def delete_answer_route():
+    from app import delete_answer
     from models import CardAnswer
 
     data = _request_data()
-    answerId = _int_value(data.get('answerId'))
-    deckId = _int_value(data.get('deckId'))
-    selectedQuestionId = _int_value(data.get('selectedQuestionId'))
+    answer_id = _int_value(data.get('answer_id'))
+    deck_id = _int_value(data.get('deck_id'))
+    selected_question_id = _int_value(data.get('selected_question_id'))
     context = data.get('context')
 
-    if not answerId:
+    if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answerId)
+    answer = CardAnswer.query.get(answer_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
 
     if context == 'edit':
-        deleted = deleteAnswer(answerId)
+        deleted = delete_answer(answer_id)
         if deleted:
             if request.is_json:
                 return jsonify({'success': True, **deleted})
-            return _redirect_with_fragment('edit', deck_id=deleted.get('deckID') or deckId, fragment='deck-editor', notice='Answer removed', level='success')
+            return _redirect_with_fragment('edit', deck_id=deleted.get('deck_id') or deck_id, fragment='deck-editor', notice='Answer removed', level='success')
         return jsonify({'error': 'Answer not found'}), 404
 
-    if not selectedQuestionId:
+    if not selected_question_id:
         if request.is_json:
             return jsonify({'error': 'Select a question tile first'}), 400
-        return redirect(url_for('match', deck_id=deckId or answer.card.deckID, error='Select a question tile first'))
+        return redirect(url_for('match', deck_id=deck_id or answer.card.deck_id, error='Select a question tile first'))
 
-    if answer.cardID != selectedQuestionId:
+    if answer.card_id != selected_question_id:
         if request.is_json:
             return jsonify({'error': 'That answer does not match the selected question'}), 400
-        return redirect(url_for('match', deck_id=deckId or answer.card.deckID, selected_question=selectedQuestionId, error='That answer does not match the selected question'))
+        return redirect(url_for('match', deck_id=deck_id or answer.card.deck_id, selected_question=selected_question_id, error='That answer does not match the selected question'))
 
-    deleted = deleteAnswer(answerId)
+    deleted = delete_answer(answer_id)
     if deleted:
-        nextSelected = None if deleted.get('cardDeleted') else selectedQuestionId
+        next_selected = None if deleted.get('card_deleted') else selected_question_id
         if request.is_json:
             return jsonify({'success': True, **deleted})
-        return redirect(url_for('match', deck_id=deleted.get('deckID') or deckId, selected_question=nextSelected or ''))
+        return redirect(url_for('match', deck_id=deleted.get('deck_id') or deck_id, selected_question=next_selected or ''))
     return jsonify({'error': 'Answer not found'}), 404
 
 
-def moveCardRoute():
-    from app import moveCardInDeck
+def move_card_route():
+    from app import move_card_in_deck
 
     data = _request_data()
-    cardId = _int_value(data.get('cardId'))
-    deckId = _int_value(data.get('deckId'))
+    card_id = _int_value(data.get('card_id'))
+    deck_id = _int_value(data.get('deck_id'))
     direction = str(data.get('direction', '')).lower()
 
-    if not cardId or direction not in ('up', 'down'):
+    if not card_id or direction not in ('up', 'down'):
         return jsonify({'error': 'Card ID and valid direction are required'}), 400
 
-    result = moveCardInDeck(cardId, direction)
+    result = move_card_in_deck(card_id, direction)
     if not result.get('success'):
         return jsonify({'error': result.get('error', 'Unable to move card')}), 400
 
     if request.is_json:
         return jsonify({'success': True, **result})
-    return _redirect_with_fragment('edit', deck_id=result.get('deckID') or deckId, fragment='deck-editor')
+    return _redirect_with_fragment('edit', deck_id=result.get('deck_id') or deck_id, fragment='deck-editor')
 
 
-def swapCardsRoute():
-    from app import swapCardsInDeck
+def swap_cards_route():
+    from app import swap_cards_in_deck
 
     payload = request.get_json(silent=True) or {}
-    cardId = _int_value(payload.get('cardId'))
-    targetCardId = _int_value(payload.get('targetCardId'))
+    card_id = _int_value(payload.get('card_id'))
+    target_card_id = _int_value(payload.get('target_card_id'))
 
-    if not cardId or not targetCardId:
+    if not card_id or not target_card_id:
         return jsonify({'error': 'Both card IDs are required'}), 400
 
-    result = swapCardsInDeck(cardId, targetCardId)
+    result = swap_cards_in_deck(card_id, target_card_id)
     if not result.get('success'):
         return jsonify({'error': result.get('error', 'Unable to swap cards')}), 400
 
     return jsonify({'success': True, **result})
 
 
-def checkReorderRoute():
-    from app import checkDeckOrder
+def check_reorder_route():
+    from app import check_deck_order
 
     payload = request.get_json(silent=True) or {}
-    deckId = _int_value(payload.get('deckId'))
-    orderedCardIds = payload.get('orderedCardIds')
+    deck_id = _int_value(payload.get('deck_id'))
+    ordered_card_ids = payload.get('ordered_card_ids')
 
-    if not deckId:
+    if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
 
-    if not isinstance(orderedCardIds, list):
-        return jsonify({'error': 'orderedCardIds must be a list'}), 400
+    if not isinstance(ordered_card_ids, list):
+        return jsonify({'error': 'ordered_card_ids must be a list'}), 400
 
     try:
         # Normalize IDs from JSON so backend comparison uses consistent ints.
-        normalizedCardIds = [int(cardId) for cardId in orderedCardIds]
+        normalized_card_ids = [int(card_id) for card_id in ordered_card_ids]
     except (TypeError, ValueError):
-        return jsonify({'error': 'orderedCardIds must contain valid card IDs'}), 400
+        return jsonify({'error': 'ordered_card_ids must contain valid card IDs'}), 400
 
-    result = checkDeckOrder(deckId, normalizedCardIds)
+    result = check_deck_order(deck_id, normalized_card_ids)
     if not result.get('valid'):
         return jsonify({'error': result.get('error', 'Unable to validate order')}), 400
 
     return jsonify({
         'success': True,
-        'isCorrect': result['isCorrect'],
-        'incorrectCardIds': result['incorrectCardIds'],
-        'expectedOrder': result['expectedOrder'],
-        'receivedOrder': result['receivedOrder'],
+        'is_correct': result['is_correct'],
+        'incorrect_card_ids': result['incorrect_card_ids'],
+        'expected_order': result['expected_order'],
+        'received_order': result['received_order'],
     })
 
 
 # Register all routes with Flask
-def registerRoutes(app):
+def register_routes(app):
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
@@ -486,19 +486,19 @@ def registerRoutes(app):
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
     
     # Deck operations
-    app.add_url_rule('/create_deck', endpoint='createDeck', view_func=createDeckRoute, methods=['POST'])
-    app.add_url_rule('/get_decks', endpoint='getDecks', view_func=getDeckListRoute, methods=['POST'])
-    app.add_url_rule('/delete_deck', endpoint='deleteDeck', view_func=deleteDeckRoute, methods=['POST'])
-    app.add_url_rule('/edit_deck', endpoint='editDeck', view_func=editDeckRoute, methods=['POST'])
-    
+    app.add_url_rule('/create_deck', endpoint='create_deck', view_func=create_deck_route, methods=['POST'])
+    app.add_url_rule('/get_decks', endpoint='get_decks', view_func=get_deck_list_route, methods=['POST'])
+    app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=delete_deck_route, methods=['POST'])
+    app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=edit_deck_route, methods=['POST'])
+
     # Card operations
-    app.add_url_rule('/add_card', endpoint='addCard', view_func=addCardRoute, methods=['POST'])
-    app.add_url_rule('/delete_card', endpoint='deleteCard', view_func=deleteCardRoute, methods=['POST'])
-    app.add_url_rule('/match_answer', endpoint='matchAnswer', view_func=matchAnswerRoute, methods=['POST'])
-    app.add_url_rule('/delete_answer', endpoint='deleteAnswer', view_func=deleteAnswerRoute, methods=['POST'])
-    app.add_url_rule('/list_cards', endpoint='listCards', view_func=listCardsRoute, methods=['POST'])
-    app.add_url_rule('/get_card', endpoint='getCard', view_func=getCardRoute, methods=['POST'])
-    app.add_url_rule('/edit_card', endpoint='editCard', view_func=editCardRoute, methods=['POST'])
-    app.add_url_rule('/move_card', endpoint='moveCard', view_func=moveCardRoute, methods=['POST'])
-    app.add_url_rule('/swap_cards', endpoint='swapCards', view_func=swapCardsRoute, methods=['POST'])
-    app.add_url_rule('/check_reorder', endpoint='checkReorder', view_func=checkReorderRoute, methods=['POST'])
+    app.add_url_rule('/add_card', endpoint='add_card', view_func=add_card_route, methods=['POST'])
+    app.add_url_rule('/delete_card', endpoint='delete_card', view_func=delete_card_route, methods=['POST'])
+    app.add_url_rule('/match_answer', endpoint='match_answer', view_func=match_answer_route, methods=['POST'])
+    app.add_url_rule('/delete_answer', endpoint='delete_answer', view_func=delete_answer_route, methods=['POST'])
+    app.add_url_rule('/list_cards', endpoint='list_cards', view_func=list_cards_route, methods=['POST'])
+    app.add_url_rule('/get_card', endpoint='get_card', view_func=get_card_route, methods=['POST'])
+    app.add_url_rule('/edit_card', endpoint='edit_card', view_func=edit_card_route, methods=['POST'])
+    app.add_url_rule('/move_card', endpoint='move_card', view_func=move_card_route, methods=['POST'])
+    app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=swap_cards_route, methods=['POST'])
+    app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=check_reorder_route, methods=['POST'])
