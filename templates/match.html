@@ -29,9 +29,10 @@
                     </select>
                 </div>
                 <div class="form-buttons">
-                    <button type="submit" class="btn btn-success">Play</button>
+                    <button type="submit" class="btn btn-success">Start Match</button>
                     {% if selectedDeckId %}
-                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selectedDeckId) }}">Study</a>
+                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selectedDeckId) }}">Study Cards</a>
+                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selectedDeckId) }}">Memorize Order</a>
                     {% endif %}
                 </div>
             </form>
@@ -43,7 +44,7 @@
 
     <!-- Game -->
     {% if matchDeck %}
-    <div class="section">
+    <div class="section" id="matchGameSection">
         <div class="section-header success">
             <div>
                 <h5 class="mb-0">{{ matchDeck.description }}</h5>
@@ -118,6 +119,13 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     let selectedQuestionId = null;
+
+    {% if matchDeck %}
+    const matchGameSection = document.getElementById('matchGameSection');
+    if (matchGameSection) {
+        matchGameSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    {% endif %}
 
     function updateStats() {
         const questionTiles = document.querySelectorAll('.match-tile.question-tile:not(.disabled)');

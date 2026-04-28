@@ -10,15 +10,18 @@
                 <h1 class="hero-title">Learn faster with cards that feel alive</h1>
                 <p class="hero-subtitle">Build decks, study with focus mode, and reinforce memory with a playful matching challenge.</p>
 
-                <div class="button-grid">
+                <div class="button-grid button-grid-home">
                     <a class="btn-hero app-btn app-btn-primary" href="{{ url_for('edit') }}">
-                        <span class="icon">→</span> Manage Decks
+                        <span class="icon">&rarr;</span> Manage Decks
                     </a>
                     <a class="btn-hero app-btn app-btn-mint" href="{{ url_for('view') }}">
-                        <span class="icon">→</span> Study Mode
+                        <span class="icon">&rarr;</span> Study Mode
                     </a>
                     <a class="btn-hero app-btn app-btn-soft" href="{{ url_for('match') }}">
-                        <span class="icon">→</span> Matching Game
+                        <span class="icon">&rarr;</span> Matching Game
+                    </a>
+                    <a class="btn-hero app-btn app-btn-soft" href="{{ url_for('reorder') }}">
+                        <span class="icon">&rarr;</span> Reorder Game
                     </a>
                 </div>
             </div>
@@ -34,11 +37,9 @@
                 <li><strong>Add question cards</strong> with one or more accepted answers</li>
                 <li><strong>Study mode</strong> for focused review</li>
                 <li><strong>Matching mode</strong> to actively recall and reinforce</li>
+                <li><strong>Reorder mode</strong> to rebuild the original sequence</li>
             </ol>
         </div>
     </div>
 </div>
 {% endblock %}
-
-
-

@@ -250,6 +250,88 @@ def getDeckStudyData(deckId, shuffle=True):
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle, shuffle_answers=shuffle)
 
 
+def checkDeckOrder(deckId, orderedCardIds):
+    """Validate a user-submitted card order against stored card positions."""
+    deck = Deck.query.get(deckId)
+    if not deck:
+        return {'valid': False, 'error': 'Deck not found'}
+    if not deck.sortable:
+        return {'valid': False, 'error': 'Deck is not sortable'}
+
+    # Stored order is the canonical source of truth for the reorder game.
+    cards = sorted(list(deck.cards), key=lambda card: card.position)
+    expectedOrder = [card.cardID for card in cards]
+
+    if len(expectedOrder) == 0:
+        return {'valid': True, 'isCorrect': True, 'incorrectCardIds': [], 'expectedOrder': [], 'receivedOrder': []}
+
+    if len(orderedCardIds) != len(expectedOrder):
+        return {'valid': False, 'error': 'Submitted order does not include all cards'}
+
+    if set(orderedCardIds) != set(expectedOrder):
+        return {'valid': False, 'error': 'Submitted order contains unknown cards'}
+
+    incorrectCardIds = []
+    for index, cardId in enumerate(orderedCardIds):
+        if cardId != expectedOrder[index]:
+            incorrectCardIds.append(cardId)
+
+    return {
+        'valid': True,
+        'isCorrect': len(incorrectCardIds) == 0,
+        'incorrectCardIds': incorrectCardIds,
+        'expectedOrder': expectedOrder,
+        'receivedOrder': orderedCardIds,
+    }
+
+
+def moveCardInDeck(cardId, direction):
+    """Move a card up or down within its deck by swapping position with a neighbor."""
+    card = Card.query.get(cardId)
+    if not card:
+        return {'success': False, 'error': 'Card not found'}
+    if not card.deck.sortable:
+        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+
+    if direction not in ('up', 'down'):
+        return {'success': False, 'error': 'Invalid direction'}
+
+    deckCards = Card.query.filter_by(deckID=card.deckID).order_by(Card.position).all()
+    currentIndex = next((index for index, deckCard in enumerate(deckCards) if deckCard.cardID == cardId), None)
+    if currentIndex is None:
+        return {'success': False, 'error': 'Card not found in deck'}
+
+    targetIndex = currentIndex - 1 if direction == 'up' else currentIndex + 1
+    if targetIndex < 0 or targetIndex >= len(deckCards):
+        return {'success': True, 'moved': False, 'deckID': card.deckID}
+
+    targetCard = deckCards[targetIndex]
+    card.position, targetCard.position = targetCard.position, card.position
+    db.session.commit()
+
+    return {'success': True, 'moved': True, 'deckID': card.deckID}
+
+
+def swapCardsInDeck(cardId, targetCardId):
+    """Swap two cards in the same sortable deck."""
+    firstCard = Card.query.get(cardId)
+    secondCard = Card.query.get(targetCardId)
+
+    if not firstCard or not secondCard:
+        return {'success': False, 'error': 'One or more cards were not found'}
+    if firstCard.deckID != secondCard.deckID:
+        return {'success': False, 'error': 'Cards must be in the same deck'}
+    if not firstCard.deck.sortable:
+        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+    if firstCard.cardID == secondCard.cardID:
+        return {'success': True, 'swapped': False, 'deckID': firstCard.deckID}
+
+    firstCard.position, secondCard.position = secondCard.position, firstCard.position
+    db.session.commit()
+
+    return {'success': True, 'swapped': True, 'deckID': firstCard.deckID}
+
+
 # Get all cards from a deck ordered by position
 def listCardsFromDeck(deckId, detailed=False, shuffle=False):
     deck = Deck.query.get(deckId)

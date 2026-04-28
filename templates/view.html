@@ -3,10 +3,7 @@
 {% block title %}Study Cards - Cards App{% endblock %}
 
 {% block content %}
-
-
 <div class="study-container">
-    <!-- Deck Selector -->
     <div class="section">
         <div class="section-header">
             <h5 class="mb-0">Select Deck</h5>
@@ -29,9 +26,10 @@
                     </select>
                 </div>
                 <div class="form-buttons">
-                    <button type="submit" class="btn btn-success">Study</button>
+                    <button type="submit" class="btn btn-success">Start Studying</button>
                     {% if selectedDeckId %}
-                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Play</a>
+                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Match Game</a>
+                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selectedDeckId) }}">Memorize Order</a>
                     {% endif %}
                 </div>
             </form>
@@ -41,7 +39,6 @@
         </div>
     </div>
 
-    <!-- Study Section -->
     {% if studyDeck %}
     <div class="section" id="studySection">
         <div class="section-header">
@@ -56,7 +53,6 @@
             <div class="empty-state">This deck is empty. Add some cards to study!</div>
             {% else %}
 
-            <!-- Progress -->
             <div class="progress-container">
                 <div class="progress">
                     <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
@@ -65,33 +61,24 @@
                 </div>
             </div>
 
-            <!-- Card Display -->
             <div class="card-display">
                 <div class="card-section">
                     <p class="card-label">Question</p>
                     <div class="card-content" id="cardQuestion">Loading...</div>
                 </div>
 
-                <div class="card-section" id="answerCard" style="display: none;">
+                <div class="card-section answer-interactive" id="answerInteractiveCard" role="button" tabindex="0" aria-live="polite" onclick="toggleAnswer()" onkeydown="handleAnswerCardKeydown(event)">
                     <p class="card-label">Answers</p>
-                    <div id="cardAnswers"></div>
+                    <div id="answerCardContent">
+                        <p class="text-muted">Click to reveal answers</p>
+                    </div>
                 </div>
-                <div class="card-section" id="answerPlaceholder" style="display: block;">
-                    <p class="card-label">Answers</p>
-                    <p class="text-muted">Reveal to see answers</p>
-                </div>
-            </div>
-
-            <!-- Controls -->
-            <div class="button-group full">
-                <button type="button" class="btn btn-warning w-100" id="showAnswerBtn" onclick="revealAnswer()">Reveal Answer</button>
-                <button type="button" class="btn btn-secondary w-100" id="hideAnswerBtn" onclick="hideAnswer()" style="display: none;">Hide Answer</button>
             </div>
 
             <div class="button-group navigation">
-                <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>← Previous</button>
+                <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>&larr; Previous</button>
                 <span class="card-counter" id="cardCounter">Card 0/0</span>
-                <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next →</button>
+                <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next &rarr;</button>
             </div>
 
             {% endif %}
@@ -103,6 +90,7 @@
 <script>
     const currentCards = {{ (studyDeck.cards if studyDeck else []) | tojson }};
     let currentCardIndex = 0;
+    let isAnswerVisible = false;
 
     function displayCurrentCard() {
         const currentCard = currentCards[currentCardIndex];
@@ -120,14 +108,21 @@
 
         const nextBtn = document.getElementById('nextBtn');
         const isLastCard = currentCardIndex === currentCards.length - 1;
-        nextBtn.textContent = isLastCard ? 'Restart Deck →' : 'Next →';
+        nextBtn.textContent = isLastCard ? 'Restart Deck ↺' : 'Next →';
         nextBtn.className = isLastCard ? 'btn btn-success' : 'btn btn-primary';
+    }
+
+    function animateAnswerCard() {
+        const answerCard = document.getElementById('answerInteractiveCard');
+        answerCard.classList.remove('answer-pulse');
+        void answerCard.offsetWidth;
+        answerCard.classList.add('answer-pulse');
     }
 
     function revealAnswer() {
         const currentCard = currentCards[currentCardIndex];
-        const answersDiv = document.getElementById('cardAnswers');
-        answersDiv.innerHTML = '';
+        const answerContent = document.getElementById('answerCardContent');
+        const answersDiv = document.createElement('div');
 
         currentCard.answers.forEach((answer) => {
             const answerDiv = document.createElement('div');
@@ -136,17 +131,32 @@
             answersDiv.appendChild(answerDiv);
         });
 
-        document.getElementById('answerPlaceholder').style.display = 'none';
-        document.getElementById('answerCard').style.display = 'block';
-        document.getElementById('showAnswerBtn').style.display = 'none';
-        document.getElementById('hideAnswerBtn').style.display = 'block';
+        answerContent.innerHTML = '';
+        answerContent.appendChild(answersDiv);
+        animateAnswerCard();
+        isAnswerVisible = true;
     }
 
     function hideAnswer() {
-        document.getElementById('answerCard').style.display = 'none';
-        document.getElementById('answerPlaceholder').style.display = 'block';
-        document.getElementById('showAnswerBtn').style.display = 'block';
-        document.getElementById('hideAnswerBtn').style.display = 'none';
+        const answerContent = document.getElementById('answerCardContent');
+        answerContent.innerHTML = '<p class="text-muted">Click to reveal answers</p>';
+        animateAnswerCard();
+        isAnswerVisible = false;
+    }
+
+    function toggleAnswer() {
+        if (isAnswerVisible) {
+            hideAnswer();
+        } else {
+            revealAnswer();
+        }
+    }
+
+    function handleAnswerCardKeydown(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleAnswer();
+        }
     }
 
     function previousCard() {
@@ -185,11 +195,7 @@
             case 'a':
             case 'A':
                 event.preventDefault();
-                if (document.getElementById('answerCard').style.display === 'none') {
-                    revealAnswer();
-                } else {
-                    hideAnswer();
-                }
+                toggleAnswer();
                 break;
         }
     });

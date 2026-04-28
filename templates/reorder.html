@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+
+{% block title %}Reorder Game - Cards App{% endblock %}
+
+{% block content %}
+<div class="reorder-container">
+    <div class="section">
+        <div class="section-header">
+            <h5>Select Deck</h5>
+            {% if selectedDeckId %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
+            {% endif %}
+        </div>
+        <div class="section-body">
+            {% if decks %}
+            <form method="get" action="{{ url_for('reorder') }}" class="deck-selector-form">
+                <div class="form-group mb-0">
+                    <label for="deck_id">Sortable Decks</label>
+                    <select class="form-select" id="deck_id" name="deck_id" required>
+                        <option value="" {% if not selectedDeckId %}selected{% endif %}>Choose a deck...</option>
+                        {% for deck in decks %}
+                        <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
+                            {{ deck.description }} ({{ deck.cardCount }} cards)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-buttons">
+                    <button type="submit" class="btn btn-success">Memorize Order</button>
+                    {% if selectedDeckId %}
+                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selectedDeckId) }}">Study Cards</a>
+                    <a class="btn btn-secondary" href="{{ url_for('match', deck_id=selectedDeckId) }}">Match Game</a>
+                    {% endif %}
+                </div>
+            </form>
+            {% else %}
+            <div class="empty-state">No sortable decks available yet. Mark a deck as "Keep in order" to play.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if reorderDeck %}
+    <div class="section" id="reorderSection">
+        <div class="section-header success">
+            <div>
+                <h5 class="mb-0">{{ reorderDeck.description }}</h5>
+                <small class="opacity-75" style="font-size: 0.85rem;">Rebuild the original card order using drag/drop or arrows.</small>
+            </div>
+            <button type="button" class="btn-shuffle" id="reshuffleBtn">Reshuffle</button>
+        </div>
+        <div class="section-body">
+            {% if reorderDeck.cardCount == 0 %}
+            <div class="empty-state">This deck is empty. Add some cards to play!</div>
+            {% else %}
+            <div class="instructions">
+                The list starts shuffled. Drag cards or use arrow buttons to match the deck's saved database order.
+            </div>
+
+            <div class="reorder-actions">
+                <button type="button" class="btn btn-primary" id="checkOrderBtn">Check Order</button>
+                <span class="reorder-status" id="reorderStatus">Arrange the list, then check your answer.</span>
+            </div>
+
+            <div class="reorder-list" id="reorderList" aria-live="polite"></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const reorderDeck = {{ (reorderDeck if reorderDeck else {}) | tojson }};
+    const reorderSection = document.getElementById('reorderSection');
+    if (reorderSection && reorderDeck.deckID) {
+        reorderSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    if (!reorderDeck.cards || reorderDeck.cards.length === 0) {
+        return;
+    }
+
+    const reorderList = document.getElementById('reorderList');
+    const reorderStatus = document.getElementById('reorderStatus');
+    const checkOrderBtn = document.getElementById('checkOrderBtn');
+    const reshuffleBtn = document.getElementById('reshuffleBtn');
+
+    let lastSwappedCardIds = [];
+    let activePointerDrag = null;
+
+    // We keep the working order entirely in memory and re-render after every move.
+    let cardsInPlay = reorderDeck.cards.map((card) => ({ ...card }));
+
+    function shuffleCards() {
+        for (let i = cardsInPlay.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [cardsInPlay[i], cardsInPlay[j]] = [cardsInPlay[j], cardsInPlay[i]];
+        }
+    }
+
+    function clearHighlights() {
+        document.querySelectorAll('.reorder-item').forEach((item) => {
+            item.classList.remove('incorrect');
+        });
+    }
+
+    function clearDragOverState() {
+        document.querySelectorAll('.reorder-item.drag-over').forEach((item) => {
+            item.classList.remove('drag-over');
+        });
+    }
+
+    function setStatus(message, isSuccess) {
+        reorderStatus.textContent = message;
+        reorderStatus.classList.remove('success', 'error');
+        if (isSuccess === true) {
+            reorderStatus.classList.add('success');
+        }
+        if (isSuccess === false) {
+            reorderStatus.classList.add('error');
+        }
+    }
+
+    function moveCard(fromIndex, offset) {
+        const toIndex = fromIndex + offset;
+        if (toIndex < 0 || toIndex >= cardsInPlay.length) {
+            return;
+        }
+        // Arrow moves should behave like direct swaps for consistent UX feedback.
+        const currentCardId = cardsInPlay[fromIndex].cardID;
+        const targetCardId = cardsInPlay[toIndex].cardID;
+        swapCards(currentCardId, targetCardId);
+    }
+
+    function swapCards(firstCardId, secondCardId) {
+        const firstIndex = cardsInPlay.findIndex((card) => card.cardID === firstCardId);
+        const secondIndex = cardsInPlay.findIndex((card) => card.cardID === secondCardId);
+        if (firstIndex < 0 || secondIndex < 0 || firstIndex === secondIndex) {
+            return;
+        }
+
+        // Swap two cards directly so drag/drop does not shift the whole list.
+        [cardsInPlay[firstIndex], cardsInPlay[secondIndex]] = [cardsInPlay[secondIndex], cardsInPlay[firstIndex]];
+        // Track exactly which two cards were swapped for targeted visual feedback.
+        lastSwappedCardIds = [firstCardId, secondCardId];
+        setStatus('Order updated. Check when you are ready.', null);
+        clearHighlights();
+        renderList();
+    }
+
+    function beginPointerDrag(event, item, cardId) {
+        if (event.button !== 0 || event.target.closest('.reorder-controls')) {
+            return;
+        }
+
+        const rect = item.getBoundingClientRect();
+        const dragGhost = item.cloneNode(true);
+        dragGhost.classList.add('drag-preview');
+        dragGhost.style.width = `${rect.width}px`;
+        dragGhost.style.left = `${rect.left}px`;
+        dragGhost.style.top = `${rect.top}px`;
+        document.body.appendChild(dragGhost);
+
+        // Keep click offset so the card is grabbed exactly where user clicked.
+        activePointerDrag = {
+            cardId,
+            sourceElement: item,
+            dragGhost,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            targetCardId: null,
+        };
+
+        item.classList.add('dragging');
+        item.style.visibility = 'hidden';
+        document.body.classList.add('dragging-active');
+        event.preventDefault();
+    }
+
+    function updatePointerDrag(event) {
+        if (!activePointerDrag) {
+            return;
+        }
+
+        const { dragGhost, offsetX, offsetY, sourceElement } = activePointerDrag;
+        dragGhost.style.left = `${event.clientX - offsetX}px`;
+        dragGhost.style.top = `${event.clientY - offsetY}px`;
+
+        clearDragOverState();
+        document.body.classList.remove('dragging-invalid');
+
+        const dropCandidate = document.elementFromPoint(event.clientX, event.clientY);
+        const targetItem = dropCandidate ? dropCandidate.closest('.reorder-item') : null;
+
+        if (!targetItem || targetItem === sourceElement || !reorderList.contains(targetItem)) {
+            activePointerDrag.targetCardId = null;
+            document.body.classList.add('dragging-invalid');
+            return;
+        }
+
+        targetItem.classList.add('drag-over');
+        activePointerDrag.targetCardId = Number(targetItem.dataset.cardId);
+    }
+
+    function endPointerDrag() {
+        if (!activePointerDrag) {
+            return;
+        }
+
+        const { cardId, targetCardId, sourceElement, dragGhost } = activePointerDrag;
+        sourceElement.classList.remove('dragging');
+        sourceElement.style.visibility = '';
+
+        if (dragGhost && dragGhost.parentNode) {
+            dragGhost.parentNode.removeChild(dragGhost);
+        }
+
+        clearDragOverState();
+        document.body.classList.remove('dragging-active', 'dragging-invalid');
+
+        if (targetCardId && targetCardId !== cardId) {
+            swapCards(cardId, targetCardId);
+        }
+
+        activePointerDrag = null;
+    }
+
+    function renderList() {
+        reorderList.innerHTML = '';
+
+        cardsInPlay.forEach((card, index) => {
+            const item = document.createElement('div');
+            item.className = 'reorder-item';
+            item.dataset.cardId = String(card.cardID);
+
+            const indexBadge = document.createElement('div');
+            indexBadge.className = 'reorder-index';
+            indexBadge.textContent = String(index + 1);
+
+            const content = document.createElement('div');
+            content.className = 'reorder-content';
+
+            const question = document.createElement('div');
+            question.className = 'reorder-question';
+            question.textContent = card.question;
+
+            const answerPreview = document.createElement('div');
+            answerPreview.className = 'reorder-answers';
+            answerPreview.textContent = card.answers && card.answers.length > 0
+                ? `Answers: ${card.answers.join(', ')}`
+                : 'No answers';
+
+            content.appendChild(question);
+            content.appendChild(answerPreview);
+
+            const controls = document.createElement('div');
+            controls.className = 'reorder-controls';
+
+            const upButton = document.createElement('button');
+            upButton.type = 'button';
+            upButton.className = 'btn btn-sm btn-secondary reorder-arrow-btn';
+            upButton.textContent = '\u25B2';
+            upButton.setAttribute('aria-label', 'Move card up');
+            upButton.disabled = index === 0;
+            upButton.addEventListener('click', () => moveCard(index, -1));
+
+            const downButton = document.createElement('button');
+            downButton.type = 'button';
+            downButton.className = 'btn btn-sm btn-secondary reorder-arrow-btn';
+            downButton.textContent = '\u25BC';
+            downButton.setAttribute('aria-label', 'Move card down');
+            downButton.disabled = index === cardsInPlay.length - 1;
+            downButton.addEventListener('click', () => moveCard(index, 1));
+
+            controls.appendChild(upButton);
+            controls.appendChild(downButton);
+
+            item.appendChild(indexBadge);
+            item.appendChild(content);
+            item.appendChild(controls);
+
+            // Custom pointer-drag flow keeps full opacity and consistent grab-hand cursor.
+            item.addEventListener('pointerdown', (event) => beginPointerDrag(event, item, card.cardID));
+
+            reorderList.appendChild(item);
+        });
+
+        if (lastSwappedCardIds.length === 2) {
+            const [firstId, secondId] = lastSwappedCardIds;
+            document.querySelectorAll('.reorder-item').forEach((item) => {
+                const cardId = Number(item.dataset.cardId);
+                if (cardId === firstId || cardId === secondId) {
+                    item.classList.add('just-swapped');
+                }
+            });
+            setTimeout(() => {
+                document.querySelectorAll('.reorder-item.just-swapped').forEach((item) => {
+                    item.classList.remove('just-swapped');
+                });
+            }, 700);
+            lastSwappedCardIds = [];
+        }
+    }
+
+    function checkOrder() {
+        clearHighlights();
+        setStatus('Checking order...', null);
+
+        const orderedCardIds = cardsInPlay.map((card) => card.cardID);
+
+        fetch('{{ url_for("checkReorder") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                deckId: reorderDeck.deckID,
+                orderedCardIds: orderedCardIds,
+            }),
+        })
+            .then((response) => response.json())
+            .then((data) => {
+                if (!data.success) {
+                    setStatus(data.error || 'Unable to validate order.', false);
+                    return;
+                }
+
+                if (data.isCorrect) {
+                    setStatus('Correct order. Great work!', true);
+                    return;
+                }
+
+                const incorrectIds = new Set((data.incorrectCardIds || []).map((id) => Number(id)));
+                document.querySelectorAll('.reorder-item').forEach((item) => {
+                    const itemCardId = Number(item.dataset.cardId);
+                    if (incorrectIds.has(itemCardId)) {
+                        item.classList.add('incorrect');
+                    }
+                });
+                setStatus('Some cards are out of order. Incorrect rows are highlighted.', false);
+            })
+            .catch(() => {
+                setStatus('Unable to check order right now.', false);
+            });
+    }
+
+    function reshuffleList() {
+        // Shuffle and reset feedback so the user gets a clean new attempt.
+        shuffleCards();
+        renderList();
+        clearHighlights();
+        setStatus('List reshuffled. Build the order again.', null);
+    }
+
+    checkOrderBtn.addEventListener('click', checkOrder);
+    reshuffleBtn.addEventListener('click', reshuffleList);
+    document.addEventListener('pointermove', updatePointerDrag);
+    document.addEventListener('pointerup', endPointerDrag);
+    document.addEventListener('pointercancel', endPointerDrag);
+
+    shuffleCards();
+    renderList();
+});
+</script>
+{% endblock %}

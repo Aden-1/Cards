@@ -12,6 +12,13 @@ def _int_value(value):
         return None
 
 
+def _redirect_with_fragment(endpoint, fragment=None, **values):
+    target = url_for(endpoint, **values)
+    if fragment:
+        target = f'{target}#{fragment}'
+    return redirect(target)
+
+
 # Display the home page
 def index():
     return render_template('index.html')
@@ -91,6 +98,37 @@ def match():
     )
 
 
+def reorder():
+    userId = 1  # Default user for now
+    from app import getUserDecks, getDeckDetails
+
+    decks = getUserDecks(userId)
+    # Reorder game is only valid for decks explicitly marked sortable.
+    sortableDecks = [deck for deck in decks if deck.sortable]
+    deckData = [{
+        'deckID': deck.deckID,
+        'description': deck.description,
+        'sortable': deck.sortable,
+        'cardCount': len(deck.cards),
+    } for deck in sortableDecks]
+
+    selectedDeckId = _int_value(request.args.get('deck_id'))
+    sortableDeckIds = {deck['deckID'] for deck in deckData}
+    if selectedDeckId not in sortableDeckIds:
+        selectedDeckId = None
+
+    # Start each round with a shuffled card list for the reorder challenge.
+    reorderDeck = getDeckDetails(selectedDeckId, shuffle_cards=True, shuffle_answers=False) if selectedDeckId else None
+
+    return render_template(
+        'reorder.html',
+        userId=userId,
+        decks=deckData,
+        reorderDeck=reorderDeck,
+        selectedDeckId=selectedDeckId,
+    )
+
+
 ## Deck route handlers
 
 # Create a new deck
@@ -108,7 +146,7 @@ def createDeckRoute():
     deck = createDeck(userId, description, sortable)
     if request.is_json:
         return jsonify({'success': True, 'deckID': deck.deckID, 'description': deck.description})
-    return redirect(url_for('edit', deck_id=deck.deckID))
+    return _redirect_with_fragment('edit', deck_id=deck.deckID, fragment='deck-editor')
 
 
 # Get all decks for a user
@@ -143,7 +181,7 @@ def deleteDeckRoute():
     if deleted:
         if request.is_json:
             return jsonify({'success': True, 'deckId': deckId})
-        return redirect(url_for('edit'))
+        return _redirect_with_fragment('edit', fragment='decks-section')
     else:
         return jsonify({'error': 'Deck not found'}), 404
 
@@ -164,7 +202,7 @@ def editDeckRoute():
     if deck:
         if request.is_json:
             return jsonify({'success': True, 'deckID': deck.deckID})
-        return redirect(url_for('edit', deck_id=deck.deckID))
+        return _redirect_with_fragment('edit', deck_id=deck.deckID, fragment='deck-editor')
     else:
         return jsonify({'error': 'Deck not found'}), 404
 
@@ -189,7 +227,7 @@ def addCardRoute():
 
     if request.is_json:
         return jsonify({'success': True, 'cardID': card.cardID})
-    return redirect(url_for('edit', deck_id=deckId))
+    return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor')
 
 
 # Delete a card
@@ -207,7 +245,7 @@ def deleteCardRoute():
     if deleted:
         if request.is_json:
             return jsonify({'success': True, 'cardId': cardId})
-        return redirect(url_for('edit', deck_id=deckId) if deckId else url_for('edit'))
+        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor') if deckId else _redirect_with_fragment('edit', fragment='decks-section')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
@@ -230,10 +268,10 @@ def editCardRoute():
         if isinstance(card, dict) and card.get('deleted'):
             if request.is_json:
                 return jsonify({'success': True, 'cardID': cardId, 'deleted': True})
-            return redirect(url_for('edit', deck_id=card.get('deckID') or deckId))
+            return _redirect_with_fragment('edit', deck_id=card.get('deckID') or deckId, fragment='deck-editor')
         if request.is_json:
             return jsonify({'success': True, 'cardID': card.cardID})
-        return redirect(url_for('edit', deck_id=deckId))
+        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
@@ -321,12 +359,21 @@ def deleteAnswerRoute():
     answerId = _int_value(data.get('answerId'))
     deckId = _int_value(data.get('deckId'))
     selectedQuestionId = _int_value(data.get('selectedQuestionId'))
+    context = data.get('context')
 
     if not answerId:
         return jsonify({'error': 'Answer ID is required'}), 400
 
     answer = CardAnswer.query.get(answerId)
     if not answer:
+        return jsonify({'error': 'Answer not found'}), 404
+
+    if context == 'edit':
+        deleted = deleteAnswer(answerId)
+        if deleted:
+            if request.is_json:
+                return jsonify({'success': True, **deleted})
+            return _redirect_with_fragment('edit', deck_id=deleted.get('deckID') or deckId, fragment='deck-editor')
         return jsonify({'error': 'Answer not found'}), 404
 
     if not selectedQuestionId:
@@ -348,6 +395,75 @@ def deleteAnswerRoute():
     return jsonify({'error': 'Answer not found'}), 404
 
 
+def moveCardRoute():
+    from app import moveCardInDeck
+
+    data = _request_data()
+    cardId = _int_value(data.get('cardId'))
+    deckId = _int_value(data.get('deckId'))
+    direction = str(data.get('direction', '')).lower()
+
+    if not cardId or direction not in ('up', 'down'):
+        return jsonify({'error': 'Card ID and valid direction are required'}), 400
+
+    result = moveCardInDeck(cardId, direction)
+    if not result.get('success'):
+        return jsonify({'error': result.get('error', 'Unable to move card')}), 400
+
+    if request.is_json:
+        return jsonify({'success': True, **result})
+    return _redirect_with_fragment('edit', deck_id=result.get('deckID') or deckId, fragment='deck-editor')
+
+
+def swapCardsRoute():
+    from app import swapCardsInDeck
+
+    payload = request.get_json(silent=True) or {}
+    cardId = _int_value(payload.get('cardId'))
+    targetCardId = _int_value(payload.get('targetCardId'))
+
+    if not cardId or not targetCardId:
+        return jsonify({'error': 'Both card IDs are required'}), 400
+
+    result = swapCardsInDeck(cardId, targetCardId)
+    if not result.get('success'):
+        return jsonify({'error': result.get('error', 'Unable to swap cards')}), 400
+
+    return jsonify({'success': True, **result})
+
+
+def checkReorderRoute():
+    from app import checkDeckOrder
+
+    payload = request.get_json(silent=True) or {}
+    deckId = _int_value(payload.get('deckId'))
+    orderedCardIds = payload.get('orderedCardIds')
+
+    if not deckId:
+        return jsonify({'error': 'Deck ID is required'}), 400
+
+    if not isinstance(orderedCardIds, list):
+        return jsonify({'error': 'orderedCardIds must be a list'}), 400
+
+    try:
+        # Normalize IDs from JSON so backend comparison uses consistent ints.
+        normalizedCardIds = [int(cardId) for cardId in orderedCardIds]
+    except (TypeError, ValueError):
+        return jsonify({'error': 'orderedCardIds must contain valid card IDs'}), 400
+
+    result = checkDeckOrder(deckId, normalizedCardIds)
+    if not result.get('valid'):
+        return jsonify({'error': result.get('error', 'Unable to validate order')}), 400
+
+    return jsonify({
+        'success': True,
+        'isCorrect': result['isCorrect'],
+        'incorrectCardIds': result['incorrectCardIds'],
+        'expectedOrder': result['expectedOrder'],
+        'receivedOrder': result['receivedOrder'],
+    })
+
+
 # Register all routes with Flask
 def registerRoutes(app):
     # Main pages
@@ -355,6 +471,7 @@ def registerRoutes(app):
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/match', endpoint='match', view_func=match)
+    app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
     
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='createDeck', view_func=createDeckRoute, methods=['POST'])
@@ -370,3 +487,6 @@ def registerRoutes(app):
     app.add_url_rule('/list_cards', endpoint='listCards', view_func=listCardsRoute, methods=['POST'])
     app.add_url_rule('/get_card', endpoint='getCard', view_func=getCardRoute, methods=['POST'])
     app.add_url_rule('/edit_card', endpoint='editCard', view_func=editCardRoute, methods=['POST'])
+    app.add_url_rule('/move_card', endpoint='moveCard', view_func=moveCardRoute, methods=['POST'])
+    app.add_url_rule('/swap_cards', endpoint='swapCards', view_func=swapCardsRoute, methods=['POST'])
+    app.add_url_rule('/check_reorder', endpoint='checkReorder', view_func=checkReorderRoute, methods=['POST'])
