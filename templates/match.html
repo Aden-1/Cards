@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block title %}Matching Game - Cards App{% endblock %}
+
+{% block content %}
+
+
+<div class="match-container">
+    <!-- Deck Selector -->
+    <div class="section">
+        <div class="section-header">
+            <h5>Select Deck</h5>
+            {% if selectedDeckId %}
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selectedDeckId) }}">Edit</a>
+            {% endif %}
+        </div>
+        <div class="section-body">
+            {% if decks %}
+            <form method="get" action="{{ url_for('match') }}" class="deck-selector-form">
+                <div class="form-group">
+                    <label for="deck_id" class="mb-1">Your Decks</label>
+                    <select class="form-select" id="deck_id" name="deck_id" required>
+                        <option value="" {% if not selectedDeckId %}selected{% endif %}>Choose a deck...</option>
+                        {% for deck in decks %}
+                        <option value="{{ deck.deckID }}" {% if selectedDeckId == deck.deckID %}selected{% endif %}>
+                            {{ deck.description }} ({{ deck.cardCount }} cards)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-buttons">
+                    <button type="submit" class="btn btn-success">Play</button>
+                    {% if selectedDeckId %}
+                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selectedDeckId) }}">Study</a>
+                    {% endif %}
+                </div>
+            </form>
+            {% else %}
+            <div class="empty-state">No decks yet. Create one to get started!</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Game -->
+    {% if matchDeck %}
+    <div class="section">
+        <div class="section-header success">
+            <div>
+                <h5 class="mb-0">{{ matchDeck.description }}</h5>
+                <small class="opacity-75" style="font-size: 0.85rem;">{{ matchDeck.cardCount }} question{{ '' if matchDeck.cardCount == 1 else 's' }} • {{ matchDeck.answerCount }} answer tile{{ '' if matchDeck.answerCount == 1 else 's' }}</small>
+            </div>
+            <a class="btn-shuffle" href="{{ url_for('match', deck_id=matchDeck.deckID) }}">↻ Shuffle</a>
+        </div>
+        <div class="section-body">
+            {% if errorMessage %}
+            <div class="alert alert-danger mb-3">{{ errorMessage }}</div>
+            {% endif %}
+
+            {% if matchDeck.cardCount == 0 %}
+            <div class="empty-state">This deck is empty. Add some cards to play!</div>
+            {% else %}
+
+            <div class="instructions">
+                Select a question tile, then click an answer. Correct matches disappear!
+            </div>
+
+            <div class="game-stats">
+                <div class="stat">
+                    <div class="stat-label">Questions Left</div>
+                    <div class="stat-value" id="questionsRemaining">{{ matchDeck.cardCount }}</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Answers Left</div>
+                    <div class="stat-value" id="answersRemaining">{{ matchDeck.answerCount }}</div>
+                </div>
+            </div>
+
+            <div id="completionMessage" class="completion-container" style="display: none;">
+                <div class="completion-message">
+                    <h4>Perfect!</h4>
+                    <p>You've mastered all the cards. Great job!</p>
+                </div>
+            </div>
+
+            <div id="gameGridContainer" {% if matchDeck.cardCount > 0 %}style="display: block;"{% else %}style="display: none;"{% endif %}>
+                <div class="match-grid" id="matchGrid">
+                    <!-- Questions first -->
+                    {% for card in matchDeck.cards %}
+                    <div class="match-tile question-tile" data-type="question" data-question-id="{{ card.cardID }}" data-answer-count="{{ card.answerObjects|length }}">
+                        <div class="tile-content">
+                            <div class="tile-label">Question</div>
+                            <div class="tile-text">{{ card.question }}</div>
+                        </div>
+                        <div class="answer-count-badge" id="badge-{{ card.cardID }}">{{ card.answerObjects|length }}</div>
+                    </div>
+                    {% endfor %}
+
+                    <!-- Answers -->
+                    {% for card in matchDeck.cards %}
+                        {% for answer in card.answerObjects %}
+                        <div class="match-tile answer-tile" data-type="answer" data-answer-id="{{ answer.answerID }}" data-question-id="{{ card.cardID }}">
+                            <div class="tile-content">
+                                <div class="tile-label">Answer</div>
+                                <div class="tile-text">{{ answer.answer }}</div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    let selectedQuestionId = null;
+
+    function updateStats() {
+        const questionTiles = document.querySelectorAll('.match-tile.question-tile:not(.disabled)');
+        const answerTiles = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)');
+        document.getElementById('questionsRemaining').textContent = questionTiles.length;
+        document.getElementById('answersRemaining').textContent = answerTiles.length;
+    }
+
+    function showFeedback(message, isSuccess) {
+        const feedback = document.createElement('div');
+        feedback.className = `feedback-message ${isSuccess ? 'success' : 'error'}`;
+        feedback.textContent = message;
+        document.body.appendChild(feedback);
+        setTimeout(() => {
+            feedback.style.opacity = '0';
+            feedback.style.transition = 'opacity var(--transition-slow)';
+            setTimeout(() => feedback.remove(), 300);
+        }, 2000);
+    }
+
+    function handleTileClick(tile) {
+        const tileType = tile.dataset.type;
+
+        if (tileType === 'question') {
+            document.querySelectorAll('.match-tile.question-tile.selected').forEach(t => {
+                t.classList.remove('selected');
+            });
+            tile.classList.add('selected');
+            selectedQuestionId = parseInt(tile.dataset.questionId);
+        } else if (tileType === 'answer') {
+            if (selectedQuestionId === null) {
+                showFeedback('Select a question first', false);
+                return;
+            }
+
+            const answerId = parseInt(tile.dataset.answerId);
+            const questionId = parseInt(tile.dataset.questionId);
+
+            if (questionId !== selectedQuestionId) {
+                showFeedback('Wrong match', false);
+                return;
+            }
+
+            handleMatch(answerId, tile);
+        }
+    }
+
+    function handleMatch(answerId, answerTile) {
+        answerTile.classList.add('tile-removing');
+
+        fetch('{{ url_for("matchAnswer") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                answerId: answerId,
+                selectedQuestionId: selectedQuestionId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showFeedback('Correct!', true);
+                answerTile.classList.add('disabled');
+
+                const badge = document.getElementById(`badge-${selectedQuestionId}`);
+                if (badge) {
+                    const currentCount = parseInt(badge.textContent);
+                    badge.textContent = Math.max(0, currentCount - 1);
+                }
+
+                const remainingAnswersForQuestion = document.querySelectorAll(
+                    `.match-tile.answer-tile:not(.disabled)[data-question-id="${selectedQuestionId}"]`
+                ).length;
+
+                if (remainingAnswersForQuestion === 0) {
+                    const questionTile = document.querySelector(`.match-tile.question-tile[data-question-id="${selectedQuestionId}"]`);
+                    if (questionTile) {
+                        questionTile.classList.add('tile-removing');
+                        setTimeout(() => {
+                            questionTile.classList.add('disabled');
+                            updateStats();
+                            checkGameCompletion();
+                        }, 300);
+                    }
+                    selectedQuestionId = null;
+                } else {
+                    updateStats();
+                }
+            } else {
+                showFeedback(data.error || 'Error', false);
+                answerTile.classList.remove('tile-removing');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showFeedback('Error processing match', false);
+            answerTile.classList.remove('tile-removing');
+        });
+    }
+
+    function checkGameCompletion() {
+        const remainingAnswers = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)').length;
+        const remainingQuestions = document.querySelectorAll('.match-tile.question-tile:not(.disabled)').length;
+
+        if (remainingAnswers === 0 && remainingQuestions === 0) {
+            document.getElementById('gameGridContainer').style.display = 'none';
+            document.getElementById('completionMessage').style.display = 'flex';
+        }
+    }
+
+    document.querySelectorAll('.match-tile').forEach(tile => {
+        tile.addEventListener('click', function() {
+            if (!this.classList.contains('disabled') && !this.classList.contains('tile-removing')) {
+                handleTileClick(this);
+            }
+        });
+    });
+
+    updateStats();
+});
+</script>
+{% endblock %}
+
