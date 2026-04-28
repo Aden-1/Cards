@@ -34,7 +34,10 @@
                 </div>
             </form>
             {% else %}
-            <div class="empty-state">No decks yet. Create one to get started!</div>
+            <div class="empty-state">
+                <p>No decks yet. Create one to get started!</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Create a deck</a>
+            </div>
             {% endif %}
         </div>
     </div>
@@ -80,6 +83,7 @@
                 <span class="card-counter" id="cardCounter">Card 0/0</span>
                 <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next &rarr;</button>
             </div>
+            <div class="shortcut-hint">Shortcuts: <strong>A</strong>/<strong>←</strong> previous, <strong>D</strong>/<strong>→</strong> next, <strong>Space</strong> reveal/hide answer</div>
 
             {% endif %}
         </div>
@@ -181,19 +185,21 @@
         }
 
         switch (event.key) {
-            case ' ':
-            case 'ArrowRight':
-                event.preventDefault();
-                nextCard();
-                break;
             case 'ArrowLeft':
+            case 'a':
+            case 'A':
                 event.preventDefault();
                 if (!document.getElementById('prevBtn').disabled) {
                     previousCard();
                 }
                 break;
-            case 'a':
-            case 'A':
+            case 'ArrowRight':
+            case 'd':
+            case 'D':
+                event.preventDefault();
+                nextCard();
+                break;
+            case ' ':
                 event.preventDefault();
                 toggleAnswer();
                 break;

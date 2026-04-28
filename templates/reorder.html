@@ -34,7 +34,10 @@
                 </div>
             </form>
             {% else %}
-            <div class="empty-state">No sortable decks available yet. Mark a deck as "Keep in order" to play.</div>
+            <div class="empty-state">
+                <p>No sortable decks available yet. Mark a deck as "Keep in order" to play.</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Set up a sortable deck</a>
+            </div>
             {% endif %}
         </div>
     </div>
@@ -50,7 +53,10 @@
         </div>
         <div class="section-body">
             {% if reorderDeck.cardCount == 0 %}
-            <div class="empty-state">This deck is empty. Add some cards to play!</div>
+            <div class="empty-state">
+                <p>This deck is empty. Add some cards to play!</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit', deck_id=reorderDeck.deckID) }}#deck-editor">Add cards to this deck</a>
+            </div>
             {% else %}
             <div class="instructions">
                 The list starts shuffled. Drag cards or use arrow buttons to match the deck's saved database order.

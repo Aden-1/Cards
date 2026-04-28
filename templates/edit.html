@@ -15,7 +15,7 @@
         </div>
         <div class="section-body">
             <div class="form-section">
-                <form method="post" action="{{ url_for('createDeck') }}" class="form-row">
+                <form method="post" action="{{ url_for('createDeck') }}" class="form-row track-unsaved-form">
                     <input type="hidden" name="userId" value="{{ userId }}">
                     <div class="form-group mb-0">
                         <label for="deckDescription" class="mb-1">Deck Name</label>
@@ -74,7 +74,10 @@
                     {% endfor %}
                 </div>
                 {% else %}
-                <div class="empty-state">No decks yet. Create one to get started.</div>
+                <div class="empty-state">
+                    <p>No decks yet. Create one to get started.</p>
+                    <a class="btn btn-primary btn-sm" href="#deckDescription">Create your first deck</a>
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -92,7 +95,7 @@
         <div class="section-body">
             <div class="form-section mb-3">
                 <h6 class="mb-3">Deck Settings</h6>
-                <form method="post" action="{{ url_for('editDeck') }}" class="deck-settings-form">
+                <form method="post" action="{{ url_for('editDeck') }}" class="deck-settings-form track-unsaved-form">
                     <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
                     <div class="deck-settings-top-row">
                         <div class="form-group mb-0">
@@ -112,7 +115,7 @@
 
             <div class="form-section mb-4">
                 <h6 class="mb-3">Add Card</h6>
-                <form method="post" action="{{ url_for('addCard') }}" class="add-card-form">
+                <form method="post" action="{{ url_for('addCard') }}" class="add-card-form track-unsaved-form">
                     <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
                     <div class="add-card-fields-grid">
                         <div class="form-group mb-0 add-card-question-field">
@@ -184,7 +187,7 @@
                         <details class="flex-grow-1">
                             <summary class="btn btn-sm btn-primary">Edit Question + Answers</summary>
                             <div class="mt-3 p-3 bg-surface rounded">
-                                <form method="post" action="{{ url_for('editCard') }}">
+                                <form method="post" action="{{ url_for('editCard') }}" class="track-unsaved-form">
                                     <input type="hidden" name="cardId" value="{{ card.cardID }}">
                                     <input type="hidden" name="deckId" value="{{ selectedDeck.deckID }}">
                                     <div class="form-group">
@@ -217,7 +220,10 @@
             </div>
             <div class="cards-end-spacer" aria-hidden="true"></div>
             {% else %}
-            <div class="empty-state">No cards yet. Add one to get started.</div>
+            <div class="empty-state">
+                <p>No cards yet. Add one to get started.</p>
+                <a class="btn btn-primary btn-sm" href="#question">Add your first card</a>
+            </div>
             {% endif %}
         </div>
     </div>
@@ -237,6 +243,31 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    let hasUnsavedChanges = false;
+    let isSubmittingTrackedForm = false;
+
+    document.querySelectorAll('form.track-unsaved-form').forEach((form) => {
+        form.querySelectorAll('input, textarea, select').forEach((field) => {
+            field.addEventListener('input', () => {
+                hasUnsavedChanges = true;
+            });
+            field.addEventListener('change', () => {
+                hasUnsavedChanges = true;
+            });
+        });
+        form.addEventListener('submit', () => {
+            isSubmittingTrackedForm = true;
+            hasUnsavedChanges = false;
+        });
+    });
+
+    window.addEventListener('beforeunload', function(event) {
+        if (hasUnsavedChanges && !isSubmittingTrackedForm) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
+
     const decksToggleBtn = document.getElementById('decksToggleBtn');
     const decksCollapse = document.getElementById('yourDecksCollapse');
     if (decksToggleBtn && decksCollapse) {

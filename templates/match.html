@@ -37,7 +37,10 @@
                 </div>
             </form>
             {% else %}
-            <div class="empty-state">No decks yet. Create one to get started!</div>
+            <div class="empty-state">
+                <p>No decks yet. Create one to get started!</p>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Create a deck</a>
+            </div>
             {% endif %}
         </div>
     </div>

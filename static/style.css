@@ -166,6 +166,10 @@ main .container {
     padding: var(--space-xl);
 }
 
+.empty-state p {
+    margin-bottom: 0.75rem;
+}
+
 .app-btn {
     border: 0;
     border-radius: 999px;
@@ -795,6 +799,13 @@ main .container {
 .card-counter {
     color: var(--text-muted);
     font-weight: 700;
+}
+
+.shortcut-hint {
+    margin-top: 0.7rem;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 0.9rem;
 }
 
 /* Match page */

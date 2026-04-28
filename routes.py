@@ -146,7 +146,13 @@ def createDeckRoute():
     deck = createDeck(userId, description, sortable)
     if request.is_json:
         return jsonify({'success': True, 'deckID': deck.deckID, 'description': deck.description})
-    return _redirect_with_fragment('edit', deck_id=deck.deckID, fragment='deck-editor')
+    return _redirect_with_fragment(
+        'edit',
+        deck_id=deck.deckID,
+        fragment='deck-editor',
+        notice='Deck created',
+        level='success',
+    )
 
 
 # Get all decks for a user
@@ -181,7 +187,7 @@ def deleteDeckRoute():
     if deleted:
         if request.is_json:
             return jsonify({'success': True, 'deckId': deckId})
-        return _redirect_with_fragment('edit', fragment='decks-section')
+        return _redirect_with_fragment('edit', fragment='decks-section', notice='Deck deleted', level='success')
     else:
         return jsonify({'error': 'Deck not found'}), 404
 
@@ -202,7 +208,13 @@ def editDeckRoute():
     if deck:
         if request.is_json:
             return jsonify({'success': True, 'deckID': deck.deckID})
-        return _redirect_with_fragment('edit', deck_id=deck.deckID, fragment='deck-editor')
+        return _redirect_with_fragment(
+            'edit',
+            deck_id=deck.deckID,
+            fragment='deck-editor',
+            notice='Deck saved',
+            level='success',
+        )
     else:
         return jsonify({'error': 'Deck not found'}), 404
 
@@ -227,7 +239,7 @@ def addCardRoute():
 
     if request.is_json:
         return jsonify({'success': True, 'cardID': card.cardID})
-    return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor')
+    return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card added', level='success')
 
 
 # Delete a card
@@ -245,7 +257,7 @@ def deleteCardRoute():
     if deleted:
         if request.is_json:
             return jsonify({'success': True, 'cardId': cardId})
-        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor') if deckId else _redirect_with_fragment('edit', fragment='decks-section')
+        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card deleted', level='success') if deckId else _redirect_with_fragment('edit', fragment='decks-section', notice='Card deleted', level='success')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
@@ -268,10 +280,10 @@ def editCardRoute():
         if isinstance(card, dict) and card.get('deleted'):
             if request.is_json:
                 return jsonify({'success': True, 'cardID': cardId, 'deleted': True})
-            return _redirect_with_fragment('edit', deck_id=card.get('deckID') or deckId, fragment='deck-editor')
+            return _redirect_with_fragment('edit', deck_id=card.get('deckID') or deckId, fragment='deck-editor', notice='Card updated', level='success')
         if request.is_json:
             return jsonify({'success': True, 'cardID': card.cardID})
-        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor')
+        return _redirect_with_fragment('edit', deck_id=deckId, fragment='deck-editor', notice='Card updated', level='success')
     else:
         return jsonify({'error': 'Card not found'}), 404
 
@@ -373,7 +385,7 @@ def deleteAnswerRoute():
         if deleted:
             if request.is_json:
                 return jsonify({'success': True, **deleted})
-            return _redirect_with_fragment('edit', deck_id=deleted.get('deckID') or deckId, fragment='deck-editor')
+            return _redirect_with_fragment('edit', deck_id=deleted.get('deckID') or deckId, fragment='deck-editor', notice='Answer removed', level='success')
         return jsonify({'error': 'Answer not found'}), 404
 
     if not selectedQuestionId:
