@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="study-container">
+    <!-- Deck picker -->
     <div class="section">
         <div class="section-header">
             <h5 class="mb-0">Select Deck</h5>
@@ -43,6 +44,7 @@
     </div>
 
     {% if study_deck %}
+    <!-- Study deck -->
     <div class="section" id="studySection">
         <div class="section-header">
             <div>
@@ -74,6 +76,7 @@
             {% else %}
 
             <div class="progress-container">
+                <!-- Progress bar -->
                 <div class="progress">
                     <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
                         <span id="progressText">0%</span>
@@ -82,6 +85,7 @@
             </div>
 
             <div class="card-display">
+                <!-- Flip card -->
                 <div class="card-section">
                     <p class="card-label">Question</p>
                     <div class="card-content" id="cardQuestion">Loading...</div>
@@ -96,6 +100,7 @@
             </div>
 
             <div class="button-group navigation">
+                <!-- Keyboard-friendly controls -->
                 <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>&larr; Previous</button>
                 <span class="card-counter" id="card_counter">Card 0/0</span>
                 <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next &rarr;</button>
@@ -113,7 +118,9 @@
     let currentCardIndex = 0;
     let isAnswerVisible = false;
 
+    // Sync the screen to the active card.
     function displayCurrentCard() {
+        // Sync the view to the active card.
         const currentCard = currentCards[currentCardIndex];
         document.getElementById('currentCardNumber').textContent = currentCardIndex + 1;
         document.getElementById('card_counter').textContent = `Card ${currentCardIndex + 1} of ${currentCards.length}`;
@@ -133,6 +140,7 @@
         nextBtn.className = isLastCard ? 'btn btn-success' : 'btn btn-primary';
     }
 
+    // Replay the answer-card pulse animation.
     function animateAnswerCard() {
         const answerCard = document.getElementById('answerInteractiveCard');
         answerCard.classList.remove('answer-pulse');
@@ -140,11 +148,14 @@
         answerCard.classList.add('answer-pulse');
     }
 
+    // Render all accepted answers.
     function revealAnswer() {
+        // Render all accepted answers.
         const currentCard = currentCards[currentCardIndex];
         const answerContent = document.getElementById('answerCardContent');
         const answersDiv = document.createElement('div');
 
+        // Render each accepted answer.
         currentCard.answers.forEach((answer) => {
             const answerDiv = document.createElement('div');
             answerDiv.className = 'answer-item';
@@ -158,6 +169,7 @@
         isAnswerVisible = true;
     }
 
+    // Restore the answer placeholder.
     function hideAnswer() {
         const answerContent = document.getElementById('answerCardContent');
         answerContent.innerHTML = '<p class="text-muted">Click to reveal answers</p>';
@@ -165,6 +177,7 @@
         isAnswerVisible = false;
     }
 
+    // Flip the answer panel between hidden and visible.
     function toggleAnswer() {
         if (isAnswerVisible) {
             hideAnswer();
@@ -173,6 +186,7 @@
         }
     }
 
+    // Treat Enter and Space like a click.
     function handleAnswerCardKeydown(event) {
         if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -180,6 +194,7 @@
         }
     }
 
+    // Move to the previous card.
     function previousCard() {
         if (currentCardIndex > 0) {
             currentCardIndex--;
@@ -187,6 +202,7 @@
         }
     }
 
+    // Advance to the next card or restart.
     function nextCard() {
         if (currentCardIndex < currentCards.length - 1) {
             currentCardIndex++;
@@ -196,6 +212,7 @@
         displayCurrentCard();
     }
 
+    // Keyboard shortcuts stay active only in study mode.
     document.addEventListener('keydown', function(event) {
         if (!document.getElementById('studySection')) {
             return;

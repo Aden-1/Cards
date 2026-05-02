@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="edit-container">
+    <!-- Deck creation -->
     <div class="page-header">
         <h1>Manage Decks & Cards</h1>
         <p class="text-secondary">Create, organize, and fine-tune your study decks.</p>
@@ -41,6 +42,7 @@
         </div>
     </div>
 
+    <!-- Deck list -->
     <div class="section" id="decks-section">
         <div class="section-header">
             <div>
@@ -102,6 +104,7 @@
     </div>
 
     {% if selected_deck %}
+    <!-- Active deck editor -->
     <div class="section" id="deck-editor">
         <div class="section-header success">
             <div>
@@ -142,6 +145,7 @@
             </div>
 
             <div class="form-section mb-4">
+                <!-- Add card -->
                 <h6 class="mb-3">Add Card</h6>
                 <form method="post" action="{{ url_for('add_card') }}" class="add-card-form track-unsaved-form">
                     <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
@@ -164,6 +168,7 @@
 
             <h6 class="mb-3">Cards in Deck</h6>
             {% if selected_deck.sortable %}
+            <!-- Drag/drop order matters for sortable decks -->
             <div class="drag-instructions mb-2">Drag one card onto another to swap order. Swapped cards are briefly highlighted.</div>
             {% endif %}
 
@@ -184,8 +189,9 @@
                     </div>
 
                     {% if card.answer_objects %}
-                    <div class="answer-management-block">
-                        <div class="answer-management-label">
+                        <div class="answer-management-block">
+                            <!-- Per-answer delete -->
+                            <div class="answer-management-label">
                             {{ card.answer_objects|length }} answer{{ '' if card.answer_objects|length == 1 else 's' }} for this question
                         </div>
                         <div class="answer-management-help">Choose "Remove answer" to delete one specific answer from this question.</div>
@@ -232,6 +238,7 @@
                             </div>
                         </details>
                         <details class="delete-confirm">
+                            <!-- Card actions -->
                             <summary class="btn btn-danger btn-sm">Delete Card</summary>
                             <div class="delete-confirm-panel">
                                 <p class="mb-2">Delete this card and all of its answers?</p>
@@ -260,7 +267,9 @@
 
 {% if selected_deck %}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+    // Scroll back to the active editor.
+    document.addEventListener('DOMContentLoaded', function() {
+    // Keep the current deck editor in view after load.
     const editor = document.getElementById('deck-editor');
     if (editor) {
         editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -270,25 +279,33 @@ document.addEventListener('DOMContentLoaded', function() {
 {% endif %}
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+    // Wire unsaved-state and drag handlers.
+    document.addEventListener('DOMContentLoaded', function() {
+    // Track edits so refreshes don't drop work silently.
     let hasUnsavedChanges = false;
     let isSubmittingTrackedForm = false;
 
+    // Visit every tracked form.
     document.querySelectorAll('form.track-unsaved-form').forEach((form) => {
+        // Mark the form dirty on any change.
         form.querySelectorAll('input, textarea, select').forEach((field) => {
+            // Input events mean the form has changed.
             field.addEventListener('input', () => {
                 hasUnsavedChanges = true;
             });
+            // Change events mean the form has changed too.
             field.addEventListener('change', () => {
                 hasUnsavedChanges = true;
             });
         });
+        // Submission clears the dirty flag.
         form.addEventListener('submit', () => {
             isSubmittingTrackedForm = true;
             hasUnsavedChanges = false;
         });
     });
 
+    // Warn before leaving with edits unsaved.
     window.addEventListener('beforeunload', function(event) {
         if (hasUnsavedChanges && !isSubmittingTrackedForm) {
             event.preventDefault();
@@ -299,16 +316,21 @@ document.addEventListener('DOMContentLoaded', function() {
     const decksToggleBtn = document.getElementById('decksToggleBtn');
     const decksCollapse = document.getElementById('yourDecksCollapse');
     if (decksToggleBtn && decksCollapse) {
+        // Mirror the collapse state on the button.
         const setToggleText = (isOpen) => {
             decksToggleBtn.textContent = isOpen ? 'Close' : 'Open';
             decksToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
         };
         setToggleText(decksCollapse.classList.contains('show'));
+        // Bootstrap collapse events keep the label accurate.
         decksCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
+        // Bootstrap collapse events keep the label accurate.
         decksCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
     }
 
+    // Close confirmation panels on cancel.
     document.querySelectorAll('.close-delete-panel').forEach((button) => {
+        // Close the details element after cancel.
         button.addEventListener('click', function() {
             const details = this.closest('details');
             if (details) {
@@ -317,7 +339,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // Keep opened edit panels centered on screen.
     document.querySelectorAll('#editableCardsList details').forEach((details) => {
+        // Scroll open panels into view.
         details.addEventListener('toggle', function() {
             if (this.open) {
                 this.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -333,7 +357,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let activeDrag = null;
 
+    // Renumber cards after a local swap.
     function updatePositionLabels() {
+        // Keep the visible position labels in sync.
         cardsList.querySelectorAll('.card-editor-item').forEach((item, index) => {
             const label = item.querySelector('[data-role="card-position"]');
             if (label) {
@@ -342,10 +368,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Remove hover styling from every row.
     function clearDragOver() {
         cardsList.querySelectorAll('.card-editor-item.drag-over').forEach((item) => item.classList.remove('drag-over'));
     }
 
+    // Start dragging one card row.
     function beginDrag(event, item) {
         if (event.button !== 0 || event.target.closest('.card-item-actions') || event.target.closest('.answer-management-block')) {
             return;
@@ -374,6 +402,7 @@ document.addEventListener('DOMContentLoaded', function() {
         event.preventDefault();
     }
 
+    // Move the drag preview and target marker.
     function moveDrag(event) {
         if (!activeDrag) {
             return;
@@ -395,6 +424,7 @@ document.addEventListener('DOMContentLoaded', function() {
         activeDrag.target = target;
     }
 
+    // Finish the drag and persist the swap.
     async function endDrag() {
         if (!activeDrag) {
             return;
@@ -423,14 +453,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 cardsList.insertBefore(target, sourceNext);
             }
 
-            source.classList.add('just-swapped');
-            target.classList.add('just-swapped');
-            updatePositionLabels();
+        source.classList.add('just-swapped');
+        target.classList.add('just-swapped');
+        updatePositionLabels();
 
-            setTimeout(() => {
-                source.classList.remove('just-swapped');
-                target.classList.remove('just-swapped');
-            }, 700);
+        // Drop the highlight after the animation finishes.
+        setTimeout(() => {
+            source.classList.remove('just-swapped');
+            target.classList.remove('just-swapped');
+        }, 700);
 
              try {
                  const response = await fetch('{{ url_for("swap_cards") }}', {
@@ -450,6 +481,7 @@ document.addEventListener('DOMContentLoaded', function() {
         activeDrag = null;
     }
 
+    // Attach drag support only to sortable rows.
     cardsList.querySelectorAll('.sortable-card').forEach((item) => {
         item.addEventListener('pointerdown', (event) => beginDrag(event, item));
     });

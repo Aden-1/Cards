@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Cards App{% endblock %}</title>
 
-    <!-- Bootstrap 5 CSS -->
+    <!-- Base styles -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
 <body>
-    <!-- Navigation bar - appears on all pages -->
+    <!-- Global nav -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('index') }}">Cards App</a>
@@ -51,17 +51,19 @@
             </div>
         </div>
     </nav>
-    <!-- Main content area -->
+    <!-- Page content -->
     <main>
         <div class="container mt-5">
             {% block content %}{% endblock %}
         </div>
     </main>
 
-    <!-- Bootstrap 5 JS -->
+    <!-- Toasts and submit locks -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+    // Apply redirect notices and submit locks after load.
     document.addEventListener('DOMContentLoaded', function() {
+        // Surface one-shot notices from redirects.
         const url = new URL(window.location.href);
         const notice = url.searchParams.get('notice');
         const level = url.searchParams.get('level') || 'success';
@@ -71,6 +73,7 @@
             toast.className = `feedback-message ${level === 'error' ? 'error' : 'success'}`;
             toast.textContent = notice;
             document.body.appendChild(toast);
+            // Fade the toast out on a short timer.
             setTimeout(() => {
                 toast.style.opacity = '0';
                 toast.style.transition = 'opacity 0.32s ease';
@@ -82,13 +85,18 @@
             window.history.replaceState({}, document.title, url.toString());
         }
 
+        // Prevent duplicate POST submits.
+        // Lock POST forms after submit.
+        // Visit each POST button once.
         document.querySelectorAll('form').forEach((form) => {
             if ((form.method || '').toLowerCase() !== 'post') {
                 return;
             }
+            // Disable submit controls while the request is pending.
             form.addEventListener('submit', function() {
-                const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
-                submitButtons.forEach((button) => {
+            const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+            // Lock every submit control in the form.
+            submitButtons.forEach((button) => {
                     if (button.dataset.locked === 'true') {
                         return;
                     }

@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="reorder-container">
+    <!-- Deck picker -->
     <div class="section">
         <div class="section-header">
             <h5>Select Deck</h5>
@@ -43,6 +44,7 @@
     </div>
 
     {% if reorder_deck %}
+    <!-- Drag order game -->
     <div class="section" id="reorderSection">
         <div class="section-header success">
             <div>
@@ -75,8 +77,10 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+    // Build the reorder board after load.
+    document.addEventListener('DOMContentLoaded', function() {
     const reorder_deck = {{ (reorder_deck if reorder_deck else {}) | tojson }};
+    // Restore the game board on load.
     const reorderSection = document.getElementById('reorderSection');
     if (reorderSection && reorder_deck.deck_id) {
         reorderSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -93,9 +97,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let lastSwappedCardIds = [];
     let activePointerDrag = null;
 
-    // We keep the working order entirely in memory and re-render after every move.
+    // Keep the working order in memory.
     let cardsInPlay = reorder_deck.cards.map((card) => ({ ...card }));
 
+    // Randomize the working order.
     function shuffleCards() {
         for (let i = cardsInPlay.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -103,18 +108,23 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Remove incorrect-row markers.
     function clearHighlights() {
+        // Walk each row and clear the error style.
         document.querySelectorAll('.reorder-item').forEach((item) => {
             item.classList.remove('incorrect');
         });
     }
 
+    // Clear drag-over styling.
     function clearDragOverState() {
+        // Remove hover state from every row.
         document.querySelectorAll('.reorder-item.drag-over').forEach((item) => {
             item.classList.remove('drag-over');
         });
     }
 
+    // Update the status line.
     function setStatus(message, isSuccess) {
         reorderStatus.textContent = message;
         reorderStatus.classList.remove('success', 'error');
@@ -126,17 +136,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Move one card with arrow buttons.
     function moveCard(fromIndex, offset) {
         const toIndex = fromIndex + offset;
         if (toIndex < 0 || toIndex >= cardsInPlay.length) {
             return;
         }
-        // Arrow moves should behave like direct swaps for consistent UX feedback.
+        // Arrow buttons use the same swap path as drag/drop.
         const currentcard_id = cardsInPlay[fromIndex].card_id;
         const targetcard_id = cardsInPlay[toIndex].card_id;
         swapCards(currentcard_id, targetcard_id);
     }
 
+    // Apply a local reorder move.
     function swapCards(firstcard_id, secondcard_id) {
         const firstIndex = cardsInPlay.findIndex((card) => card.card_id === firstcard_id);
         const secondIndex = cardsInPlay.findIndex((card) => card.card_id === secondcard_id);
@@ -144,18 +156,18 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Instead of swapping, we should INSERT (shift array) when dragging.
-        // But for consistency with arrow buttons, let's keep it an insert.
+        // Apply the move locally first.
         const movedCard = cardsInPlay.splice(firstIndex, 1)[0];
         cardsInPlay.splice(secondIndex, 0, movedCard);
 
-        // Track exactly which card was moved for targeted visual feedback.
+        // Mark the moved card for a short highlight.
         lastSwappedCardIds = [firstcard_id];
         setStatus('Order updated. Check when you are ready.', null);
         clearHighlights();
         renderList();
     }
 
+    // Start a custom pointer drag.
     function beginPointerDrag(event, item, card_id) {
         if (event.button !== 0 || event.target.closest('.reorder-controls')) {
             return;
@@ -169,7 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
         dragGhost.style.top = `${rect.top}px`;
         document.body.appendChild(dragGhost);
 
-        // Keep click offset so the card is grabbed exactly where user clicked.
+        // Preserve the grab point for smoother dragging.
         activePointerDrag = {
             card_id,
             sourceElement: item,
@@ -185,6 +197,7 @@ document.addEventListener('DOMContentLoaded', function() {
         event.preventDefault();
     }
 
+    // Track the drag target under the pointer.
     function updatePointerDrag(event) {
         if (!activePointerDrag) {
             return;
@@ -210,6 +223,7 @@ document.addEventListener('DOMContentLoaded', function() {
         activePointerDrag.targetCardId = Number(targetItem.dataset.cardId);
     }
 
+    // Finish the drag and apply the move.
     function endPointerDrag() {
         if (!activePointerDrag) {
             return;
@@ -233,9 +247,11 @@ document.addEventListener('DOMContentLoaded', function() {
         activePointerDrag = null;
     }
 
+    // Rebuild the visible list from state.
     function renderList() {
         reorderList.innerHTML = '';
 
+        // Build each row from the in-memory order.
         cardsInPlay.forEach((card, index) => {
             const item = document.createElement('div');
             item.className = 'reorder-item';
@@ -287,7 +303,7 @@ document.addEventListener('DOMContentLoaded', function() {
             item.appendChild(content);
             item.appendChild(controls);
 
-            // Custom pointer-drag flow keeps full opacity and consistent grab-hand cursor.
+            // Custom drag keeps the cards readable while moving.
             item.addEventListener('pointerdown', (event) => beginPointerDrag(event, item, card.card_id));
 
             reorderList.appendChild(item);
@@ -295,13 +311,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (lastSwappedCardIds.length === 1) {
             const [firstId] = lastSwappedCardIds;
+            // Highlight the moved row briefly.
             document.querySelectorAll('.reorder-item').forEach((item) => {
                 const card_id = Number(item.dataset.cardId);
                 if (card_id === firstId) {
                     item.classList.add('just-swapped');
                 }
             });
+            // Clear the highlight after the pop animation.
             setTimeout(() => {
+                // Remove the transient swap highlight.
                 document.querySelectorAll('.reorder-item.just-swapped').forEach((item) => {
                     item.classList.remove('just-swapped');
                 });
@@ -310,6 +329,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Send the current order to the server.
     function checkOrder() {
         clearHighlights();
         setStatus('Checking order...', null);
@@ -326,7 +346,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 ordered_card_ids: ordered_card_ids,
             }),
         })
+            // Parse the validation response.
             .then((response) => response.json())
+            // Paint the result into the board state.
             .then((data) => {
                 if (!data.success) {
                     setStatus(data.error || 'Unable to validate order.', false);
@@ -338,7 +360,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                 const incorrectIds = new Set((data.incorrect_card_ids || []).map((id) => Number(id)));
+                const incorrectIds = new Set((data.incorrect_card_ids || []).map((id) => Number(id)));
+                // Mark every incorrect row.
                 document.querySelectorAll('.reorder-item').forEach((item) => {
                     const itemcard_id = Number(item.dataset.cardId);
                     if (incorrectIds.has(itemcard_id)) {
@@ -347,13 +370,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 setStatus('Some cards are out of order. Incorrect rows are highlighted.', false);
             })
+            // Fail closed if the request errors.
             .catch(() => {
                 setStatus('Unable to check order right now.', false);
             });
     }
 
+    // Start over with a new shuffle.
     function reshuffleList() {
-        // Shuffle and reset feedback so the user gets a clean new attempt.
+        // Reset the board for a fresh attempt.
         shuffleCards();
         renderList();
         clearHighlights();

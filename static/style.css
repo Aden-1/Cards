@@ -624,6 +624,7 @@ main .container {
 }
 
 .sortable-card {
+    /* JS-driven drag state */
     cursor: grab;
 }
 
@@ -914,6 +915,7 @@ main .container {
 }
 
 .match-tile {
+    /* Shared tile shell */
     min-height: 132px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
@@ -1052,6 +1054,7 @@ main .container {
 }
 
 .reorder-item {
+    /* Custom drag/drop row */
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: var(--space-md);

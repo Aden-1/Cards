@@ -3,10 +3,8 @@
 {% block title %}Matching Game - Cards App{% endblock %}
 
 {% block content %}
-
-
 <div class="match-container">
-    <!-- Deck Selector -->
+    <!-- Deck picker -->
     <div class="section">
         <div class="section-header">
             <h5>Select Deck</h5>
@@ -45,7 +43,7 @@
         </div>
     </div>
 
-    <!-- Game -->
+    <!-- Game board -->
     {% if match_deck %}
     <div class="section" id="matchGameSection">
         <div class="section-header success">
@@ -118,28 +116,34 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+    // Wire the game after the page is ready.
+    document.addEventListener('DOMContentLoaded', function() {
     let selectedQuestionId = null;
 
     {% if match_deck %}
+    // Return to the board after load.
     const matchGameSection = document.getElementById('matchGameSection');
     if (matchGameSection) {
         matchGameSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     {% endif %}
 
+    // Keep the counters in sync with active tiles.
     function updateStats() {
+        // Count only active tiles.
         const questionTiles = document.querySelectorAll('.match-tile.question-tile:not(.disabled)');
         const answerTiles = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)');
         document.getElementById('questionsRemaining').textContent = questionTiles.length;
         document.getElementById('answersRemaining').textContent = answerTiles.length;
     }
 
+    // Show a short success or error toast.
     function showFeedback(message, isSuccess) {
         const feedback = document.createElement('div');
         feedback.className = `feedback-message ${isSuccess ? 'success' : 'error'}`;
         feedback.textContent = message;
         document.body.appendChild(feedback);
+        // Let the toast linger briefly before fading out.
         setTimeout(() => {
             feedback.style.opacity = '0';
             feedback.style.transition = 'opacity var(--transition-slow)';
@@ -147,10 +151,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 2000);
     }
 
+    // Handle question and answer tile clicks.
     function handleTileClick(tile) {
         const tileType = tile.dataset.type;
 
         if (tileType === 'question') {
+            // Clear the prior selection before highlighting a new one.
             document.querySelectorAll('.match-tile.question-tile.selected').forEach(t => {
                 t.classList.remove('selected');
             });
@@ -174,7 +180,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Ask the server before removing a matched tile.
     function handleMatch(answer_id, answerTile) {
+        // Server confirms the match before we remove the tile.
         answerTile.classList.add('tile-removing');
 
          fetch('{{ url_for("match_answer") }}', {
@@ -187,7 +195,9 @@ document.addEventListener('DOMContentLoaded', function() {
                  selected_question_id: selectedQuestionId
             })
         })
+        // Convert the server response into game state updates.
         .then(response => response.json())
+        // Remove tiles only after the match is accepted.
         .then(data => {
             if (data.success) {
                 showFeedback('Correct!', true);
@@ -204,13 +214,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 ).length;
 
                 if (remainingAnswersForQuestion === 0) {
-                    const questionTile = document.querySelector(`.match-tile.question-tile[data-question-id="${selectedQuestionId}"]`);
-                    if (questionTile) {
-                        questionTile.classList.add('tile-removing');
-                        setTimeout(() => {
-                            questionTile.classList.add('disabled');
-                            updateStats();
-                            checkGameCompletion();
+                const questionTile = document.querySelector(`.match-tile.question-tile[data-question-id="${selectedQuestionId}"]`);
+                if (questionTile) {
+                    questionTile.classList.add('tile-removing');
+                    // Remove the question tile after its answers are gone.
+                    setTimeout(() => {
+                        questionTile.classList.add('disabled');
+                        updateStats();
+                        checkGameCompletion();
                         }, 300);
                     }
                     selectedQuestionId = null;
@@ -222,6 +233,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 answerTile.classList.remove('tile-removing');
             }
         })
+        // Fail closed if the request fails.
         .catch(error => {
             console.error('Error:', error);
             showFeedback('Error processing match', false);
@@ -229,6 +241,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Swap to the win state when nothing remains.
     function checkGameCompletion() {
         const remainingAnswers = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)').length;
         const remainingQuestions = document.querySelectorAll('.match-tile.question-tile:not(.disabled)').length;
@@ -239,7 +252,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Make every tile clickable.
     document.querySelectorAll('.match-tile').forEach(tile => {
+        // Each tile gets the same click behavior.
         tile.addEventListener('click', function() {
             if (!this.classList.contains('disabled') && !this.classList.contains('tile-removing')) {
                 handleTileClick(this);

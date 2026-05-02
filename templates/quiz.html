@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="quiz-container">
+    <!-- Choose a quiz source -->
     <div class="section">
         <div class="section-header">
             <h5>Select Deck for Quiz</h5>
@@ -54,6 +55,7 @@
     </div>
 
     {% if quiz_data %}
+    <!-- Render quiz -->
     <div class="section mt-4" id="quizGameSection">
         <div class="section-header success">
             <h5>Quiz</h5>
@@ -90,27 +92,35 @@
 <script>
     const quizData = {{ quiz_data|tojson }};
 
+    // Collect answers and send them for scoring.
     document.getElementById('submitQuiz')?.addEventListener('click', () => {
+        // Build a per-question answer map.
         const answers = {};
+        // Group checked options by question.
         document.querySelectorAll('.quiz-question').forEach(el => {
             const qId = el.dataset.questionId;
             const selected = [];
+            // Capture every checked option.
             el.querySelectorAll('.option-checkbox:checked').forEach(cb => {
                 selected.push(cb.value);
             });
             answers[qId] = selected;
         });
 
+        // Server scores the quiz.
         fetch('{{ url_for("score_quiz") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ answers: answers, quiz_data: quizData })
         })
+        // Parse the quiz score response.
         .then(r => r.json())
+        // Paint per-question feedback.
         .then(data => {
             if(data.success) {
                 document.getElementById('quizScore').innerHTML = `<h4>Your Score: ${data.score} / ${data.total}</h4>`;
 
+                // Render each answer result.
                 data.results.forEach(res => {
                     const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
                     if(qEl) {

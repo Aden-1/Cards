@@ -1,10 +1,13 @@
 from flask import jsonify, redirect, render_template, request, url_for
 
 
+# Shared request helpers.
+# Read request payload from JSON or form data.
 def _request_data():
     return request.get_json(silent=True) or request.values.to_dict(flat=True)
 
 
+# Parse an integer safely.
 def _int_value(value):
     try:
         return int(value)
@@ -12,6 +15,7 @@ def _int_value(value):
         return None
 
 
+# Redirect to a route with an optional fragment.
 def _redirect_with_fragment(endpoint, fragment=None, **values):
     target = url_for(endpoint, **values)
     if fragment:
@@ -19,14 +23,16 @@ def _redirect_with_fragment(endpoint, fragment=None, **values):
     return redirect(target)
 
 
-# Display the home page
+# Page routes.
+# Render the home page.
 def index():
     return render_template('index.html')
 
 
-# Display the deck and card management page
+# Deck editor.
+# Render the deck editor page.
 def edit():
-    user_id = 1  # Default user for now
+    user_id = 1  # Local demo user.
     from app import get_user_decks, get_deck_details
 
     decks = get_user_decks(user_id)
@@ -53,9 +59,10 @@ def edit():
     return render_template('edit.html', user_id=user_id, decks=deck_data, selected_deck=selected_deck, selected_cards=selected_cards, selected_deck_id=selected_deck_id)
 
 
-# Display the study page for learning cards
+# Study view.
+# Render the study page.
 def view():
-    user_id = 1  # Default user for now
+    user_id = 1  # Local demo user.
     from app import get_accessible_decks, get_deck_details
 
     decks = get_accessible_decks(user_id)
@@ -75,9 +82,10 @@ def view():
     return render_template('view.html', user_id=user_id, decks=deck_data, study_deck=study_deck, selected_deck_id=selected_deck_id)
 
 
-# Display the matching game page
+# Matching game.
+# Render the matching game page.
 def match():
-    user_id = 1  # Default user for now
+    user_id = 1  # Local demo user.
     from app import get_accessible_decks, get_deck_study_data
 
     decks = get_accessible_decks(user_id)
@@ -107,12 +115,13 @@ def match():
     )
 
 
+# Render the reorder game page.
 def reorder():
-    user_id = 1  # Default user for now
+    user_id = 1  # Local demo user.
     from app import get_accessible_decks, get_deck_details
 
     decks = get_accessible_decks(user_id)
-    # Reorder game is only valid for decks explicitly marked sortable.
+    # Only sortable decks can enter this game.
     sortable_decks = [deck for deck in decks if deck.sortable]
     deck_data = [{
         'deck_id': deck.deck_id,
@@ -129,7 +138,7 @@ def reorder():
     if selected_deck_id not in sortable_deck_ids:
         selected_deck_id = None
 
-    # Start each round with a shuffled card list for the reorder challenge.
+    # Start each round with a shuffled card list.
     reorder_deck = get_deck_details(selected_deck_id, shuffle_cards=True, shuffle_answers=False) if selected_deck_id else None
 
     return render_template(
@@ -141,9 +150,9 @@ def reorder():
     )
 
 
-## Deck route handlers
+# Deck routes.
 
-# Create a new deck
+# Handle deck creation.
 def create_deck_route():
     from app import create_deck
 
@@ -170,7 +179,7 @@ def create_deck_route():
     )
 
 
-# Get all decks for a user
+# Return the current user's decks.
 def get_deck_list_route():
     from app import get_user_decks
 
@@ -188,7 +197,7 @@ def get_deck_list_route():
         return jsonify({'success': True, 'decks': []})
 
 
-# Delete a deck
+# Delete a deck.
 def delete_deck_route():
     from app import delete_deck
 
@@ -207,7 +216,7 @@ def delete_deck_route():
         return jsonify({'error': 'Deck not found'}), 404
 
 
-# Edit a deck
+# Update deck settings.
 def edit_deck_route():
     from app import edit_deck
 
@@ -237,9 +246,9 @@ def edit_deck_route():
         return jsonify({'error': 'Deck not found'}), 404
 
 
-## Card route handlers
+# Card routes.
 
-# Add a new card to a deck
+# Add a card to a deck.
 def add_card_route():
     from app import add_card
 
@@ -260,7 +269,7 @@ def add_card_route():
     return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card added', level='success')
 
 
-# Delete a card
+# Delete a card.
 def delete_card_route():
     from app import delete_card
 
@@ -280,7 +289,7 @@ def delete_card_route():
         return jsonify({'error': 'Card not found'}), 404
 
 
-# Edit a card
+# Update a card and its answers.
 def edit_card_route():
     from app import edit_card
 
@@ -306,7 +315,7 @@ def edit_card_route():
         return jsonify({'error': 'Card not found'}), 404
 
 
-# Get all cards from a deck
+# List cards in a deck.
 def list_cards_route():
     from app import list_cards_from_deck, get_deck_details
 
@@ -329,7 +338,7 @@ def list_cards_route():
         return jsonify({'success': True, 'cards': []})
 
 
-# Get a single card with all answers
+# Return one card with answers.
 def get_card_route():
     from app import get_card_from_deck
 
@@ -346,7 +355,8 @@ def get_card_route():
         return jsonify({'error': 'Card not found'}), 404
 
 
-# Match an answer to a question (for matching game - does NOT delete from database)
+# Match only checks the pair, it does not mutate the answer row.
+# Validate one matching-game answer.
 def match_answer_route():
     from models import CardAnswer
 
@@ -367,7 +377,7 @@ def match_answer_route():
     if answer.card_id != selected_question_id:
         return jsonify({'error': 'That answer does not match the selected question'}), 400
 
-    # Check if this is the last answer for the card
+    # Last answer means the question tile should disappear too.
     remaining_answers = CardAnswer.query.filter_by(card_id=selected_question_id).count() - 1
     card_deleted = remaining_answers == 0
 
@@ -380,7 +390,7 @@ def match_answer_route():
     })
 
 
-# Delete a single answer from a card
+# Delete one answer in edit or match mode.
 def delete_answer_route():
     from app import delete_answer
     from models import CardAnswer
@@ -425,6 +435,7 @@ def delete_answer_route():
     return jsonify({'error': 'Answer not found'}), 404
 
 
+# Move a card one slot.
 def move_card_route():
     from app import move_card_in_deck
 
@@ -445,6 +456,7 @@ def move_card_route():
     return _redirect_with_fragment('edit', deck_id=result.get('deck_id') or deck_id, fragment='deck-editor')
 
 
+# Swap two cards in a sortable deck.
 def swap_cards_route():
     from app import swap_cards_in_deck
 
@@ -462,6 +474,7 @@ def swap_cards_route():
     return jsonify({'success': True, **result})
 
 
+# Check a submitted reorder attempt.
 def check_reorder_route():
     from app import check_deck_order
 
@@ -476,7 +489,7 @@ def check_reorder_route():
         return jsonify({'error': 'ordered_card_ids must be a list'}), 400
 
     try:
-        # Normalize IDs from JSON so backend comparison uses consistent ints.
+        # Normalize IDs before comparing order.
         normalized_card_ids = [int(card_id) for card_id in ordered_card_ids]
     except (TypeError, ValueError):
         return jsonify({'error': 'ordered_card_ids must contain valid card IDs'}), 400
@@ -494,7 +507,8 @@ def check_reorder_route():
     })
 
 
-# Display search results
+# Search results.
+# Render public search results.
 def search_route():
     from app import search_public_content
 
@@ -518,6 +532,7 @@ def search_route():
     )
 
 
+# Render the quiz launcher and quiz data.
 def quiz_route():
     from app import get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
     user_id = 1
@@ -539,11 +554,11 @@ def quiz_route():
     elif selected_source.startswith('custom:'):
         selected_custom_quiz_id = _int_value(selected_source.split(':', 1)[1])
     else:
-        # Backward compatibility with older links.
+        # Keep older deck/custom_quiz links working.
         selected_deck_id = _int_value(request.args.get('deck_id'))
         selected_custom_quiz_id = _int_value(request.args.get('custom_quiz_id'))
         if selected_deck_id and selected_custom_quiz_id:
-            # Prefer explicit single source; default to deck for legacy behavior.
+            # Prefer a single source.
             selected_custom_quiz_id = None
         if selected_deck_id:
             selected_source = f'deck:{selected_deck_id}'
@@ -564,8 +579,9 @@ def quiz_route():
                            quiz_data=quiz_data)
 
 
+# Score a submitted quiz.
 def score_quiz_route():
-    # Evaluate submitted quiz
+    # Strictly score the submitted options.
     data = request.json
     submitted_answers = data.get('answers', {})
     quiz_questions = data.get('quiz_data', [])
@@ -596,6 +612,7 @@ def score_quiz_route():
         
     return jsonify({'success': True, 'score': score, 'total': total, 'results': results})
 
+# Render the custom quiz editor.
 def edit_quiz_route():
     from app import get_user_custom_quizzes
     from models import Quiz
@@ -611,6 +628,7 @@ def edit_quiz_route():
             
     return render_template('edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz)
 
+# Create a custom quiz.
 def create_custom_quiz_route():
     from app import create_custom_quiz
     data = _request_data()
@@ -623,6 +641,7 @@ def create_custom_quiz_route():
     quiz = create_custom_quiz(1, title, is_public, description, tags)  # user_id = 1
     return redirect(url_for('edit_quiz_route', quiz_id=quiz.quiz_id))
 
+# Update custom quiz metadata.
 def edit_custom_quiz_metadata_route():
     from app import edit_custom_quiz
     data = _request_data()
@@ -634,12 +653,14 @@ def edit_custom_quiz_metadata_route():
     edit_custom_quiz(quiz_id, title, is_public, description, tags)
     return redirect(url_for('edit_quiz_route', quiz_id=quiz_id))
 
+# Delete a custom quiz.
 def delete_custom_quiz_route():
     from app import delete_custom_quiz
     quiz_id = _int_value(_request_data().get('quiz_id'))
     delete_custom_quiz(quiz_id)
     return redirect(url_for('edit_quiz_route'))
 
+# Add a question to a quiz.
 def add_quiz_question_route():
     from app import add_quiz_question
 
@@ -674,6 +695,7 @@ def add_quiz_question_route():
     add_quiz_question(quiz_id, question_text, q_type, options_data)
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question added successfully', level='success')
 
+# Delete a quiz question.
 def delete_quiz_question_route():
     from app import delete_quiz_question
     data = _request_data()
@@ -682,6 +704,7 @@ def delete_quiz_question_route():
     delete_quiz_question(question_id)
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question deleted', level='success')
 
+# Replace a quiz question.
 def edit_quiz_question_route():
     from app import delete_quiz_question, add_quiz_question
     data = _request_data()
@@ -718,7 +741,8 @@ def edit_quiz_question_route():
     
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question updated', level='success')
 
-# Register all routes with Flask
+# Route registration.
+# Register every route on the Flask app.
 def register_routes(app):
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
