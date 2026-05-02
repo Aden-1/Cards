@@ -8,7 +8,7 @@
     <div class="section">
         <div class="section-header">
             <h5>Select Deck</h5>
-            {% if selected_deck_id %}
+            {% if selected_deck_id and selected_deck_is_owned %}
             <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
             {% endif %}
         </div>
@@ -16,7 +16,7 @@
             {% if decks %}
             <form method="get" action="{{ url_for('reorder') }}" class="deck-selector-form">
                 <div class="form-group mb-0">
-                    <label for="deck_id">Sortable Decks</label>
+                    <label for="deck_id">{{ 'Public Sortable Decks' if not current_user else 'Sortable Decks' }}</label>
                     <select class="form-select" id="deck_id" name="deck_id" required>
                         <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
                         {% for deck in decks %}
@@ -36,8 +36,12 @@
             </form>
             {% else %}
             <div class="empty-state">
-                <p>No sortable decks available yet. Mark a deck as "Keep in order" to play.</p>
+                <p>No sortable decks are available yet.</p>
+                {% if current_user %}
                 <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Set up a sortable deck</a>
+                {% else %}
+                <a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Log in to create one</a>
+                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -57,7 +61,9 @@
             {% if reorder_deck.card_count == 0 %}
             <div class="empty-state">
                 <p>This deck is empty. Add some cards to play!</p>
+                {% if selected_deck_is_owned %}
                 <a class="btn btn-primary btn-sm" href="{{ url_for('edit', deck_id=reorder_deck.deck_id) }}#deck-editor">Add cards to this deck</a>
+                {% endif %}
             </div>
             {% else %}
             <div class="instructions">
@@ -340,6 +346,7 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-CSRFToken': window.cardsCsrfToken,
             },
             body: JSON.stringify({
                 deck_id: reorder_deck.deck_id,

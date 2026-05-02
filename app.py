@@ -1,6 +1,7 @@
 import random
 import re
 import unicodedata
+import os
 
 from flask import Flask
 from flask_migrate import Migrate
@@ -10,8 +11,11 @@ from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
-# Local session key.
-app.config['SECRET_KEY'] = 'temp_secret_key'
+# Session and cookie security. Set SECRET_KEY in production.
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-only-change-me')
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
 
 # Local SQLite config.
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cards.db'
@@ -89,7 +93,9 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
 # Custom quiz helpers.
 
 # Return public and owned custom quizzes.
-def get_accessible_custom_quizzes(user_id):
+def get_accessible_custom_quizzes(user_id=None):
+    if user_id is None:
+        return Quiz.query.filter(Quiz.is_public == True).all()
     return Quiz.query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
 
 # Return quizzes owned by one user.
@@ -133,6 +139,82 @@ def delete_custom_quiz(quiz_id):
         return True
     return False
 
+
+# Duplicate a public quiz into one user's account.
+def copy_public_quiz_to_user(source_quiz_id, user_id):
+    source_quiz = Quiz.query.get(source_quiz_id)
+    if not source_quiz or not source_quiz.is_public:
+        return None
+
+    copied_quiz = Quiz(
+        owned_by=user_id,
+        title=f"{source_quiz.title} (Copy)",
+        description=source_quiz.description,
+        tags=source_quiz.tags,
+        is_public=False,
+    )
+    db.session.add(copied_quiz)
+    db.session.flush()
+
+    for source_question in source_quiz.questions:
+        copied_question = QuizQuestion(
+            quiz_id=copied_quiz.quiz_id,
+            question=source_question.question,
+            type=source_question.type,
+        )
+        db.session.add(copied_question)
+        db.session.flush()
+
+        for source_option in source_question.options:
+            copied_option = QuizOption(
+                question_id=copied_question.question_id,
+                text=source_option.text,
+                is_correct=source_option.is_correct,
+            )
+            db.session.add(copied_option)
+
+    db.session.commit()
+    return copied_quiz
+
+
+# Duplicate a public deck into one user's account.
+def copy_public_deck_to_user(source_deck_id, user_id):
+    source_deck = Deck.query.get(source_deck_id)
+    if not source_deck or not source_deck.is_public:
+        return None
+
+    copied_deck = Deck(
+        owned_by=user_id,
+        description=f"{source_deck.description} (Copy)",
+        detailed_description=source_deck.detailed_description,
+        tags=source_deck.tags,
+        sortable=source_deck.sortable,
+        is_public=False,
+    )
+    db.session.add(copied_deck)
+    db.session.flush()
+
+    ordered_cards = sorted(list(source_deck.cards), key=lambda c: c.position)
+    for source_card in ordered_cards:
+        copied_card = Card(
+            deck_id=copied_deck.deck_id,
+            question=source_card.question,
+            position=source_card.position,
+        )
+        db.session.add(copied_card)
+        db.session.flush()
+
+        for source_answer in source_card.answers:
+            copied_answer = CardAnswer(
+                card_id=copied_card.card_id,
+                answer=source_answer.answer,
+            )
+            db.session.add(copied_answer)
+
+    db.session.commit()
+    _sync_content_fts_index_for_deck(copied_deck)
+    return copied_deck
+
 # Insert a quiz question and its options.
 def add_quiz_question(quiz_id, question_text, q_type, options_data):
     q = QuizQuestion(quiz_id=quiz_id, question=question_text, type=q_type)
@@ -158,8 +240,9 @@ def delete_quiz_question(question_id):
 
 # User helpers.
 # Create a user record.
-def create_user(username):
-    user = User(username=username)
+def create_user(username, password, email=None, role='standard'):
+    user = User(username=username, email=email or None, role=role)
+    user.set_password(password)
     db.session.add(user)
     db.session.commit()
     return user
@@ -167,6 +250,28 @@ def create_user(username):
 # Look up a user by username.
 def get_user(username):
     return User.query.filter_by(username=username).first()
+
+
+def get_user_by_id(user_id):
+    return User.query.get(user_id)
+
+
+def get_user_by_email(email):
+    if not email:
+        return None
+    return User.query.filter_by(email=email).first()
+
+
+def update_user_account(user_id, username, email=None, password=None):
+    user = User.query.get(user_id)
+    if not user:
+        return None
+    user.username = username
+    user.email = email or None
+    if password:
+        user.set_password(password)
+    db.session.commit()
+    return user
 
 
 # Deck helpers.
@@ -192,7 +297,9 @@ def get_user_decks(user_id):
 
 # Owned or public decks.
 # Return owned and public decks.
-def get_accessible_decks(user_id):
+def get_accessible_decks(user_id=None):
+    if user_id is None:
+        return Deck.query.filter(Deck.is_public == True).all()
     return Deck.query.filter((Deck.owned_by == user_id) | (Deck.is_public == True)).all()
 
 
@@ -435,7 +542,7 @@ def _fallback_search_public_content(query_text):
 
 
 # Search public decks and quizzes.
-def search_public_content(query_text, limit=50):
+def search_public_content(query_text, limit=50, user_id=None):
     query_text = (query_text or '').strip()
     if not query_text:
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
@@ -508,6 +615,8 @@ def search_public_content(query_text, limit=50):
                     has_exact_match = True
                 deck_results.append({
                     'deck_id': deck.deck_id,
+                    'owned_by': deck.owned_by,
+                    'is_owned': bool(user_id is not None and deck.owned_by == user_id),
                     'description': deck.description,
                     'detailed_description': deck.detailed_description,
                     'tags': deck.tags,
@@ -525,6 +634,8 @@ def search_public_content(query_text, limit=50):
                     has_exact_match = True
                 quiz_results.append({
                     'quiz_id': quiz.quiz_id,
+                    'owned_by': quiz.owned_by,
+                    'is_owned': bool(user_id is not None and quiz.owned_by == user_id),
                     'title': quiz.title,
                     'description': quiz.description,
                     'tags': quiz.tags,
@@ -540,6 +651,8 @@ def search_public_content(query_text, limit=50):
         decks, quizzes = _fallback_search_public_content(query_text)
         deck_results = [{
             'deck_id': deck.deck_id,
+            'owned_by': deck.owned_by,
+            'is_owned': bool(user_id is not None and deck.owned_by == user_id),
             'description': deck.description,
             'detailed_description': deck.detailed_description,
             'tags': deck.tags,
@@ -551,6 +664,8 @@ def search_public_content(query_text, limit=50):
         } for deck in decks]
         quiz_results = [{
             'quiz_id': quiz.quiz_id,
+            'owned_by': quiz.owned_by,
+            'is_owned': bool(user_id is not None and quiz.owned_by == user_id),
             'title': quiz.title,
             'description': quiz.description,
             'tags': quiz.tags,

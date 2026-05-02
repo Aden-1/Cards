@@ -8,7 +8,7 @@
     <div class="section">
         <div class="section-header">
             <h5 class="mb-0">Select Deck</h5>
-            {% if selected_deck_id %}
+            {% if selected_deck_id and selected_deck_is_owned %}
             <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
             {% endif %}
         </div>
@@ -16,7 +16,7 @@
             {% if decks %}
             <form method="get" action="{{ url_for('view') }}" class="deck-selector-form">
                 <div class="form-group mb-0">
-                    <label for="deck_id">Your Decks</label>
+                    <label for="deck_id">{{ 'Available Decks' if not current_user else 'Your Decks And Public Decks' }}</label>
                     <select class="form-select" id="deck_id" name="deck_id" required>
                         <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
                         {% for deck in decks %}
@@ -36,8 +36,12 @@
             </form>
             {% else %}
             <div class="empty-state">
-                <p>No decks yet. Create one to get started!</p>
+                <p>No public decks are available yet.</p>
+                {% if current_user %}
                 <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Create a deck</a>
+                {% else %}
+                <a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Log in to create a deck</a>
+                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -63,7 +67,7 @@
                 <div class="deck-tags">
                     {% for tag in study_deck.tags.split(',') %}
                     {% if tag.strip() %}
-                    <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                    <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
                     {% endif %}
                     {% endfor %}
                 </div>

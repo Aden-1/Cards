@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Public Deck - Cards App{% endblock %}
+
+{% block content %}
+<div class="edit-container">
+    <div class="page-header">
+        <h1>{{ deck.description }}</h1>
+        <p class="text-secondary">Deck preview</p>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Deck Details</h5>
+                <small>{{ deck.cards|length }} card{{ '' if deck.cards|length == 1 else 's' }}</small>
+            </div>
+            <span class="deck-card-mode {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
+        </div>
+        <div class="section-body">
+            {% if deck.detailed_description %}
+            <p class="text-muted mb-2">{{ deck.detailed_description }}</p>
+            {% endif %}
+
+            {% if deck.tags %}
+            <div class="deck-tags mb-3">
+                {% for tag in deck.tags.split(',') %}
+                {% if tag.strip() %}
+                <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="deck-card-actions mt-2">
+                <a class="btn btn-success btn-sm" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
+                {% if deck.owned_by == user_id %}
+                <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
+                {% elif current_user %}
+                <form method="post" action="{{ url_for('copy_public_deck') }}">
+                    <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">Copy To My Decks</button>
+                </form>
+                {% else %}
+                <a class="btn btn-secondary btn-sm" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
+                {% endif %}
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('search') }}">Back To Search</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="section mt-4">
+        <div class="section-header">
+            <h5 class="mb-0">Cards</h5>
+        </div>
+        <div class="section-body">
+            {% if deck.cards %}
+            <div class="cards-list-stack">
+                {% for card in deck.cards|sort(attribute='position') %}
+                <article class="card-editor-item">
+                    <div class="card-editor-head pb-2 border-bottom mb-2">
+                        <div class="card-item-question mb-1">
+                            <strong>{{ loop.index }}.</strong> {{ card.question }}
+                        </div>
+                    </div>
+                    <div class="answer-list">
+                        {% for answer in card.answers %}
+                        <div class="answer-row py-1">
+                            <span class="answer-row-text">{{ answer.answer }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>This deck has no cards yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -12,12 +12,12 @@
                 <p class="hero-subtitle">Build decks, study with focus mode, and reinforce memory with a playful matching challenge.</p>
 
                 <form class="hero-search mb-4 d-flex" action="{{ url_for('search') }}" method="GET">
-                    <input class="form-control form-control-lg me-2" type="search" placeholder="Search public decks..." name="q">
+                    <input id="homeSearchInput" class="form-control form-control-lg me-2" type="search" placeholder="Search" name="q">
                     <button class="btn btn-primary" type="submit">Search</button>
                 </form>
 
                 <div class="button-grid button-grid-home">
-                    <a class="btn-hero app-btn app-btn-primary" href="{{ url_for('edit') }}">
+                    <a class="btn-hero app-btn app-btn-primary" href="{{ url_for('edit') if current_user else url_for('register') }}">
                         <span class="icon">&rarr;</span> Manage Decks
                     </a>
                     <a class="btn-hero app-btn app-btn-mint" href="{{ url_for('view') }}">
@@ -53,4 +53,25 @@
         </div>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('homeSearchInput');
+    if (!input) return;
+
+    const placeholderMessages = [
+        'Search',
+        'Find a new deck to explore',
+        'Try searching by tag: math, bio, vocab',
+        'What are you curious about today?',
+        'Discover a quiz worth stealing',
+    ];
+
+    let messageIndex = 0;
+    setInterval(() => {
+        if (document.activeElement === input) return;
+        messageIndex = (messageIndex + 1) % placeholderMessages.length;
+        input.placeholder = placeholderMessages[messageIndex];
+    }, 2200);
+});
+</script>
 {% endblock %}

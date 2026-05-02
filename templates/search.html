@@ -21,7 +21,7 @@
     </div>
 
     <form class="mb-4 d-flex" action="{{ url_for('search') }}" method="GET">
-        <input class="form-control me-2" type="search" placeholder="Search by name, description, or tags..." name="q" value="{{ query }}">
+        <input id="publicSearchInput" class="form-control me-2" type="search" placeholder="Search" name="q" value="{{ query }}">
         <button class="btn btn-primary" type="submit">Search</button>
     </form>
 
@@ -42,10 +42,15 @@
                         <h6 class="deck-card-title">{{ deck.description }}</h6>
                         <span class="deck-card-mode public">Public</span>
                     </div>
+                    {% if deck.is_owned %}
+                    <p class="mt-2 mb-0 text-success small">You own this deck.</p>
+                    {% endif %}
                     {% if deck.tags %}
                     <div class="deck-tags mt-1">
                         {% for tag in deck.tags.split(',') %}
-                        <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                        {% if tag.strip() %}
+                        <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
+                        {% endif %}
                         {% endfor %}
                     </div>
                     {% endif %}
@@ -57,8 +62,12 @@
                     {% endif %}
                     <div class="deck-card-meta mt-2">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
                     <div class="deck-card-actions mt-3">
-                        <a class="btn btn-success btn-sm flex-grow-1" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
+                        <a class="btn btn-success btn-sm flex-grow-1" href="{{ url_for('public_deck', deck_id=deck.deck_id) }}">View</a>
+                        {% if current_user and deck.is_owned %}
+                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
+                        {% else %}
                         <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
+                        {% endif %}
                     </div>
                 </article>
                 {% endfor %}
@@ -92,11 +101,14 @@
                         <h6 class="deck-card-title">{{ quiz.title }}</h6>
                         <span class="deck-card-mode public">Public</span>
                     </div>
+                    {% if quiz.is_owned %}
+                    <p class="mt-2 mb-0 text-success small">You own this quiz.</p>
+                    {% endif %}
                     {% if quiz.tags %}
                     <div class="deck-tags mt-1">
                         {% for tag in quiz.tags.split(',') %}
                         {% if tag.strip() %}
-                        <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                        <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
                         {% endif %}
                         {% endfor %}
                     </div>
@@ -110,7 +122,7 @@
                     <div class="deck-card-meta mt-2">{{ quiz.question_count }} question{{ '' if quiz.question_count == 1 else 's' }}</div>
                     <div class="deck-card-actions mt-3">
                         <a class="btn btn-success btn-sm flex-grow-1" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
-                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit_quiz_route', quiz_id=quiz.quiz_id) }}">View</a>
+                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('public_quiz', quiz_id=quiz.quiz_id) }}">View</a>
                     </div>
                 </article>
                 {% endfor %}
@@ -127,4 +139,25 @@
         </div>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('publicSearchInput');
+    if (!input) return;
+
+    const placeholderMessages = [
+        'Search',
+        'Find your next favorite deck',
+        'Try a tag like "biology" or "history"',
+        'Hunt for quizzes, decks, and hidden gems',
+        'Search for something fun to study today',
+    ];
+
+    let messageIndex = 0;
+    setInterval(() => {
+        if (document.activeElement === input) return;
+        messageIndex = (messageIndex + 1) % placeholderMessages.length;
+        input.placeholder = placeholderMessages[messageIndex];
+    }, 2200);
+});
+</script>
 {% endblock %}

@@ -466,7 +466,7 @@
              try {
                  const response = await fetch('{{ url_for("swap_cards") }}', {
                      method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
+                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
                      body: JSON.stringify({ card_id: card_id, target_card_id: targetcard_id }),
                  });
                 const data = await response.json();

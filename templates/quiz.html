@@ -50,7 +50,10 @@
                 </form>
             </div>
 
-            <p class="text-muted small mt-2">Want to build your own specific test? <a href="{{ url_for('edit_quiz_route') }}">Manage Quizzes</a>.</p>
+            <p class="text-muted small mt-2">
+                Want to build your own specific test?
+                <a href="{{ url_for('edit_quiz_route') if current_user else url_for('login') }}">Manage Quizzes</a>.
+            </p>
         </div>
     </div>
 
@@ -110,7 +113,7 @@
         // Server scores the quiz.
         fetch('{{ url_for("score_quiz") }}', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
             body: JSON.stringify({ answers: answers, quiz_data: quizData })
         })
         // Parse the quiz score response.

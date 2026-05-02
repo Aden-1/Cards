@@ -377,6 +377,17 @@ main .container {
     gap: var(--space-sm);
 }
 
+.nav-logout-form {
+    margin: 0;
+}
+
+.nav-button-link {
+    background: transparent;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+}
+
 .quiz-source-stack {
     display: flex;
     flex-direction: column;
@@ -409,9 +420,26 @@ main .container {
 .edit-container,
 .study-container,
 .match-container,
-.reorder-container {
+.reorder-container,
+.auth-container {
     max-width: 1120px;
     margin: 0 auto;
+}
+
+.auth-container {
+    max-width: 560px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.auth-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .page-header {

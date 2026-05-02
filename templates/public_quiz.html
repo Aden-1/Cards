@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Public Quiz - Cards App{% endblock %}
+
+{% block content %}
+<div class="edit-container">
+    <div class="page-header">
+        <h1>{{ quiz.title }}</h1>
+        <p class="text-secondary">Public quiz preview</p>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Quiz Details</h5>
+                <small>{{ quiz.questions|length }} question{{ '' if quiz.questions|length == 1 else 's' }}</small>
+            </div>
+            <span class="deck-card-mode public">Public</span>
+        </div>
+        <div class="section-body">
+            {% if quiz.description %}
+            <p class="text-muted mb-2">{{ quiz.description }}</p>
+            {% endif %}
+
+            {% if quiz.tags %}
+            <div class="deck-tags mb-3">
+                {% for tag in quiz.tags.split(',') %}
+                {% if tag.strip() %}
+                <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="deck-card-actions mt-2">
+                <a class="btn btn-success btn-sm" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
+                {% if quiz.owned_by == user_id %}
+                <a class="btn btn-primary btn-sm" href="{{ url_for('edit_quiz_route', quiz_id=quiz.quiz_id) }}">Edit</a>
+                {% elif current_user %}
+                <form method="post" action="{{ url_for('copy_public_quiz') }}">
+                    <input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}">
+                    <button type="submit" class="btn btn-primary btn-sm">Copy To My Quizzes</button>
+                </form>
+                {% else %}
+                <a class="btn btn-primary btn-sm" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
+                {% endif %}
+                <a class="btn btn-secondary btn-sm" href="{{ url_for('search') }}">Back To Search</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="section mt-4">
+        <div class="section-header">
+            <h5 class="mb-0">Questions</h5>
+        </div>
+        <div class="section-body">
+            {% if quiz.questions %}
+            <div class="cards-list-stack">
+                {% for question in quiz.questions %}
+                <article class="card-editor-item">
+                    <div class="card-editor-head pb-2 border-bottom mb-2">
+                        <div class="card-item-question mb-1">
+                            <strong>{{ loop.index }}.</strong> {{ question.question }}
+                            <span class="badge bg-secondary ms-2 text-capitalize">{{ question.type }}</span>
+                        </div>
+                    </div>
+                    <div class="answer-list">
+                        {% for option in question.options %}
+                        <div class="answer-row py-1">
+                            <span class="answer-row-text">{{ option.text }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>This quiz has no questions yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Your Account - Cards App{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Your Account</h5>
+                <small>{{ user.role|capitalize }} user</small>
+            </div>
+        </div>
+        <div class="section-body">
+            {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+            {% endif %}
+            {% if success %}
+            <div class="alert alert-success">{{ success }}</div>
+            {% endif %}
+            <form method="post" action="{{ url_for('account') }}" class="auth-form">
+                <div class="form-group">
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" name="username" value="{{ user.username }}" autocomplete="username" minlength="3" maxlength="40" required>
+                </div>
+                <div class="form-group">
+                    <label for="email" class="form-label">Email Optional</label>
+                    <input type="email" class="form-control" id="email" name="email" value="{{ user.email or '' }}" autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label for="current_password" class="form-label">Current Password</label>
+                    <input type="password" class="form-control" id="current_password" name="current_password" autocomplete="current-password" required>
+                </div>
+                <div class="form-group">
+                    <label for="new_password" class="form-label">New Password</label>
+                    <input type="password" class="form-control" id="new_password" name="new_password" autocomplete="new-password" minlength="8">
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password" class="form-label">Confirm New Password</label>
+                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="8">
+                </div>
+                <div class="auth-actions">
+                    <button type="submit" class="btn btn-primary">Save Account</button>
+                    <a class="btn btn-secondary" href="{{ url_for('edit') }}">Manage Decks</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
