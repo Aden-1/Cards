@@ -63,6 +63,20 @@ def login_required(view_func):
     return wrapped
 
 
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        user = _current_user()
+        if not user:
+            return _login_required_response()
+        if not user.is_admin:
+            if _wants_json():
+                return jsonify({'error': 'Admin access required'}), 403
+            return redirect(url_for('index', notice='Admin access required.', level='error'))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
 def _csrf_token():
     token = session.get('csrf_token')
     if not token:
@@ -188,6 +202,72 @@ def account():
 
     updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
     return render_template('account.html', user=updated_user, success='Account updated.')
+
+
+@admin_required
+def admin_users():
+    from app import _delete_content_fts_index_row
+    from models import Deck, Quiz, User, db
+
+    if request.method == 'GET':
+        users = User.query.order_by(User.user_id).all()
+        return render_template('admin_users.html', users=users)
+
+    data = _request_data()
+    action = (data.get('action') or 'promote_admin').strip().lower()
+    target_user_id = _int_value(data.get('user_id'))
+    if not target_user_id:
+        return redirect(url_for('admin_users', notice='User ID is required.', level='error'))
+
+    target_user = db.session.get(User, target_user_id)
+    if not target_user:
+        return redirect(url_for('admin_users', notice='User not found.', level='error'))
+    current_user = _current_user()
+
+    if action == 'delete':
+        if current_user and current_user.user_id == target_user.user_id:
+            return redirect(url_for('admin_users', notice='You cannot delete your own account.', level='error'))
+
+        # Keep search index clean before cascading deletes.
+        owned_deck_ids = [deck_id for (deck_id,) in db.session.query(Deck.deck_id).filter_by(owned_by=target_user.user_id).all()]
+        owned_quiz_ids = [quiz_id for (quiz_id,) in db.session.query(Quiz.quiz_id).filter_by(owned_by=target_user.user_id).all()]
+        for deck_id in owned_deck_ids:
+            _delete_content_fts_index_row('deck', deck_id)
+        for quiz_id in owned_quiz_ids:
+            _delete_content_fts_index_row('quiz', quiz_id)
+
+        db.session.delete(target_user)
+        db.session.commit()
+        return redirect(url_for('admin_users', notice='User and all owned data deleted.', level='success'))
+
+    if action == 'promote_admin':
+        if target_user.role == 'admin':
+            return redirect(url_for('admin_users', notice='User is already an admin.', level='success'))
+        target_user.role = 'admin'
+        db.session.commit()
+        return redirect(url_for('admin_users', notice='User promoted to admin.', level='success'))
+
+    if action == 'promote_moderator':
+        if target_user.role == 'moderator':
+            return redirect(url_for('admin_users', notice='User is already a moderator.', level='success'))
+        if target_user.role == 'admin':
+            return redirect(url_for('admin_users', notice='Admins cannot be changed to moderator here.', level='error'))
+        target_user.role = 'moderator'
+        db.session.commit()
+        return redirect(url_for('admin_users', notice='User promoted to moderator.', level='success'))
+
+    if action == 'demote_standard':
+        if current_user and current_user.user_id == target_user.user_id:
+            return redirect(url_for('admin_users', notice='You cannot demote your own account.', level='error'))
+        if target_user.role == 'standard':
+            return redirect(url_for('admin_users', notice='User is already standard.', level='success'))
+        if target_user.role == 'admin':
+            return redirect(url_for('admin_users', notice='Use a dedicated admin-role workflow to demote admins.', level='error'))
+        target_user.role = 'standard'
+        db.session.commit()
+        return redirect(url_for('admin_users', notice='User demoted to standard.', level='success'))
+
+    return redirect(url_for('admin_users', notice='Unknown admin action.', level='error'))
 
 
 def _owned_deck(deck_id, user_id):
@@ -1148,6 +1228,7 @@ def register_routes(app):
     app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=account, methods=['GET', 'POST'])
+    app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/match', endpoint='match', view_func=match)

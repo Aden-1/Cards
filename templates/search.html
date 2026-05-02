@@ -145,19 +145,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!input) return;
 
     const placeholderMessages = [
-        'Search',
-        'Find your next favorite deck',
-        'Try a tag like "biology" or "history"',
-        'Hunt for quizzes, decks, and hidden gems',
-        'Search for something fun to study today',
+        'Find a deck for today',
+        'Search cards by topic quickly',
+        'Pick a quiz and practice',
+        'Study smarter with public decks',
+        'Find tags you need now',
+        'Search decks for tough concepts',
+        'Try a quiz before studying',
+        'Find cards for your next test',
+        'Explore new decks in seconds',
+        'Search by tag and learn',
+        'Find the right deck fast',
+        'Quick search for better practice',
     ];
 
-    let messageIndex = 0;
-    setInterval(() => {
-        if (document.activeElement === input) return;
-        messageIndex = (messageIndex + 1) % placeholderMessages.length;
-        input.placeholder = placeholderMessages[messageIndex];
-    }, 2200);
+    const randomIndex = Math.floor(Math.random() * placeholderMessages.length);
+    input.placeholder = placeholderMessages[randomIndex];
 });
 </script>
 {% endblock %}
+

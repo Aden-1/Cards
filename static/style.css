@@ -96,6 +96,33 @@ p {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.26) inset;
 }
 
+.navbar .dropdown-menu {
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+}
+
+.navbar .dropdown-item {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.navbar .dropdown-item:hover {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+}
+
+.navbar-search-form {
+    min-width: min(360px, 100%);
+}
+
+.nav-dropdown-button {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: transparent;
+}
+
 .btn {
     border-radius: 999px;
     font-weight: 700;
@@ -1265,6 +1292,10 @@ body.dragging-active.dragging-invalid * {
 
     .button-grid-home {
         grid-template-columns: 1fr;
+    }
+
+    .navbar-search-form {
+        min-width: 0;
     }
 
     .reorder-item {

@@ -21,50 +21,54 @@
             </button>
 
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
+                <ul class="navbar-nav ms-auto align-items-lg-center">
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('index') }}">Home</a>
                     </li>
-                    {% if current_user %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('edit') }}">Edit Decks</a>
-                    </li>
-                    {% endif %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('view') }}">Study Cards</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('match') }}">Matching Game</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('reorder') }}">Reorder Game</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('quiz') }}">Take a Quiz</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Learn</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('view') }}">Study Cards</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('match') }}">Matching Game</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('reorder') }}">Reorder Game</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('quiz') }}">Take a Quiz</a></li>
+                        </ul>
                     </li>
                     {% if current_user %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('edit_quiz_route') }}">Manage Quizzes</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Create</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('edit') }}">Manage Decks</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('edit_quiz_route') }}">Manage Quizzes</a></li>
+                        </ul>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('account') }}">{{ current_user.username }}</a>
-                    </li>
-                    <li class="nav-item">
-                        <form method="post" action="{{ url_for('logout') }}" class="nav-logout-form">
-                            <button class="nav-link nav-button-link" type="submit">Log Out</button>
-                        </form>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ current_user.username }}</a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('account') }}">Account Settings</a></li>
+                            {% if current_user.is_admin %}
+                            <li><a class="dropdown-item" href="{{ url_for('admin_users') }}">Admin Users</a></li>
+                            {% endif %}
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <form method="post" action="{{ url_for('logout') }}" class="nav-logout-form">
+                                    <button class="dropdown-item nav-dropdown-button" type="submit">Log Out</button>
+                                </form>
+                            </li>
+                        </ul>
                     </li>
                     {% else %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('login') }}">Log In</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('register') }}">Create Account</a>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">Account</a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('login') }}">Log In</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('register') }}">Create Account</a></li>
+                        </ul>
                     </li>
                     {% endif %}
                 </ul>
-                <form class="d-flex ms-3" action="{{ url_for('search') }}" method="GET">
-                    <input class="form-control me-2" type="search" placeholder="Search public decks..." aria-label="Search" name="q" value="{{ request.args.get('q', '') }}">
+                <form class="d-flex ms-lg-3 mt-3 mt-lg-0 navbar-search-form" action="{{ url_for('search') }}" method="GET">
+                    <input id="navSearchInput" class="form-control me-2" type="search" placeholder="Search" aria-label="Search" name="q" value="{{ request.args.get('q', '') }}">
                     <button class="btn btn-outline-light" type="submit">Search</button>
                 </form>
             </div>
@@ -147,6 +151,26 @@
                 });
             });
         });
+
+        const navSearchInput = document.getElementById('navSearchInput');
+        if (navSearchInput) {
+            const placeholderMessages = [
+                'Find a deck for today',
+                'Search cards by topic quickly',
+                'Pick a quiz and practice',
+                'Study smarter with public decks',
+                'Find tags you need now',
+                'Search decks for tough concepts',
+                'Try a quiz before studying',
+                'Find cards for your next test',
+                'Explore new decks in seconds',
+                'Search by tag and learn',
+                'Find the right deck fast',
+                'Quick search for better practice',
+            ];
+            const randomIndex = Math.floor(Math.random() * placeholderMessages.length);
+            navSearchInput.placeholder = placeholderMessages[randomIndex];
+        }
     });
     </script>
 </body>
