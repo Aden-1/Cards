@@ -1,11 +1,10 @@
 import random
-import math
 import re
 import unicodedata
-from difflib import SequenceMatcher
 
 from flask import Flask
 from flask_migrate import Migrate
+from sqlalchemy import text
 from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption
 from routes import register_routes
 
@@ -102,6 +101,7 @@ def create_custom_quiz(user_id, title, is_public=False, description=None, tags=N
     )
     db.session.add(quiz)
     db.session.commit()
+    _sync_content_fts_index_for_quiz(quiz)
     return quiz
 
 def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=None):
@@ -112,12 +112,14 @@ def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=Non
         quiz.description = description
         quiz.tags = tags
         db.session.commit()
+        _sync_content_fts_index_for_quiz(quiz)
         return quiz
     return None
 
 def delete_custom_quiz(quiz_id):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
+        _delete_content_fts_index_row('quiz', quiz.quiz_id)
         db.session.delete(quiz)
         db.session.commit()
         return True
@@ -173,6 +175,7 @@ def create_deck(user_id, description, sortable=False, is_public=False, detailed_
     )
     db.session.add(deck)
     db.session.commit()
+    _sync_content_fts_index_for_deck(deck)
     return deck
 
 
@@ -195,6 +198,7 @@ def get_deck(deck_id):
 def delete_deck(deck_id):
     deck = Deck.query.get(deck_id)
     if deck:
+        _delete_content_fts_index_row('deck', deck.deck_id)
         db.session.delete(deck)
         db.session.commit()
         return True
@@ -211,6 +215,7 @@ def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_de
         deck.detailed_description = detailed_description
         deck.tags = tags
         db.session.commit()
+        _sync_content_fts_index_for_deck(deck)
         return deck
     return None
 
@@ -249,41 +254,6 @@ def search_public_quizzes(query_text):
     return quizzes
 
 
-SEARCH_STOP_WORDS = {
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'how', 'in', 'into',
-    'is', 'it', 'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'with', 'your'
-}
-
-SEARCH_SYNONYMS = {
-    'learn': ['study', 'practice', 'beginner', 'intro', 'training'],
-    'study': ['learn', 'review', 'practice', 'revise'],
-    'practice': ['train', 'learn', 'study', 'drill'],
-    'beginner': ['intro', 'starter', 'basic', 'fundamentals'],
-    'intro': ['beginner', 'basic', 'starter', 'fundamentals'],
-    'basic': ['beginner', 'intro', 'fundamental', 'starter'],
-    'fundamental': ['basic', 'core', 'essential'],
-    'fundamentals': ['basic', 'core', 'essential'],
-    'spanish': ['espanol', 'español', 'language', 'castilian'],
-    'espanol': ['spanish', 'language'],
-    'español': ['spanish', 'language'],
-    'language': ['vocabulary', 'grammar', 'linguistics'],
-    'vocabulary': ['words', 'language', 'terms'],
-    'history': ['historical', 'past', 'timeline'],
-    'historical': ['history', 'past'],
-    'biology': ['bio', 'anatomy', 'life', 'science'],
-    'bio': ['biology', 'science'],
-    'science': ['biology', 'chemistry', 'physics'],
-    'coding': ['programming', 'development', 'software'],
-    'programming': ['coding', 'software', 'development'],
-    'python': ['programming', 'coding', 'software'],
-    'math': ['mathematics', 'algebra', 'geometry', 'calculus'],
-    'geography': ['maps', 'countries', 'regions'],
-    'quiz': ['test', 'exam', 'assessment'],
-    'test': ['quiz', 'exam', 'assessment'],
-    'exam': ['test', 'quiz', 'assessment'],
-}
-
-
 def _normalize_search_text(text):
     text = (text or '').lower()
     text = unicodedata.normalize('NFKD', text)
@@ -293,170 +263,158 @@ def _normalize_search_text(text):
     return text
 
 
-def _stem_token(token):
-    if len(token) > 5 and token.endswith('ing'):
-        return token[:-3]
-    if len(token) > 4 and token.endswith('ed'):
-        return token[:-2]
-    if len(token) > 4 and token.endswith('es'):
-        return token[:-2]
-    if len(token) > 3 and token.endswith('s'):
-        return token[:-1]
-    return token
-
-
 def _tokenize_search_text(text):
     normalized = _normalize_search_text(text)
     if not normalized:
         return []
-    tokens = []
-    for raw_token in normalized.split():
-        token = _stem_token(raw_token)
-        if token and token not in SEARCH_STOP_WORDS:
-            tokens.append(token)
-    return tokens
+    return [token for token in normalized.split() if token]
 
 
-def _expand_search_tokens(tokens):
-    expanded = set(tokens)
+def _build_fts_query(query_text):
+    tokens = _tokenize_search_text(query_text)
+    if not tokens:
+        return '', []
+
+    # FTS5 default AND can be too strict. Use OR with prefix search to improve recall.
+    parts = []
     for token in tokens:
-        for synonym in SEARCH_SYNONYMS.get(token, []):
-            normalized_synonym = _normalize_search_text(synonym)
-            if not normalized_synonym:
-                continue
-            syn_parts = _tokenize_search_text(normalized_synonym)
-            for part in syn_parts:
-                expanded.add(part)
-    return expanded
+        safe_token = token.replace('"', '""')
+        parts.append(f'"{safe_token}"')
+        if len(safe_token) >= 3:
+            parts.append(f'"{safe_token}"*')
+    return ' OR '.join(parts), tokens
 
 
-def _build_search_document(item_type, item):
-    if item_type == 'deck':
-        title = item.description or ''
-        description = item.detailed_description or ''
-        tags = item.tags or ''
-        size_count = len(item.cards)
-        item_id = item.deck_id
-    else:
-        title = item.title or ''
-        description = item.description or ''
-        tags = item.tags or ''
-        size_count = len(item.questions)
-        item_id = item.quiz_id
-
-    return {
-        'type': item_type,
-        'id': item_id,
-        'title': title,
-        'description': description,
-        'tags': tags,
-        'title_norm': _normalize_search_text(title),
-        'description_norm': _normalize_search_text(description),
-        'tags_norm': _normalize_search_text(tags),
-        'title_tokens': set(_tokenize_search_text(title)),
-        'description_tokens': set(_tokenize_search_text(description)),
-        'tags_tokens': set(_tokenize_search_text(tags)),
-        'size_count': size_count,
-    }
+def _ensure_content_fts_index():
+    db.session.execute(text("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS public_content_fts USING fts5(
+            item_type UNINDEXED,
+            item_id UNINDEXED,
+            title,
+            description,
+            tags,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        )
+    """))
+    db.session.commit()
 
 
-def _fuzzy_token_match(token, field_tokens):
-    best = None
-    best_ratio = 0.0
-    for candidate in field_tokens:
-        ratio = SequenceMatcher(None, token, candidate).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best = candidate
-    if best and best_ratio >= 0.86:
-        return best, best_ratio
-    return None, 0.0
+def _delete_content_fts_index_row(item_type, item_id):
+    try:
+        _ensure_content_fts_index()
+        db.session.execute(
+            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+            {'item_type': item_type, 'item_id': str(item_id)}
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
-def _idf(token, corpus_docs):
-    if not corpus_docs:
-        return 1.0
-    df = 0
-    for doc in corpus_docs:
-        all_tokens = doc['title_tokens'] | doc['tags_tokens'] | doc['description_tokens']
-        if token in all_tokens:
-            df += 1
-    return math.log((len(corpus_docs) + 1) / (df + 1)) + 1.0
+def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is_public):
+    try:
+        _ensure_content_fts_index()
+        db.session.execute(
+            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+            {'item_type': item_type, 'item_id': str(item_id)}
+        )
+        if is_public:
+            db.session.execute(
+                text("""
+                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                    VALUES (:item_type, :item_id, :title, :description, :tags)
+                """),
+                {
+                    'item_type': item_type,
+                    'item_id': str(item_id),
+                    'title': title or '',
+                    'description': description or '',
+                    'tags': tags or '',
+                }
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
-def _score_document(query_text, query_tokens, expanded_tokens, doc, corpus_docs):
-    if not query_tokens:
-        return {'score': 0.0, 'matched_tokens': set(), 'reasons': []}
+def _sync_content_fts_index_for_deck(deck):
+    _sync_content_fts_index_row(
+        item_type='deck',
+        item_id=deck.deck_id,
+        title=deck.description,
+        description=deck.detailed_description,
+        tags=deck.tags,
+        is_public=deck.is_public,
+    )
 
-    title_tokens = doc['title_tokens']
-    tag_tokens = doc['tags_tokens']
-    desc_tokens = doc['description_tokens']
 
-    exact_query_set = set(query_tokens)
-    expanded_only = set(expanded_tokens) - exact_query_set
-    matched_exact = set()
-    matched_expanded = set()
-    matched_fuzzy = set()
-    reasons = []
-    score = 0.0
+def _sync_content_fts_index_for_quiz(quiz):
+    _sync_content_fts_index_row(
+        item_type='quiz',
+        item_id=quiz.quiz_id,
+        title=quiz.title,
+        description=quiz.description,
+        tags=quiz.tags,
+        is_public=quiz.is_public,
+    )
 
-    field_specs = [
-        ('title', title_tokens, 8.0, 4.0, 2.5),
-        ('tags', tag_tokens, 6.0, 3.0, 2.0),
-        ('description', desc_tokens, 3.0, 1.5, 1.0),
-    ]
 
-    for field_name, field_tokens, exact_weight, expanded_weight, fuzzy_weight in field_specs:
-        for token in exact_query_set:
-            if token in field_tokens:
-                token_idf = _idf(token, corpus_docs)
-                score += exact_weight * token_idf
-                matched_exact.add(token)
-                reasons.append(f"{field_name}: {token}")
+def _rebuild_content_fts_index():
+    _ensure_content_fts_index()
+    db.session.execute(text("DELETE FROM public_content_fts"))
 
-        for token in expanded_only:
-            if token in field_tokens:
-                token_idf = _idf(token, corpus_docs)
-                score += expanded_weight * token_idf
-                matched_expanded.add(token)
+    for deck in Deck.query.filter(Deck.is_public == True).all():
+        db.session.execute(
+            text("""
+                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                VALUES (:item_type, :item_id, :title, :description, :tags)
+            """),
+            {
+                'item_type': 'deck',
+                'item_id': str(deck.deck_id),
+                'title': deck.description or '',
+                'description': deck.detailed_description or '',
+                'tags': deck.tags or '',
+            }
+        )
 
-        for token in exact_query_set:
-            if token in field_tokens:
-                continue
-            fuzzy_token, ratio = _fuzzy_token_match(token, field_tokens)
-            if fuzzy_token:
-                token_idf = _idf(fuzzy_token, corpus_docs)
-                score += fuzzy_weight * token_idf * ratio
-                matched_fuzzy.add(token)
+    for quiz in Quiz.query.filter(Quiz.is_public == True).all():
+        db.session.execute(
+            text("""
+                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                VALUES (:item_type, :item_id, :title, :description, :tags)
+            """),
+            {
+                'item_type': 'quiz',
+                'item_id': str(quiz.quiz_id),
+                'title': quiz.title or '',
+                'description': quiz.description or '',
+                'tags': quiz.tags or '',
+            }
+        )
 
-    normalized_query = _normalize_search_text(query_text)
-    if normalized_query:
-        if normalized_query in doc['title_norm']:
-            score += 10.0
-        if normalized_query in doc['tags_norm']:
-            score += 7.0
-        if normalized_query in doc['description_norm']:
-            score += 4.0
+    db.session.commit()
 
-    coverage = len(matched_exact | matched_fuzzy) / max(1, len(exact_query_set))
-    score += coverage * 8.0
 
-    popularity_bonus = min(3.0, math.log1p(doc['size_count']) * 0.8)
-    score += popularity_bonus
-
-    reason_parts = []
-    if matched_exact:
-        reason_parts.append("Exact: " + ", ".join(sorted(matched_exact)[:4]))
-    if matched_expanded:
-        reason_parts.append("Related: " + ", ".join(sorted(matched_expanded)[:4]))
-    if matched_fuzzy:
-        reason_parts.append("Close: " + ", ".join(sorted(matched_fuzzy)[:3]))
-
-    return {
-        'score': score,
-        'matched_tokens': matched_exact | matched_expanded | matched_fuzzy,
-        'reasons': reason_parts,
-    }
+def _fallback_search_public_content(query_text):
+    search_term = f"%{query_text}%"
+    decks = Deck.query.filter(
+        Deck.is_public == True,
+        db.or_(
+            Deck.description.ilike(search_term),
+            Deck.detailed_description.ilike(search_term),
+            Deck.tags.ilike(search_term)
+        )
+    ).all()
+    quizzes = Quiz.query.filter(
+        Quiz.is_public == True,
+        db.or_(
+            Quiz.title.ilike(search_term),
+            Quiz.description.ilike(search_term),
+            Quiz.tags.ilike(search_term)
+        )
+    ).all()
+    return decks, quizzes
 
 
 def search_public_content(query_text, limit=50):
@@ -464,77 +422,132 @@ def search_public_content(query_text, limit=50):
     if not query_text:
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
-    query_tokens = _tokenize_search_text(query_text)
-    expanded_tokens = _expand_search_tokens(query_tokens)
-
-    public_decks = Deck.query.filter(Deck.is_public == True).all()
-    public_quizzes = Quiz.query.filter(Quiz.is_public == True).all()
-
-    docs = []
-    docs.extend([_build_search_document('deck', deck) for deck in public_decks])
-    docs.extend([_build_search_document('quiz', quiz) for quiz in public_quizzes])
-
-    scored = []
-    for doc in docs:
-        result = _score_document(query_text, query_tokens, expanded_tokens, doc, docs)
-        if result['score'] > 0:
-            scored.append({'doc': doc, **result})
-
-    scored.sort(key=lambda item: (-item['score'], -len(item['matched_tokens']), -(item['doc']['size_count']), item['doc']['title']))
-
-    # Minimum confidence threshold to reduce weak noise.
-    threshold = 4.0
-    filtered = [item for item in scored if item['score'] >= threshold]
-    if not filtered and scored:
-        filtered = scored[:min(8, len(scored))]
-
-    has_exact_match = any(len(set(query_tokens) & item['doc']['title_tokens']) > 0 or len(set(query_tokens) & item['doc']['tags_tokens']) > 0 for item in filtered)
+    fts_query, query_tokens = _build_fts_query(query_text)
+    if not fts_query:
+        return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
     deck_results = []
     quiz_results = []
-    for item in filtered[:limit]:
-        doc = item['doc']
-        payload = {
-            'score': round(item['score'], 2),
-            'match_reasons': item['reasons'],
-        }
-        if doc['type'] == 'deck':
-            deck = next((d for d in public_decks if d.deck_id == doc['id']), None)
-            if not deck:
-                continue
-            payload.update({
-                'deck_id': deck.deck_id,
-                'description': deck.description,
-                'detailed_description': deck.detailed_description,
-                'tags': deck.tags,
-                'sortable': deck.sortable,
-                'is_public': deck.is_public,
-                'card_count': len(deck.cards),
-            })
-            deck_results.append(payload)
-        else:
-            quiz = next((q for q in public_quizzes if q.quiz_id == doc['id']), None)
-            if not quiz:
-                continue
-            payload.update({
-                'quiz_id': quiz.quiz_id,
-                'title': quiz.title,
-                'description': quiz.description,
-                'tags': quiz.tags,
-                'is_public': quiz.is_public,
-                'question_count': len(quiz.questions),
-            })
-            quiz_results.append(payload)
+    has_exact_match = False
+
+    try:
+        _ensure_content_fts_index()
+        results = db.session.execute(
+            text("""
+                SELECT
+                    item_type,
+                    item_id,
+                    bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
+                    snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
+                    snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
+                    snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
+                FROM public_content_fts
+                WHERE public_content_fts MATCH :match_query
+                ORDER BY rank
+                LIMIT :limit
+            """),
+            {'match_query': fts_query, 'limit': int(limit)}
+        ).fetchall()
+
+        if not results:
+            _rebuild_content_fts_index()
+            results = db.session.execute(
+                text("""
+                    SELECT
+                        item_type,
+                        item_id,
+                        bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
+                        snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
+                        snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
+                        snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
+                    FROM public_content_fts
+                    WHERE public_content_fts MATCH :match_query
+                    ORDER BY rank
+                    LIMIT :limit
+                """),
+                {'match_query': fts_query, 'limit': int(limit)}
+            ).fetchall()
+
+        for row in results:
+            item_type = row[0]
+            item_id = int(row[1])
+            rank_value = float(row[2]) if row[2] is not None else 0.0
+            score = round(-rank_value, 4)
+            reasons = []
+            if row[3]:
+                reasons.append(f"title: {row[3]}")
+            if row[4]:
+                reasons.append(f"description: {row[4]}")
+            if row[5]:
+                reasons.append(f"tags: {row[5]}")
+
+            if item_type == 'deck':
+                deck = Deck.query.get(item_id)
+                if not deck or not deck.is_public:
+                    continue
+                if _normalize_search_text(query_text) in _normalize_search_text(deck.description or ''):
+                    has_exact_match = True
+                deck_results.append({
+                    'deck_id': deck.deck_id,
+                    'description': deck.description,
+                    'detailed_description': deck.detailed_description,
+                    'tags': deck.tags,
+                    'sortable': deck.sortable,
+                    'is_public': deck.is_public,
+                    'card_count': len(deck.cards),
+                    'score': score,
+                    'match_reasons': reasons,
+                })
+            elif item_type == 'quiz':
+                quiz = Quiz.query.get(item_id)
+                if not quiz or not quiz.is_public:
+                    continue
+                if _normalize_search_text(query_text) in _normalize_search_text(quiz.title or ''):
+                    has_exact_match = True
+                quiz_results.append({
+                    'quiz_id': quiz.quiz_id,
+                    'title': quiz.title,
+                    'description': quiz.description,
+                    'tags': quiz.tags,
+                    'is_public': quiz.is_public,
+                    'question_count': len(quiz.questions),
+                    'score': score,
+                    'match_reasons': reasons,
+                })
+
+    except Exception:
+        db.session.rollback()
+        decks, quizzes = _fallback_search_public_content(query_text)
+        deck_results = [{
+            'deck_id': deck.deck_id,
+            'description': deck.description,
+            'detailed_description': deck.detailed_description,
+            'tags': deck.tags,
+            'sortable': deck.sortable,
+            'is_public': deck.is_public,
+            'card_count': len(deck.cards),
+            'score': 0.0,
+            'match_reasons': ['fallback match'],
+        } for deck in decks]
+        quiz_results = [{
+            'quiz_id': quiz.quiz_id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'tags': quiz.tags,
+            'is_public': quiz.is_public,
+            'question_count': len(quiz.questions),
+            'score': 0.0,
+            'match_reasons': ['fallback match'],
+        } for quiz in quizzes]
+        has_exact_match = True if (deck_results or quiz_results) else False
 
     return {
         'decks': deck_results,
         'quizzes': quiz_results,
         'has_exact_match': has_exact_match,
         'query_tokens': query_tokens,
-        'expanded_tokens': sorted(expanded_tokens - set(query_tokens)),
+        'expanded_tokens': [],
     }
-
-
 ## Card and answer database operations
 
 # Create a new card with one or more answers
@@ -853,4 +866,6 @@ register_routes(app)
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
 
