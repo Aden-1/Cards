@@ -144,10 +144,13 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Swap two cards directly so drag/drop does not shift the whole list.
-        [cardsInPlay[firstIndex], cardsInPlay[secondIndex]] = [cardsInPlay[secondIndex], cardsInPlay[firstIndex]];
-        // Track exactly which two cards were swapped for targeted visual feedback.
-        lastSwappedCardIds = [firstcard_id, secondcard_id];
+        // Instead of swapping, we should INSERT (shift array) when dragging.
+        // But for consistency with arrow buttons, let's keep it an insert.
+        const movedCard = cardsInPlay.splice(firstIndex, 1)[0];
+        cardsInPlay.splice(secondIndex, 0, movedCard);
+
+        // Track exactly which card was moved for targeted visual feedback.
+        lastSwappedCardIds = [firstcard_id];
         setStatus('Order updated. Check when you are ready.', null);
         clearHighlights();
         renderList();
@@ -290,11 +293,11 @@ document.addEventListener('DOMContentLoaded', function() {
             reorderList.appendChild(item);
         });
 
-        if (lastSwappedCardIds.length === 2) {
-            const [firstId, secondId] = lastSwappedCardIds;
+        if (lastSwappedCardIds.length === 1) {
+            const [firstId] = lastSwappedCardIds;
             document.querySelectorAll('.reorder-item').forEach((item) => {
                 const card_id = Number(item.dataset.cardId);
-                if (card_id === firstId || card_id === secondId) {
+                if (card_id === firstId) {
                     item.classList.add('just-swapped');
                 }
             });
@@ -330,7 +333,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                if (data.isCorrect) {
+                if (data.is_correct) {
                     setStatus('Correct order. Great work!', true);
                     return;
                 }

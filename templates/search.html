@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Search Results - Cards App{% endblock %}
+
+{% block content %}
+<div class="search-container">
+    <div class="page-header">
+        <h1>Search Results</h1>
+        {% if query %}
+        <p class="text-secondary">Showing public decks and quizzes matching "<strong>{{ query }}</strong>"</p>
+        {% if (decks or quizzes) and not has_exact_match %}
+        <p class="text-muted small mb-0">No strong exact matches found. Showing related results.</p>
+        {% endif %}
+        {% if expanded_tokens %}
+        <p class="text-muted small mb-0">Related terms used: {{ expanded_tokens[:8] | join(', ') }}</p>
+        {% endif %}
+        {% else %}
+        <p class="text-secondary">Search for public decks and quizzes.</p>
+        {% endif %}
+    </div>
+
+    <form class="mb-4 d-flex" action="{{ url_for('search') }}" method="GET">
+        <input class="form-control me-2" type="search" placeholder="Search by name, description, or tags..." name="q" value="{{ query }}">
+        <button class="btn btn-primary" type="submit">Search</button>
+    </form>
+
+    <div class="section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Found Decks</h5>
+                <small>{{ decks|length }} deck{{ '' if decks|length == 1 else 's' }}</small>
+            </div>
+        </div>
+        <div class="section-body">
+            {% if decks %}
+            <div class="deck-grid polished">
+                {% for deck in decks %}
+                <article class="deck-card">
+                    <div class="deck-card-top">
+                        <h6 class="deck-card-title">{{ deck.description }}</h6>
+                        <span class="deck-card-mode public">Public</span>
+                    </div>
+                    {% if deck.tags %}
+                    <div class="deck-tags mt-1">
+                        {% for tag in deck.tags.split(',') %}
+                        <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if deck.detailed_description %}
+                    <p class="mt-2 mb-0 text-muted small">{{ deck.detailed_description[:100] }}{{ '...' if deck.detailed_description|length > 100 else '' }}</p>
+                    {% endif %}
+                    {% if deck.match_reasons %}
+                    <p class="mt-2 mb-0 text-muted small">Matched on: {{ deck.match_reasons | join(' | ') }}</p>
+                    {% endif %}
+                    <div class="deck-card-meta mt-2">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
+                    <div class="deck-card-actions mt-3">
+                        <a class="btn btn-success btn-sm flex-grow-1" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
+                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                {% if query %}
+                <p>No public decks found matching "<strong>{{ query }}</strong>".</p>
+                {% else %}
+                <p>Enter a search term above to find public decks.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="section mt-4">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Found Quizzes</h5>
+                <small>{{ quizzes|length }} quiz{{ '' if quizzes|length == 1 else 'zes' }}</small>
+            </div>
+        </div>
+        <div class="section-body">
+            {% if quizzes %}
+            <div class="deck-grid polished">
+                {% for quiz in quizzes %}
+                <article class="deck-card">
+                    <div class="deck-card-top">
+                        <h6 class="deck-card-title">{{ quiz.title }}</h6>
+                        <span class="deck-card-mode public">Public</span>
+                    </div>
+                    {% if quiz.tags %}
+                    <div class="deck-tags mt-1">
+                        {% for tag in quiz.tags.split(',') %}
+                        {% if tag.strip() %}
+                        <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if quiz.description %}
+                    <p class="mt-2 mb-0 text-muted small">{{ quiz.description[:100] }}{{ '...' if quiz.description|length > 100 else '' }}</p>
+                    {% endif %}
+                    {% if quiz.match_reasons %}
+                    <p class="mt-2 mb-0 text-muted small">Matched on: {{ quiz.match_reasons | join(' | ') }}</p>
+                    {% endif %}
+                    <div class="deck-card-meta mt-2">{{ quiz.question_count }} question{{ '' if quiz.question_count == 1 else 's' }}</div>
+                    <div class="deck-card-actions mt-3">
+                        <a class="btn btn-success btn-sm flex-grow-1" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
+                        <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit_quiz_route', quiz_id=quiz.quiz_id) }}">View</a>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                {% if query %}
+                <p>No public quizzes found matching "<strong>{{ query }}</strong>".</p>
+                {% else %}
+                <p>Enter a search term above to find public quizzes.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Custom Quizzes - Cards App{% endblock %}
+
+{% block content %}
+<div class="edit-container">
+    <div class="page-header">
+        <h1>Manage Custom Quizzes</h1>
+        <p class="text-secondary">Create, organize, and fine-tune your specific tests.</p>
+    </div>
+
+    <!-- Create Quiz Section -->
+    <div class="section">
+        <div class="section-header">
+            <h5 class="mb-0">Create New Quiz</h5>
+        </div>
+        <div class="section-body">
+            <div class="form-section">
+                <form method="post" action="{{ url_for('create_custom_quiz') }}" class="form-row track-unsaved-form">
+                    <div class="form-group mb-0">
+                        <label for="title" class="mb-1">Quiz Title</label>
+                        <input type="text" class="form-control mb-2" id="title" name="title" required placeholder="e.g., Biology Midterm">
+                        <label for="description" class="mb-1">Description (Optional)</label>
+                        <textarea class="form-control mb-2" id="description" name="description" rows="2" placeholder="What is this quiz about?"></textarea>
+                        <label for="tags" class="mb-1">Tags (Optional)</label>
+                        <input type="text" class="form-control" id="tags" name="tags" placeholder="e.g., biology, exam prep, semester 1">
+                    </div>
+                    <div>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="is_public" name="is_public">
+                            <label class="form-check-label" for="is_public">Public (visible to everyone)</label>
+                        </div>
+                        <button type="submit" class="btn btn-success">Create Quiz</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- List of Quizzes -->
+    <div class="section" id="quizzes-section">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Your Custom Quizzes</h5>
+                <small>{{ quizzes|length }} total quiz{% if quizzes|length != 1 %}zes{% endif %}</small>
+            </div>
+            <button id="quizzesToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#yourQuizzesCollapse" aria-expanded="{{ 'false' if selected_quiz else 'true' }}" aria-controls="yourQuizzesCollapse">
+                {{ 'Open' if selected_quiz else 'Close' }}
+            </button>
+        </div>
+        <div id="yourQuizzesCollapse" class="collapse {{ '' if selected_quiz else 'show' }}">
+            <div class="section-body">
+                {% if quizzes %}
+                <div class="deck-grid polished">
+                    {% for q in quizzes %}
+                    <article class="deck-card {{ 'active' if selected_quiz and selected_quiz.quiz_id == q.quiz_id else '' }}">
+                        <div class="deck-card-top">
+                            <h6 class="deck-card-title">{{ q.title }}</h6>
+                            <span class="deck-card-mode {{ 'public' if q.is_public else 'private' }}">{{ 'Public' if q.is_public else 'Private' }}</span>
+                        </div>
+                        {% if q.tags %}
+                        <div class="deck-tags mt-1">
+                            {% for tag in q.tags.split(',') %}
+                            {% if tag.strip() %}
+                            <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        {% if q.description %}
+                        <p class="mt-2 mb-0 text-muted small">{{ q.description[:110] }}{{ '...' if q.description|length > 110 else '' }}</p>
+                        {% endif %}
+                        <div class="deck-card-meta">{{ q.questions|length }} Question{% if q.questions|length != 1 %}s{% endif %}</div>
+                        <div class="deck-card-actions">
+                            <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit_quiz_route', quiz_id=q.quiz_id) }}#quiz-editor">Edit</a>
+                            <details class="delete-confirm">
+                                <summary class="btn btn-danger btn-sm">Delete</summary>
+                                <div class="delete-confirm-panel">
+                                    <p class="mb-2">Delete this entire quiz?</p>
+                                    <div class="delete-confirm-actions">
+                                        <form method="post" action="{{ url_for('delete_custom_quiz') }}">
+                                            <input type="hidden" name="quiz_id" value="{{ q.quiz_id }}">
+                                            <button type="submit" class="btn btn-danger btn-sm">Yes, delete quiz</button>
+                                        </form>
+                                        <button type="button" class="btn btn-secondary btn-sm close-delete-panel">Cancel</button>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p>No custom quizzes yet. Create one to get started.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quiz Editor Area -->
+    {% if selected_quiz %}
+    <div class="section" id="quiz-editor">
+        <div class="section-header success">
+            <div>
+                <h5 class="mb-0">Editing: {{ selected_quiz.title }}</h5>
+                <small>{{ selected_quiz.questions|length }} questions</small>
+            </div>
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit_quiz_route') }}#quizzes-section">Done</a>
+        </div>
+
+        <!-- Quiz Metdata Edit -->
+        <div class="section-body">
+            <div class="form-section mb-3">
+                <h6 class="mb-3">Quiz Settings</h6>
+                <form method="post" action="{{ url_for('edit_custom_quiz') }}" class="deck-settings-form track-unsaved-form">
+                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                    <div class="deck-settings-top-row">
+                        <div class="form-group mb-0">
+                            <label for="editQuizTitle" class="mb-1">Title</label>
+                            <input type="text" class="form-control mb-2" id="editQuizTitle" name="title" value="{{ selected_quiz.title }}" required>
+                            <label for="editQuizDescription" class="mb-1">Description</label>
+                            <textarea class="form-control mb-2" id="editQuizDescription" name="description" rows="2">{{ selected_quiz.description or '' }}</textarea>
+                            <label for="editQuizTags" class="mb-1">Tags</label>
+                            <input type="text" class="form-control" id="editQuizTags" name="tags" value="{{ selected_quiz.tags or '' }}" placeholder="Comma-separated tags">
+                        </div>
+                    </div>
+                    <div class="deck-settings-bottom-row mt-2">
+                        <div class="form-check mb-0">
+                            <input type="checkbox" class="form-check-input" id="editQuizPublic" name="is_public" {% if selected_quiz.is_public %}checked{% endif %}>
+                            <label class="form-check-label" for="editQuizPublic">Public (visible to everyone)</label>
+                        </div>
+                        <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Add Question Form -->
+            <div class="form-section mb-4 bg-light p-3 border rounded">
+                <h6 class="mb-3">Add Question</h6>
+                <form method="post" action="{{ url_for('add_quiz_question') }}" class="add-card-form track-unsaved-form" id="addQuestionForm">
+                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                    <div class="form-group mb-2">
+                        <label class="form-label mb-1 fw-bold">Question Text</label>
+                        <input type="text" class="form-control" name="question" required placeholder="What is...">
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label mb-1 fw-bold">Type</label>
+                        <select name="q_type" class="form-select" id="newQType" onchange="updateQTypeUI('newQType', 'newOptionsArea')">
+                            <option value="dynamic">Dynamic: Enter 1-2 correct answers. We'll add 3 random wrong answers from other dynamic questions.</option>
+                            <option value="static">Static: Enter 2-5 explicit options. Check the 1-2 right ones.</option>
+                        </select>
+                    </div>
+
+                    <div id="newOptionsArea">
+                        <label class="form-label mt-2 mb-1 fw-bold">Options (Min 2 total for static. Max 2 correct for both.)</label>
+                        {% for i in range(1, 6) %}
+                        <div class="input-group input-group-sm mb-2">
+                            <div class="input-group-text static-only-tick" style="display:none;" title="Check if this is a correct answer">
+                                <input class="form-check-input mt-0" type="checkbox" name="is_correct_{{ i }}" value="yes">
+                            </div>
+                            <input type="text" class="form-control" name="option_{{ i }}" placeholder="Option {{ i }} text...">
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <button type="submit" class="btn btn-success mt-2">Add Question</button>
+                </form>
+            </div>
+
+            <h6 class="mb-3">Questions in Quiz</h6>
+
+            {% if selected_quiz.questions %}
+            <div class="cards-list-stack" id="editableQuestionsList">
+                {% for q in selected_quiz.questions %}
+                <article class="card-editor-item" data-question-id="{{ q.question_id }}">
+                    <div class="card-editor-head pb-2 border-bottom mb-2">
+                        <div>
+                            <div class="card-item-question mb-1"><strong>{{ loop.index }}.</strong> {{ q.question }} <span class="badge bg-secondary ms-2 align-middle text-capitalize" style="font-size: 0.7em;">{{ q.type }}</span></div>
+                        </div>
+                    </div>
+
+                    <div class="answer-list mb-3">
+                        {% for opt in q.options %}
+                            <div class="answer-row py-1">
+                                <span class="answer-row-text">
+                                    {% if opt.is_correct %}
+                                    <span class="badge bg-success me-2">Correct</span>
+                                    {% else %}
+                                    <span class="badge bg-light text-dark border me-2">Wrong</span>
+                                    {% endif %}
+                                    {{ opt.text }}
+                                </span>
+                            </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="card-item-actions">
+                        <details class="flex-grow-1">
+                            <summary class="btn btn-sm btn-primary">Edit Question</summary>
+                            <div class="mt-3 p-3 bg-surface border rounded">
+                                <form method="post" action="{{ url_for('edit_quiz_question') }}" class="track-unsaved-form">
+                                    <input type="hidden" name="question_id" value="{{ q.question_id }}">
+                                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+
+                                    <div class="form-group mb-2">
+                                        <label class="form-label">Question Text</label>
+                                        <input type="text" class="form-control" name="question" value="{{ q.question }}" required>
+                                    </div>
+                                    <div class="form-group mb-2">
+                                        <label class="form-label">Type</label>
+                                        <select name="q_type" class="form-select editQType" id="editQType_{{ q.question_id }}" onchange="updateQTypeUI('editQType_{{ q.question_id }}', 'editOptionsArea_{{ q.question_id }}')">
+                                            <option value="dynamic" {% if q.type == 'dynamic' %}selected{% endif %}>Dynamic</option>
+                                            <option value="static" {% if q.type == 'static' %}selected{% endif %}>Static</option>
+                                        </select>
+                                    </div>
+
+                                    <div id="editOptionsArea_{{ q.question_id }}">
+                                        <label class="form-label fw-bold mt-2">Options</label>
+                                        {% for i in range(0, 5) %}
+                                            {% set ext_opt = q.options[i] if q.options|length > i else None %}
+                                            <div class="input-group input-group-sm mb-2">
+                                                <div class="input-group-text static-only-tick" style="display:{% if q.type == 'static' %}flex{% else %}none{% endif %};">
+                                                    <input class="form-check-input mt-0" type="checkbox" name="is_correct_{{ i+1 }}" value="yes" {% if ext_opt and ext_opt.is_correct and q.type == 'static' %}checked{% endif %}>
+                                                </div>
+                                                <input type="text" class="form-control" name="option_{{ i+1 }}" placeholder="Option {{ i+1 }}..." value="{{ ext_opt.text if ext_opt else '' }}">
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+
+                                    <button type="submit" class="btn btn-primary mt-2">Save Changes</button>
+                                </form>
+                            </div>
+                        </details>
+
+                        <details class="delete-confirm">
+                            <summary class="btn btn-danger btn-sm">Delete Question</summary>
+                            <div class="delete-confirm-panel">
+                                <p class="mb-2">Delete this question permanently?</p>
+                                <form method="post" action="{{ url_for('delete_quiz_question') }}">
+                                    <input type="hidden" name="question_id" value="{{ q.question_id }}">
+                                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                                    <button type="submit" class="btn btn-danger btn-sm">Yes, delete</button>
+                                </form>
+                                <button type="button" class="btn btn-secondary btn-sm close-delete-panel">Cancel</button>
+                            </div>
+                        </details>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>No questions yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if selected_quiz %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const editor = document.getElementById('quiz-editor');
+    if (editor) {
+        editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+});
+</script>
+{% endif %}
+
+<script>
+// UI script for question forms
+function updateQTypeUI(selectId, optionsAreaId) {
+    const select = document.getElementById(selectId);
+    if(!select) return;
+    const isStatic = select.value === 'static';
+    const area = document.getElementById(optionsAreaId);
+    if(area) {
+        area.querySelectorAll('.static-only-tick').forEach(el => {
+            el.style.display = isStatic ? 'flex' : 'none';
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    updateQTypeUI('newQType', 'newOptionsArea');
+    document.querySelectorAll('.editQType').forEach(el => {
+        updateQTypeUI(el.id, el.id.replace('editQType_', 'editOptionsArea_'));
+    });
+
+    const quizzesToggleBtn = document.getElementById('quizzesToggleBtn');
+    const quizzesCollapse = document.getElementById('yourQuizzesCollapse');
+    if (quizzesToggleBtn && quizzesCollapse) {
+        const setToggleText = (isOpen) => {
+            quizzesToggleBtn.textContent = isOpen ? 'Close' : 'Open';
+            quizzesToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        };
+        setToggleText(quizzesCollapse.classList.contains('show'));
+        quizzesCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
+        quizzesCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
+    }
+
+    document.querySelectorAll('.close-delete-panel').forEach((button) => {
+        button.addEventListener('click', function() {
+            const details = this.closest('details');
+            if (details) {
+                details.removeAttribute('open');
+            }
+        });
+    });
+
+    document.querySelectorAll('form.track-unsaved-form').forEach((form) => {
+        form.addEventListener('submit', () => {
+            const submitButtons = form.querySelectorAll('button[type="submit"]');
+            submitButtons.forEach((button) => {
+                if (button.dataset.locked === 'true') {
+                    return;
+                }
+                button.dataset.locked = 'true';
+                button.disabled = true;
+                if (!button.dataset.originalText) {
+                    button.dataset.originalText = button.textContent;
+                }
+                button.textContent = 'Saving...';
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

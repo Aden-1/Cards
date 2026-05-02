@@ -33,7 +33,10 @@ def edit():
     deck_data = [{
         'deck_id': deck.deck_id,
         'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
         'sortable': deck.sortable,
+        'is_public': deck.is_public,
         'card_count': len(deck.cards),
     } for deck in decks]
 
@@ -53,13 +56,16 @@ def edit():
 # Display the study page for learning cards
 def view():
     user_id = 1  # Default user for now
-    from app import get_user_decks, get_deck_details
+    from app import get_accessible_decks, get_deck_details
 
-    decks = get_user_decks(user_id)
+    decks = get_accessible_decks(user_id)
     deck_data = [{
         'deck_id': deck.deck_id,
         'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
         'sortable': deck.sortable,
+        'is_public': deck.is_public,
         'card_count': len(deck.cards),
     } for deck in decks]
 
@@ -72,13 +78,16 @@ def view():
 # Display the matching game page
 def match():
     user_id = 1  # Default user for now
-    from app import get_user_decks, get_deck_study_data
+    from app import get_accessible_decks, get_deck_study_data
 
-    decks = get_user_decks(user_id)
+    decks = get_accessible_decks(user_id)
     deck_data = [{
         'deck_id': deck.deck_id,
         'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
         'sortable': deck.sortable,
+        'is_public': deck.is_public,
         'card_count': len(deck.cards),
     } for deck in decks]
 
@@ -100,15 +109,18 @@ def match():
 
 def reorder():
     user_id = 1  # Default user for now
-    from app import get_user_decks, get_deck_details
+    from app import get_accessible_decks, get_deck_details
 
-    decks = get_user_decks(user_id)
+    decks = get_accessible_decks(user_id)
     # Reorder game is only valid for decks explicitly marked sortable.
     sortable_decks = [deck for deck in decks if deck.sortable]
     deck_data = [{
         'deck_id': deck.deck_id,
         'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
         'sortable': deck.sortable,
+        'is_public': deck.is_public,
         'card_count': len(deck.cards),
     } for deck in sortable_decks]
 
@@ -138,12 +150,15 @@ def create_deck_route():
     data = _request_data()
     user_id = _int_value(data.get('user_id'))
     description = data.get('description')
+    detailed_description = data.get('detailed_description')
+    tags = data.get('tags')
     sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
 
     if not user_id or not description:
         return jsonify({'error': 'User ID and description are required'}), 400
     
-    deck = create_deck(user_id, description, sortable)
+    deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
     if request.is_json:
         return jsonify({'success': True, 'deck_id': deck.deck_id, 'description': deck.description})
     return _redirect_with_fragment(
@@ -199,12 +214,15 @@ def edit_deck_route():
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
     description = data.get('description')
+    detailed_description = data.get('detailed_description')
+    tags = data.get('tags')
     sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
 
     if not deck_id or not description:
         return jsonify({'error': 'Deck ID and description are required'}), 400
     
-    deck = edit_deck(deck_id, description, sortable)
+    deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
     if deck:
         if request.is_json:
             return jsonify({'success': True, 'deck_id': deck.deck_id})
@@ -476,6 +494,230 @@ def check_reorder_route():
     })
 
 
+# Display search results
+def search_route():
+    from app import search_public_content
+
+    query = request.args.get('q', '')
+    results = search_public_content(query) if query else {
+        'decks': [],
+        'quizzes': [],
+        'has_exact_match': False,
+        'query_tokens': [],
+        'expanded_tokens': [],
+    }
+
+    return render_template(
+        'search.html',
+        query=query,
+        decks=results['decks'],
+        quizzes=results['quizzes'],
+        has_exact_match=results['has_exact_match'],
+        query_tokens=results['query_tokens'],
+        expanded_tokens=results['expanded_tokens'],
+    )
+
+
+def quiz_route():
+    from app import get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
+    user_id = 1
+    decks = get_accessible_decks(user_id)
+    deck_data = [{
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'card_count': len(deck.cards),
+    } for deck in decks]
+    
+    custom_quizzes = get_accessible_custom_quizzes(user_id)
+
+    selected_deck_id = None
+    selected_custom_quiz_id = None
+    selected_source = request.args.get('quiz_source', '').strip()
+
+    if selected_source.startswith('deck:'):
+        selected_deck_id = _int_value(selected_source.split(':', 1)[1])
+    elif selected_source.startswith('custom:'):
+        selected_custom_quiz_id = _int_value(selected_source.split(':', 1)[1])
+    else:
+        # Backward compatibility with older links.
+        selected_deck_id = _int_value(request.args.get('deck_id'))
+        selected_custom_quiz_id = _int_value(request.args.get('custom_quiz_id'))
+        if selected_deck_id and selected_custom_quiz_id:
+            # Prefer explicit single source; default to deck for legacy behavior.
+            selected_custom_quiz_id = None
+        if selected_deck_id:
+            selected_source = f'deck:{selected_deck_id}'
+        elif selected_custom_quiz_id:
+            selected_source = f'custom:{selected_custom_quiz_id}'
+    
+    quiz_data = None
+    
+    if selected_deck_id:
+        quiz_data = generate_quiz_data(deck_id=selected_deck_id)
+    elif selected_custom_quiz_id:
+        quiz_data = generate_quiz_data(custom_quiz_id=selected_custom_quiz_id)
+        
+    return render_template('quiz.html', decks=deck_data, custom_quizzes=custom_quizzes, 
+                           selected_deck_id=selected_deck_id, 
+                           selected_custom_quiz_id=selected_custom_quiz_id, 
+                           selected_source=selected_source,
+                           quiz_data=quiz_data)
+
+
+def score_quiz_route():
+    # Evaluate submitted quiz
+    data = request.json
+    submitted_answers = data.get('answers', {})
+    quiz_questions = data.get('quiz_data', [])
+    
+    score = 0
+    total = len(quiz_questions)
+    results = []
+    
+    for q in quiz_questions:
+        q_id = str(q['id'])
+        user_selected = set(submitted_answers.get(q_id, []))
+        correct_options = set(opt['text'] for opt in q['options'] if opt['is_correct'])
+        
+        # "If multiple answers from a card is chosen all must be recognized as correct"
+        # We assume if the user selected EXACTLY the correct shown options, they get it right.
+        # Or if we just require they select "any" correct option:
+        # For strict check: user_selected == correct_options
+        is_correct = len(user_selected) > 0 and user_selected.issubset(correct_options) and len(user_selected) == len(correct_options)
+        
+        if is_correct:
+            score += 1
+            
+        results.append({
+            'id': q_id,
+            'is_correct': is_correct,
+            'correct_answers': list(correct_options)
+        })
+        
+    return jsonify({'success': True, 'score': score, 'total': total, 'results': results})
+
+def edit_quiz_route():
+    from app import get_user_custom_quizzes
+    from models import Quiz
+    user_id = 1
+    quizzes = get_user_custom_quizzes(user_id)
+    
+    selected_quiz_id = _int_value(request.args.get('quiz_id'))
+    selected_quiz = None
+    if selected_quiz_id:
+        selected_quiz = Quiz.query.get(selected_quiz_id)
+        if selected_quiz and selected_quiz.owned_by != user_id:
+            selected_quiz = None
+            
+    return render_template('edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz)
+
+def create_custom_quiz_route():
+    from app import create_custom_quiz
+    data = _request_data()
+    title = data.get('title')
+    description = data.get('description')
+    tags = data.get('tags')
+    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    if not title:
+        return jsonify({'error': 'Title is required'}), 400
+    quiz = create_custom_quiz(1, title, is_public, description, tags)  # user_id = 1
+    return redirect(url_for('edit_quiz_route', quiz_id=quiz.quiz_id))
+
+def edit_custom_quiz_metadata_route():
+    from app import edit_custom_quiz
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    title = data.get('title')
+    description = data.get('description')
+    tags = data.get('tags')
+    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    edit_custom_quiz(quiz_id, title, is_public, description, tags)
+    return redirect(url_for('edit_quiz_route', quiz_id=quiz_id))
+
+def delete_custom_quiz_route():
+    from app import delete_custom_quiz
+    quiz_id = _int_value(_request_data().get('quiz_id'))
+    delete_custom_quiz(quiz_id)
+    return redirect(url_for('edit_quiz_route'))
+
+def add_quiz_question_route():
+    from app import add_quiz_question
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    question_text = data.get('question')
+    q_type = data.get('q_type', 'dynamic')
+    
+    options_data = []
+    correct_count = 0
+    for i in range(1, 6):
+        text = data.get(f'option_{i}', '').strip()
+        if text:
+            if q_type == 'dynamic':
+                is_correct = True
+                correct_count += 1
+            else:
+                is_correct = (data.get(f'is_correct_{i}') is not None)
+                if is_correct:
+                    correct_count += 1
+            options_data.append({'text': text, 'is_correct': is_correct})
+            
+    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
+        
+    if q_type == 'static':
+        if not (1 <= correct_count <= 2):
+            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
+        if len(options_data) < 2:
+            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+
+    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question added successfully', level='success')
+
+def delete_quiz_question_route():
+    from app import delete_quiz_question
+    data = _request_data()
+    question_id = _int_value(data.get('question_id'))
+    quiz_id = _int_value(data.get('quiz_id'))
+    delete_quiz_question(question_id)
+    return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question deleted', level='success')
+
+def edit_quiz_question_route():
+    from app import delete_quiz_question, add_quiz_question
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    question_id = _int_value(data.get('question_id'))
+    question_text = data.get('question')
+    q_type = data.get('q_type', 'dynamic')
+    
+    options_data = []
+    correct_count = 0
+    for i in range(1, 6):
+        text = data.get(f'option_{i}', '').strip()
+        if text:
+            if q_type == 'dynamic':
+                is_correct = True
+                correct_count += 1
+            else:
+                is_correct = (data.get(f'is_correct_{i}') is not None)
+                if is_correct:
+                    correct_count += 1
+            options_data.append({'text': text, 'is_correct': is_correct})
+            
+    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
+        
+    if q_type == 'static':
+        if not (1 <= correct_count <= 2):
+            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
+        if len(options_data) < 2:
+            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+
+    delete_quiz_question(question_id)
+    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    
+    return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question updated', level='success')
+
 # Register all routes with Flask
 def register_routes(app):
     # Main pages
@@ -484,7 +726,19 @@ def register_routes(app):
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/match', endpoint='match', view_func=match)
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
+    app.add_url_rule('/search', endpoint='search', view_func=search_route)
+    app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
+    app.add_url_rule('/edit_quiz', endpoint='edit_quiz_route', view_func=edit_quiz_route, methods=['GET'])
     
+    # Custom Quiz operations
+    app.add_url_rule('/create_custom_quiz', endpoint='create_custom_quiz', view_func=create_custom_quiz_route, methods=['POST'])
+    app.add_url_rule('/edit_custom_quiz', endpoint='edit_custom_quiz', view_func=edit_custom_quiz_metadata_route, methods=['POST'])
+    app.add_url_rule('/delete_custom_quiz', endpoint='delete_custom_quiz', view_func=delete_custom_quiz_route, methods=['POST'])
+    app.add_url_rule('/add_quiz_question', endpoint='add_quiz_question', view_func=add_quiz_question_route, methods=['POST'])
+    app.add_url_rule('/edit_quiz_question', endpoint='edit_quiz_question', view_func=edit_quiz_question_route, methods=['POST'])
+    app.add_url_rule('/delete_quiz_question', endpoint='delete_quiz_question', view_func=delete_quiz_question_route, methods=['POST'])
+    app.add_url_rule('/score_quiz', endpoint='score_quiz', view_func=score_quiz_route, methods=['POST'])
+
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=create_deck_route, methods=['POST'])
     app.add_url_rule('/get_decks', endpoint='get_decks', view_func=get_deck_list_route, methods=['POST'])

@@ -377,6 +377,34 @@ main .container {
     gap: var(--space-sm);
 }
 
+.quiz-source-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.quiz-source-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.quiz-source-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    gap: var(--space-sm);
+    align-items: start;
+}
+
+.quiz-source-button-wrap {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.quiz-source-button {
+    width: 220px;
+}
+
 /* Edit page */
 .edit-container,
 .study-container,
@@ -440,6 +468,16 @@ main .container {
 .deck-card-mode.shuffled {
     background: #f2f5fa;
     color: #455b82;
+}
+
+.deck-card-mode.public {
+    background: #e8ffee;
+    color: #167a32;
+}
+
+.deck-card-mode.private {
+    background: #fff4eb;
+    color: #b05c1e;
 }
 
 .deck-card-meta {
@@ -1163,6 +1201,18 @@ body.dragging-active.dragging-invalid * {
     .deck-selector-form,
     .form-row {
         grid-template-columns: 1fr;
+    }
+
+    .quiz-source-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .quiz-source-button-wrap {
+        justify-content: stretch;
+    }
+
+    .quiz-source-button {
+        width: 100%;
     }
 
     .form-buttons,

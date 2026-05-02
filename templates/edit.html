@@ -19,12 +19,20 @@
                     <input type="hidden" name="user_id" value="{{ user_id }}">
                     <div class="form-group mb-0">
                         <label for="deckDescription" class="mb-1">Deck Name</label>
-                        <input type="text" class="form-control" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
+                        <input type="text" class="form-control mb-2" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
+                        <label for="deckDetailedDescription" class="mb-1">Description (Optional)</label>
+                        <textarea class="form-control mb-2" id="deckDetailedDescription" name="detailed_description" rows="2" placeholder="What is this deck about?"></textarea>
+                        <label for="deckTags" class="mb-1">Tags (Optional)</label>
+                        <input type="text" class="form-control" id="deckTags" name="tags" placeholder="e.g., language, spanish, beginners">
                     </div>
                     <div>
                         <div class="form-check mb-3">
                             <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
                             <label class="form-check-label" for="deckSortable">Keep in order (sortable)</label>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="deckPublic" name="is_public">
+                            <label class="form-check-label" for="deckPublic">Public (visible to everyone)</label>
                         </div>
                         <button type="submit" class="btn btn-success">Create</button>
                     </div>
@@ -52,7 +60,17 @@
                         <div class="deck-card-top">
                             <h6 class="deck-card-title">{{ deck.description }}</h6>
                             <span class="deck-card-mode {{ 'sortable' if deck.sortable else 'shuffled' }}">{{ 'Sortable' if deck.sortable else 'Shuffled' }}</span>
+                            <span class="deck-card-mode {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
                         </div>
+                        {% if deck.tags %}
+                        <div class="deck-tags mt-1">
+                            {% for tag in deck.tags.split(',') %}
+                            {% if tag.strip() %}
+                            <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
                         <div class="deck-card-meta">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
                         <div class="deck-card-actions">
                             <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deck_id) }}#deck-editor">Edit</a>
@@ -100,13 +118,23 @@
                     <div class="deck-settings-top-row">
                         <div class="form-group mb-0">
                             <label for="editDeckDescription" class="mb-1">Name</label>
-                            <input type="text" class="form-control" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
+                            <input type="text" class="form-control mb-2" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
+
+                            <label for="editDeckDetailedDescription" class="mb-1">Description</label>
+                            <textarea class="form-control mb-2" id="editDeckDetailedDescription" name="detailed_description" rows="2">{{ selected_deck.detailed_description or '' }}</textarea>
+
+                            <label for="editDeckTags" class="mb-1">Tags</label>
+                            <input type="text" class="form-control" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}" placeholder="Comma-separated tags">
                         </div>
                     </div>
-                    <div class="deck-settings-bottom-row">
+                    <div class="deck-settings-bottom-row mt-2">
                         <div class="form-check mb-0">
                             <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}>
                             <label class="form-check-label" for="editDeckSortable">Keep in order (sortable)</label>
+                        </div>
+                        <div class="form-check mb-0 ms-3">
+                            <input type="checkbox" class="form-check-input" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}>
+                            <label class="form-check-label" for="editDeckPublic">Public (visible to everyone)</label>
                         </div>
                         <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
                     </div>

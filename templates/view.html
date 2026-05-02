@@ -52,6 +52,23 @@
             <a class="btn btn-secondary btn-sm" href="{{ url_for('view') }}">Clear</a>
         </div>
         <div class="section-body">
+            {% if study_deck.tags or study_deck.detailed_description %}
+            <div class="mb-4">
+                {% if study_deck.detailed_description %}
+                <p class="mb-2 text-muted">{{ study_deck.detailed_description }}</p>
+                {% endif %}
+                {% if study_deck.tags %}
+                <div class="deck-tags">
+                    {% for tag in study_deck.tags.split(',') %}
+                    {% if tag.strip() %}
+                    <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
             {% if study_deck.card_count == 0 %}
             <div class="empty-state">This deck is empty. Add some cards to study!</div>
             {% else %}

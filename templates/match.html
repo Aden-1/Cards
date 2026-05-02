@@ -100,15 +100,13 @@
                     {% endfor %}
 
                     <!-- Answers -->
-                    {% for card in match_deck.cards %}
-                        {% for answer in card.answer_objects %}
-                        <div class="match-tile answer-tile" data-type="answer" data-answer-id="{{ answer.answer_id }}" data-question-id="{{ card.card_id }}">
+                    {% for answer in match_deck.answers %}
+                        <div class="match-tile answer-tile" data-type="answer" data-answer-id="{{ answer.answer_id }}" data-question-id="{{ answer.card_id }}">
                             <div class="tile-content">
                                 <div class="tile-label">Answer</div>
                                 <div class="tile-text">{{ answer.answer }}</div>
                             </div>
                         </div>
-                        {% endfor %}
                     {% endfor %}
                 </div>
             </div>

@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Quiz - Cards App{% endblock %}
+
+{% block content %}
+<div class="quiz-container">
+    <div class="section">
+        <div class="section-header">
+            <h5>Select Deck for Quiz</h5>
+        </div>
+        <div class="section-body">
+            <div class="quiz-source-stack mb-3">
+                <form method="get" action="{{ url_for('quiz') }}" class="quiz-source-row">
+                    <label for="deck_id" class="mb-1">Generate From Decks</label>
+                    <div class="quiz-source-controls">
+                        <div>
+                        <select class="form-select w-100" id="deck_id" name="deck_id">
+                            <option value="">Choose a deck...</option>
+                            {% for deck in decks %}
+                            <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>
+                                {{ deck.description }} ({{ deck.card_count }} cards)
+                            </option>
+                            {% endfor %}
+                        </select>
+                        </div>
+                        <div class="quiz-source-button-wrap">
+                        <button type="submit" class="btn btn-success quiz-source-button">Generate Deck Quiz</button>
+                        </div>
+                    </div>
+                </form>
+
+                <form method="get" action="{{ url_for('quiz') }}" class="quiz-source-row">
+                    <label for="custom_quiz_id" class="mb-1">Take a Custom Quiz</label>
+                    <div class="quiz-source-controls">
+                        <div>
+                        <select class="form-select w-100" id="custom_quiz_id" name="custom_quiz_id">
+                            <option value="">Choose a custom quiz...</option>
+                            {% for cq in custom_quizzes %}
+                            <option value="{{ cq.quiz_id }}" {% if selected_custom_quiz_id == cq.quiz_id %}selected{% endif %}>
+                                {{ cq.title }} ({{ cq.questions|length }} Qs)
+                            </option>
+                            {% endfor %}
+                        </select>
+                        </div>
+                        <div class="quiz-source-button-wrap">
+                        <button type="submit" class="btn btn-primary quiz-source-button">Take Custom Quiz</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <p class="text-muted small mt-2">Want to build your own specific test? <a href="{{ url_for('edit_quiz_route') }}">Manage Quizzes</a>.</p>
+        </div>
+    </div>
+
+    {% if quiz_data %}
+    <div class="section mt-4" id="quizGameSection">
+        <div class="section-header success">
+            <h5>Quiz</h5>
+        </div>
+        <div class="section-body">
+            <div id="quizForm">
+                {% for q in quiz_data %}
+                <div class="card mb-3 quiz-question" data-question-id="{{ q.id }}">
+                    <div class="card-body">
+                        <h6 class="card-title">{{ loop.index }}. {{ q.question }}</h6>
+                        <div class="options mt-3">
+                            {% for opt in q.options %}
+                            <div class="form-check">
+                                <input class="form-check-input option-checkbox" type="checkbox" value="{{ opt.text|escape }}" id="opt_{{ q.id }}_{{ loop.index }}">
+                                <label class="form-check-label" for="opt_{{ q.id }}_{{ loop.index }}">
+                                    {{ opt.text }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="feedback mt-2" style="display:none;"></div>
+                    </div>
+                </div>
+                {% endfor %}
+                <div id="quizScore" class="mt-3"></div>
+                <div class="mt-3">
+                    <button id="submitQuiz" class="btn btn-primary">Submit Quiz</button>
+                    <a id="retakeQuiz" href="javascript:window.location.reload()" class="btn btn-secondary" style="display:none;">Retake Quiz</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const quizData = {{ quiz_data|tojson }};
+
+    document.getElementById('submitQuiz')?.addEventListener('click', () => {
+        const answers = {};
+        document.querySelectorAll('.quiz-question').forEach(el => {
+            const qId = el.dataset.questionId;
+            const selected = [];
+            el.querySelectorAll('.option-checkbox:checked').forEach(cb => {
+                selected.push(cb.value);
+            });
+            answers[qId] = selected;
+        });
+
+        fetch('{{ url_for("score_quiz") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answers: answers, quiz_data: quizData })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if(data.success) {
+                document.getElementById('quizScore').innerHTML = `<h4>Your Score: ${data.score} / ${data.total}</h4>`;
+
+                data.results.forEach(res => {
+                    const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
+                    if(qEl) {
+                        const feedback = qEl.querySelector('.feedback');
+                        feedback.style.display = 'block';
+                        if(res.is_correct) {
+                            feedback.className = 'feedback mt-2 text-success';
+                            feedback.innerHTML = 'Correct!';
+                        } else {
+                            feedback.className = 'feedback mt-2 text-danger';
+                            feedback.innerHTML = `Incorrect. Correct answers: ${res.correct_answers.join(', ')}`;
+                        }
+                    }
+                });
+
+                document.getElementById('submitQuiz').style.display = 'none';
+                document.getElementById('retakeQuiz').style.display = 'inline-block';
+            }
+        });
+    });
+</script>
+    {% endif %}
+</div>
+{% endblock %}
+
+
