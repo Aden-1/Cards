@@ -312,15 +312,27 @@ def edit():
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck = None
+    selected_deck_export_text = ''
     selected_cards = []
     if selected_deck_id and _owned_deck(selected_deck_id, user_id):
+        from app import export_deck_as_text
         selected_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False)
         if selected_deck and selected_deck['deck_id']:
             selected_cards = selected_deck['cards']
+            selected_deck_record = _owned_deck(selected_deck_id, user_id)
+            selected_deck_export_text = export_deck_as_text(selected_deck_record) if selected_deck_record else ''
         else:
             selected_deck = None
 
-    return render_template('edit.html', user_id=user_id, decks=deck_data, selected_deck=selected_deck, selected_cards=selected_cards, selected_deck_id=selected_deck_id)
+    return render_template(
+        'edit.html',
+        user_id=user_id,
+        decks=deck_data,
+        selected_deck=selected_deck,
+        selected_cards=selected_cards,
+        selected_deck_id=selected_deck_id,
+        selected_deck_export_text=selected_deck_export_text,
+    )
 
 
 # Study view.
@@ -641,6 +653,48 @@ def list_cards_route():
     user_id = _current_user_id()
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return jsonify({'error': 'Deck not found'}), 404
+
+
+def import_deck_route():
+    if not _current_user():
+        return _login_required_response()
+    from app import import_deck
+
+    data = _request_data()
+    user_id = _current_user_id()
+    description = (data.get('description') or '').strip()
+    detailed_description = data.get('detailed_description')
+    tags = data.get('tags')
+    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    import_text = data.get('import_text')
+
+    if not description:
+        return _redirect_with_fragment('edit', fragment='deck-import', notice='Deck name is required.', level='error')
+
+    try:
+        result = import_deck(
+            user_id=user_id,
+            description=description,
+            raw_text=import_text,
+            sortable=sortable,
+            is_public=is_public,
+            detailed_description=detailed_description,
+            tags=tags,
+        )
+    except ValueError as exc:
+        return _redirect_with_fragment('edit', fragment='deck-import', notice=str(exc), level='error')
+
+    message = f"Deck imported with {result['card_count']} card{'s' if result['card_count'] != 1 else ''}."
+    if result['invalid_lines'] > 0:
+        message = f"{message} Skipped {result['invalid_lines']} invalid line{'s' if result['invalid_lines'] != 1 else ''}."
+    return _redirect_with_fragment(
+        'edit',
+        deck_id=result['deck'].deck_id,
+        fragment='deck-editor',
+        notice=message,
+        level='success',
+    )
     
     if detailed:
         deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
@@ -1252,6 +1306,7 @@ def register_routes(app):
 
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=create_deck_route, methods=['POST'])
+    app.add_url_rule('/import_deck', endpoint='import_deck', view_func=import_deck_route, methods=['POST'])
     app.add_url_rule('/get_decks', endpoint='get_decks', view_func=get_deck_list_route, methods=['POST'])
     app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=delete_deck_route, methods=['POST'])
     app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=edit_deck_route, methods=['POST'])

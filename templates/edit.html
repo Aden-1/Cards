@@ -12,32 +12,86 @@
 
     <div class="section">
         <div class="section-header">
-            <h5 class="mb-0">Create New Deck</h5>
+            <div>
+                <h5 class="mb-0">Create New Deck</h5>
+            </div>
+            <button id="createDeckToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#createDeckCollapse" aria-expanded="false" aria-controls="createDeckCollapse">
+                Open
+            </button>
         </div>
-        <div class="section-body">
-            <div class="form-section">
-                <form method="post" action="{{ url_for('create_deck') }}" class="form-row track-unsaved-form">
-                    <input type="hidden" name="user_id" value="{{ user_id }}">
-                    <div class="form-group mb-0">
-                        <label for="deckDescription" class="mb-1">Deck Name</label>
-                        <input type="text" class="form-control mb-2" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
-                        <label for="deckDetailedDescription" class="mb-1">Description (Optional)</label>
-                        <textarea class="form-control mb-2" id="deckDetailedDescription" name="detailed_description" rows="2" placeholder="What is this deck about?"></textarea>
-                        <label for="deckTags" class="mb-1">Tags (Optional)</label>
-                        <input type="text" class="form-control" id="deckTags" name="tags" placeholder="e.g., language, spanish, beginners">
-                    </div>
-                    <div>
-                        <div class="form-check mb-3">
-                            <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
-                            <label class="form-check-label" for="deckSortable">Keep in order (sortable)</label>
+        <div id="createDeckCollapse" class="collapse">
+            <div class="section-body">
+                <div class="form-section mt-1">
+                    <form method="post" action="{{ url_for('create_deck') }}" class="form-row track-unsaved-form">
+                        <input type="hidden" name="user_id" value="{{ user_id }}">
+                        <div class="form-group mb-0">
+                            <label for="deckDescription" class="mb-1">Deck Name</label>
+                            <input type="text" class="form-control mb-2" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
+                            <label for="deckDetailedDescription" class="mb-1">Description (Optional)</label>
+                            <textarea class="form-control mb-2" id="deckDetailedDescription" name="detailed_description" rows="2" placeholder="What is this deck about?"></textarea>
+                            <label for="deckTags" class="mb-1">Tags (Optional)</label>
+                            <input type="text" class="form-control" id="deckTags" name="tags" placeholder="e.g., language, spanish, beginners">
                         </div>
-                        <div class="form-check mb-3">
-                            <input type="checkbox" class="form-check-input" id="deckPublic" name="is_public">
-                            <label class="form-check-label" for="deckPublic">Public (visible to everyone)</label>
+                        <div>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
+                                <label class="form-check-label" for="deckSortable">Keep in order (sortable)</label>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" class="form-check-input" id="deckPublic" name="is_public">
+                                <label class="form-check-label" for="deckPublic">Public (visible to everyone)</label>
+                            </div>
+                            <button type="submit" class="btn btn-success">Create</button>
                         </div>
-                        <button type="submit" class="btn btn-success">Create</button>
-                    </div>
-                </form>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section" id="deck-import">
+        <div class="section-header">
+            <div>
+                <h5 class="mb-0">Import Deck (Copy/Paste)</h5>
+            </div>
+            <button id="importDeckToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#importDeckCollapse" aria-expanded="false" aria-controls="importDeckCollapse">
+                Open
+            </button>
+        </div>
+        <div id="importDeckCollapse" class="collapse">
+            <div class="section-body">
+                <div class="form-section mt-1">
+                    <form method="post" action="{{ url_for('import_deck') }}" class="track-unsaved-form">
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <label for="importDeckDescription" class="mb-1">Deck Name</label>
+                                <input type="text" class="form-control mb-2" id="importDeckDescription" name="description" placeholder="Imported Deck" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="importDeckTags" class="mb-1">Tags (Optional)</label>
+                                <input type="text" class="form-control mb-2" id="importDeckTags" name="tags" placeholder="e.g., import, study">
+                            </div>
+                        </div>
+                        <label for="importDeckDetailedDescription" class="mb-1">Description (Optional)</label>
+                        <textarea class="form-control mb-2" id="importDeckDetailedDescription" name="detailed_description" rows="2"></textarea>
+
+                        <label for="importDeckText" class="mb-1">Paste Deck Text</label>
+                        <textarea class="form-control mb-2" id="importDeckText" name="import_text" rows="8" placeholder="One card per line, for example: Question,Answer" required></textarea>
+                        <div class="form-text mb-2">Accepted formats: comma-separated or tab-separated lines. Quoted CSV values are supported.</div>
+
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="form-check mb-0">
+                                <input type="checkbox" class="form-check-input" id="importDeckSortable" name="sortable">
+                                <label class="form-check-label" for="importDeckSortable">Keep in order (sortable)</label>
+                            </div>
+                            <div class="form-check mb-0">
+                                <input type="checkbox" class="form-check-input" id="importDeckPublic" name="is_public">
+                                <label class="form-check-label" for="importDeckPublic">Public (visible to everyone)</label>
+                            </div>
+                            <button type="submit" class="btn btn-success">Import Deck</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
@@ -115,55 +169,74 @@
         </div>
         <div class="section-body">
             <div class="form-section mb-3">
-                <h6 class="mb-3">Deck Settings</h6>
-                <form method="post" action="{{ url_for('edit_deck') }}" class="deck-settings-form track-unsaved-form">
-                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                    <div class="deck-settings-top-row">
-                        <div class="form-group mb-0">
-                            <label for="editDeckDescription" class="mb-1">Name</label>
-                            <input type="text" class="form-control mb-2" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
+                <details>
+                    <summary><h6 class="mb-0 d-inline">Deck Settings</h6></summary>
+                    <div class="mt-3">
+                        <form method="post" action="{{ url_for('edit_deck') }}" class="deck-settings-form track-unsaved-form">
+                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                            <div class="deck-settings-top-row">
+                                <div class="form-group mb-0">
+                                    <label for="editDeckDescription" class="mb-1">Name</label>
+                                    <input type="text" class="form-control mb-2" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
 
-                            <label for="editDeckDetailedDescription" class="mb-1">Description</label>
-                            <textarea class="form-control mb-2" id="editDeckDetailedDescription" name="detailed_description" rows="2">{{ selected_deck.detailed_description or '' }}</textarea>
+                                    <label for="editDeckDetailedDescription" class="mb-1">Description</label>
+                                    <textarea class="form-control mb-2" id="editDeckDetailedDescription" name="detailed_description" rows="2">{{ selected_deck.detailed_description or '' }}</textarea>
 
-                            <label for="editDeckTags" class="mb-1">Tags</label>
-                            <input type="text" class="form-control" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}" placeholder="Comma-separated tags">
-                        </div>
+                                    <label for="editDeckTags" class="mb-1">Tags</label>
+                                    <input type="text" class="form-control" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}" placeholder="Comma-separated tags">
+                                </div>
+                            </div>
+                            <div class="deck-settings-bottom-row mt-2">
+                                <div class="form-check mb-0">
+                                    <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}>
+                                    <label class="form-check-label" for="editDeckSortable">Keep in order (sortable)</label>
+                                </div>
+                                <div class="form-check mb-0 ms-3">
+                                    <input type="checkbox" class="form-check-input" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}>
+                                    <label class="form-check-label" for="editDeckPublic">Public (visible to everyone)</label>
+                                </div>
+                                <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
+                            </div>
+                        </form>
                     </div>
-                    <div class="deck-settings-bottom-row mt-2">
-                        <div class="form-check mb-0">
-                            <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}>
-                            <label class="form-check-label" for="editDeckSortable">Keep in order (sortable)</label>
-                        </div>
-                        <div class="form-check mb-0 ms-3">
-                            <input type="checkbox" class="form-check-input" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}>
-                            <label class="form-check-label" for="editDeckPublic">Public (visible to everyone)</label>
-                        </div>
-                        <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
+                </details>
+            </div>
+
+            <div class="form-section mb-3">
+                <details>
+                    <summary><h6 class="mb-0 d-inline">Export Deck (Copy/Paste)</h6></summary>
+                    <div class="mt-3">
+                        <label for="deckExportText" class="form-label">Compatible export format</label>
+                        <textarea class="form-control mb-2" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
+                        <button type="button" class="btn btn-secondary btn-sm" id="copyDeckExportBtn">Copy Export Text</button>
                     </div>
-                </form>
+                </details>
             </div>
 
             <div class="form-section mb-4">
                 <!-- Add card -->
-                <h6 class="mb-3">Add Card</h6>
-                <form method="post" action="{{ url_for('add_card') }}" class="add-card-form track-unsaved-form">
-                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                    <div class="add-card-fields-grid">
-                        <div class="form-group mb-0 add-card-question-field">
-                            <label for="question" class="form-label">Question</label>
-                            <input type="text" class="form-control" id="question" name="question" required>
-                        </div>
-                        <div class="form-group mb-0 add-card-answer-field">
-                            <label for="answersInput" class="form-label">Answers</label>
-                            <textarea class="form-control" id="answersInput" name="answers" rows="4" placeholder="Separate multiple answers with commas" required></textarea>
-                            <div class="form-text">Example: "Capital city, Paris"</div>
-                        </div>
+                <details>
+                    <summary><h6 class="mb-0 d-inline">Add Card</h6></summary>
+                    <div class="mt-3">
+                        <form method="post" action="{{ url_for('add_card') }}" class="add-card-form track-unsaved-form">
+                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                            <div class="add-card-fields-grid">
+                                <div class="form-group mb-0 add-card-question-field">
+                                    <label for="question" class="form-label">Question</label>
+                                    <input type="text" class="form-control" id="question" name="question" required>
+                                </div>
+                                <div class="form-group mb-0 add-card-answer-field">
+                                    <label for="answersInput" class="form-label">Answers</label>
+                                    <textarea class="form-control" id="answersInput" name="answers" rows="4" placeholder="Separate multiple answers with commas" required></textarea>
+                                    <div class="form-text">Example: "Capital city, Paris"</div>
+                                </div>
+                            </div>
+                            <div class="add-card-submit-wrap">
+                                <button type="submit" class="btn btn-success">Add Card</button>
+                            </div>
+                        </form>
                     </div>
-                    <div class="add-card-submit-wrap">
-                        <button type="submit" class="btn btn-success">Add Card</button>
-                    </div>
-                </form>
+                </details>
             </div>
 
             <h6 class="mb-3">Cards in Deck</h6>
@@ -328,6 +401,30 @@
         decksCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
     }
 
+    const createDeckToggleBtn = document.getElementById('createDeckToggleBtn');
+    const createDeckCollapse = document.getElementById('createDeckCollapse');
+    if (createDeckToggleBtn && createDeckCollapse) {
+        const setToggleText = (isOpen) => {
+            createDeckToggleBtn.textContent = isOpen ? 'Close' : 'Open';
+            createDeckToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        };
+        setToggleText(createDeckCollapse.classList.contains('show'));
+        createDeckCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
+        createDeckCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
+    }
+
+    const importDeckToggleBtn = document.getElementById('importDeckToggleBtn');
+    const importDeckCollapse = document.getElementById('importDeckCollapse');
+    if (importDeckToggleBtn && importDeckCollapse) {
+        const setToggleText = (isOpen) => {
+            importDeckToggleBtn.textContent = isOpen ? 'Close' : 'Open';
+            importDeckToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        };
+        setToggleText(importDeckCollapse.classList.contains('show'));
+        importDeckCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
+        importDeckCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
+    }
+
     // Close confirmation panels on cancel.
     document.querySelectorAll('.close-delete-panel').forEach((button) => {
         // Close the details element after cancel.
@@ -489,6 +586,23 @@
     document.addEventListener('pointermove', moveDrag);
     document.addEventListener('pointerup', endDrag);
     document.addEventListener('pointercancel', endDrag);
+
+    const copyDeckExportBtn = document.getElementById('copyDeckExportBtn');
+    const deckExportText = document.getElementById('deckExportText');
+    if (copyDeckExportBtn && deckExportText) {
+        copyDeckExportBtn.addEventListener('click', async function() {
+            try {
+                await navigator.clipboard.writeText(deckExportText.value || '');
+                copyDeckExportBtn.textContent = 'Copied';
+                setTimeout(() => {
+                    copyDeckExportBtn.textContent = 'Copy Export Text';
+                }, 1200);
+            } catch (error) {
+                deckExportText.focus();
+                deckExportText.select();
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

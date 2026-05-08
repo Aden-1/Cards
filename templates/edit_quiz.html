@@ -13,27 +13,34 @@
     <!-- Quiz list -->
     <div class="section">
         <div class="section-header">
-            <h5 class="mb-0">Create New Quiz</h5>
+            <div>
+                <h5 class="mb-0">Create New Quiz</h5>
+            </div>
+            <button id="createQuizToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#createQuizCollapse" aria-expanded="false" aria-controls="createQuizCollapse">
+                Open
+            </button>
         </div>
-        <div class="section-body">
-            <div class="form-section">
-                <form method="post" action="{{ url_for('create_custom_quiz') }}" class="form-row track-unsaved-form">
-                    <div class="form-group mb-0">
-                        <label for="title" class="mb-1">Quiz Title</label>
-                        <input type="text" class="form-control mb-2" id="title" name="title" required placeholder="e.g., Biology Midterm">
-                        <label for="description" class="mb-1">Description (Optional)</label>
-                        <textarea class="form-control mb-2" id="description" name="description" rows="2" placeholder="What is this quiz about?"></textarea>
-                        <label for="tags" class="mb-1">Tags (Optional)</label>
-                        <input type="text" class="form-control" id="tags" name="tags" placeholder="e.g., biology, exam prep, semester 1">
-                    </div>
-                    <div>
-                        <div class="form-check mb-3">
-                            <input type="checkbox" class="form-check-input" id="is_public" name="is_public">
-                            <label class="form-check-label" for="is_public">Public (visible to everyone)</label>
+        <div id="createQuizCollapse" class="collapse">
+            <div class="section-body">
+                <div class="form-section mt-1">
+                    <form method="post" action="{{ url_for('create_custom_quiz') }}" class="form-row track-unsaved-form">
+                        <div class="form-group mb-0">
+                            <label for="title" class="mb-1">Quiz Title</label>
+                            <input type="text" class="form-control mb-2" id="title" name="title" required placeholder="e.g., Biology Midterm">
+                            <label for="description" class="mb-1">Description (Optional)</label>
+                            <textarea class="form-control mb-2" id="description" name="description" rows="2" placeholder="What is this quiz about?"></textarea>
+                            <label for="tags" class="mb-1">Tags (Optional)</label>
+                            <input type="text" class="form-control" id="tags" name="tags" placeholder="e.g., biology, exam prep, semester 1">
                         </div>
-                        <button type="submit" class="btn btn-success">Create Quiz</button>
-                    </div>
-                </form>
+                        <div>
+                            <div class="form-check mb-3">
+                                <input type="checkbox" class="form-check-input" id="is_public" name="is_public">
+                                <label class="form-check-label" for="is_public">Public (visible to everyone)</label>
+                            </div>
+                            <button type="submit" class="btn btn-success">Create Quiz</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
@@ -313,6 +320,18 @@ document.addEventListener('DOMContentLoaded', function() {
         quizzesCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
         // Collapse events keep the toggle label in sync.
         quizzesCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
+    }
+
+    const createQuizToggleBtn = document.getElementById('createQuizToggleBtn');
+    const createQuizCollapse = document.getElementById('createQuizCollapse');
+    if (createQuizToggleBtn && createQuizCollapse) {
+        const setToggleText = (isOpen) => {
+            createQuizToggleBtn.textContent = isOpen ? 'Close' : 'Open';
+            createQuizToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        };
+        setToggleText(createQuizCollapse.classList.contains('show'));
+        createQuizCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
+        createQuizCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
     }
 
     // Close details panels on cancel.

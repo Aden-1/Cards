@@ -2,6 +2,8 @@ import random
 import re
 import unicodedata
 import os
+import csv
+import io
 
 from flask import Flask
 from flask_migrate import Migrate
@@ -88,6 +90,64 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
         'cards': serialized_cards,
         'answers': flattened_answers,
     }
+
+
+def parse_imported_deck_text(raw_text):
+    """Parse pasted deck text in common external formats (CSV or tab-delimited)."""
+    text = (raw_text or '').replace('\r\n', '\n').replace('\r', '\n').strip('\ufeff \n\t')
+    if not text:
+        raise ValueError('Paste deck content to import.')
+
+    parsed_rows = []
+    invalid_lines = 0
+
+    for line in text.split('\n'):
+        if not line.strip():
+            continue
+        delimiter = '\t' if '\t' in line else ','
+        columns = next(csv.reader([line], delimiter=delimiter, quotechar='"', skipinitialspace=True), [])
+        if len(columns) < 2:
+            invalid_lines += 1
+            continue
+        question = (columns[0] or '').strip()
+        answer = delimiter.join(columns[1:]).strip()
+        if not question or not answer:
+            invalid_lines += 1
+            continue
+        parsed_rows.append((question, answer))
+
+    if not parsed_rows:
+        raise ValueError('No valid cards found. Expected one card per line like "question,answer".')
+
+    card_map = {}
+    card_order = []
+    for question, answer in parsed_rows:
+        if question not in card_map:
+            card_map[question] = []
+            card_order.append(question)
+        if answer not in card_map[question]:
+            card_map[question].append(answer)
+
+    cards = [{'question': question, 'answers': card_map[question]} for question in card_order if card_map[question]]
+    if not cards:
+        raise ValueError('No valid cards found after parsing.')
+
+    return {
+        'cards': cards,
+        'invalid_lines': invalid_lines,
+        'line_count': len(parsed_rows) + invalid_lines,
+    }
+
+
+def export_deck_as_text(deck):
+    """Export a deck as line-based CSV text for copy/paste."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator='\n')
+    cards = sorted(list(deck.cards), key=lambda card: card.position)
+    for card in cards:
+        for answer in card.answers:
+            writer.writerow([card.question or '', answer.answer or ''])
+    return buffer.getvalue().strip('\n')
 
 
 # Custom quiz helpers.
@@ -289,6 +349,40 @@ def create_deck(user_id, description, sortable=False, is_public=False, detailed_
     db.session.commit()
     _sync_content_fts_index_for_deck(deck)
     return deck
+
+
+def import_deck(user_id, description, raw_text, sortable=False, is_public=False, detailed_description=None, tags=None):
+    parsed = parse_imported_deck_text(raw_text)
+    cards = parsed['cards']
+
+    deck = Deck(
+        owned_by=user_id,
+        description=description,
+        sortable=sortable,
+        is_public=is_public,
+        detailed_description=detailed_description,
+        tags=tags
+    )
+    db.session.add(deck)
+    db.session.flush()
+
+    next_position = 1
+    for card_data in cards:
+        card = Card(deck_id=deck.deck_id, question=card_data['question'], position=next_position)
+        db.session.add(card)
+        db.session.flush()
+        for answer_text in card_data['answers']:
+            db.session.add(CardAnswer(card_id=card.card_id, answer=answer_text))
+        next_position += 1
+
+    db.session.commit()
+    _sync_content_fts_index_for_deck(deck)
+    return {
+        'deck': deck,
+        'card_count': len(cards),
+        'invalid_lines': parsed['invalid_lines'],
+        'line_count': parsed['line_count'],
+    }
 
 # Return decks owned by one user.
 def get_user_decks(user_id):
