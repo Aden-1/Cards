@@ -1,251 +1,227 @@
 {% extends "base.html" %}
 
-{% block title %}Study Cards - Cards App{% endblock %}
+{% block title %}Cards | Study{% endblock %}
 
 {% block content %}
-<div class="study-container">
-    <!-- Deck picker -->
-    <div class="section">
-        <div class="section-header">
-            <h5 class="mb-0">Select Deck</h5>
-            {% if selected_deck_id and selected_deck_is_owned %}
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
-            {% endif %}
-        </div>
-        <div class="section-body">
-            {% if decks %}
-            <form method="get" action="{{ url_for('view') }}" class="deck-selector-form">
-                <div class="form-group mb-0">
-                    <label for="deck_id">{{ 'Available Decks' if not current_user else 'Your Decks And Public Decks' }}</label>
-                    <select class="form-select" id="deck_id" name="deck_id" required>
-                        <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
-                        {% for deck in decks %}
-                        <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>
-                            {{ deck.description }} ({{ deck.card_count }} cards)
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-buttons">
-                    <button type="submit" class="btn btn-success">Start Studying</button>
-                    {% if selected_deck_id %}
-                    <a class="btn btn-primary" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>
-                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>
-                    {% endif %}
-                </div>
-            </form>
-            {% else %}
-            <div class="empty-state">
-                <p>No public decks are available yet.</p>
-                {% if current_user %}
-                <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Create a deck</a>
-                {% else %}
-                <a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Log in to create a deck</a>
-                {% endif %}
-            </div>
-            {% endif %}
-        </div>
-    </div>
-
-    {% if study_deck %}
-    <!-- Study deck -->
-    <div class="section" id="studySection">
-        <div class="section-header">
+<section class="page-intro">
+    <span class="page-kicker">Adaptive Session</span>
+    <h1 class="page-title">Study cards with a cleaner, faster review flow.</h1>
+    <p class="page-description">Pick a deck, reveal answers on demand, and move through the session with keyboard-friendly controls.</p>
+</section>
+<section class="selection-grid fade-in">
+    <aside class="selection-panel">
+        <div class="panel-header">
             <div>
-                <h5 class="mb-0">{{ study_deck.description }}</h5>
-                <small>Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ study_deck.card_count }}</span></small>
+                <h2 class="h4 mb-1">Choose Deck</h2>
+                <p class="muted-copy mb-0">{% if current_user %}Your decks and public decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p>
             </div>
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('view') }}">Clear</a>
+            {% if selected_deck_id and selected_deck_is_owned %}
+            <a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
+            {% endif %}
         </div>
-        <div class="section-body">
-            {% if study_deck.tags or study_deck.detailed_description %}
-            <div class="mb-4">
-                {% if study_deck.detailed_description %}
-                <p class="mb-2 text-muted">{{ study_deck.detailed_description }}</p>
+        {% if current_user and decks %}
+        <form method="get" action="{{ url_for('view') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="deck_id">Deck</label>
+                <select class="form-select" id="deck_id" name="deck_id" required>
+                    <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
+                    {% for deck in decks %}
+                    <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="deck-actions">
+                <button class="btn-primary-surface" type="submit">Start Studying</button>
+                {% if selected_deck_id %}
+                <a class="btn-surface" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>
+                <a class="btn-surface" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>
                 {% endif %}
+            </div>
+        </form>
+        {% elif not current_user %}
+        <div class="section-stack">
+            <div class="small-muted">Guests can still study a public deck when they open it from the library.</div>
+            <div class="deck-actions">
+                <a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Decks</a>
+                <a class="btn-surface" href="{{ url_for('login', next=url_for('view')) }}">Log In</a>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-card">No public decks are available yet.{% if current_user %} <a href="{{ url_for('edit') }}">Create one</a>.{% else %} <a href="{{ url_for('login') }}">Log in to create one</a>.{% endif %}</div>
+        {% endif %}
+    </aside>
+    <section class="flash-stage" aria-live="polite">
+        {% if study_deck %}
+            <div class="panel-header">
+                <div>
+                    <span class="page-kicker">Live Session</span>
+                    <h2 class="h3 mb-1">{{ study_deck.description }}</h2>
+                    <p class="muted-copy mb-0">Card <span id="currentCardNumber">0</span> of <span id="totalCards">{{ study_deck.card_count }}</span></p>
+                </div>
+                <a class="btn-surface" href="{{ url_for('view') }}">Clear</a>
+            </div>
+            {% if study_deck.tags or study_deck.detailed_description %}
+            <div>
+                {% if study_deck.detailed_description %}<p class="muted-copy mb-2">{{ study_deck.detailed_description }}</p>{% endif %}
                 {% if study_deck.tags %}
-                <div class="deck-tags">
+                <div class="card-rail">
                     {% for tag in study_deck.tags.split(',') %}
                     {% if tag.strip() %}
-                    <a class="badge bg-secondary rounded-pill me-1 text-decoration-none" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
+                    <a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>
                     {% endif %}
                     {% endfor %}
                 </div>
                 {% endif %}
             </div>
             {% endif %}
-
             {% if study_deck.card_count == 0 %}
-            <div class="empty-state">This deck is empty. Add some cards to study!</div>
+            <div class="empty-card">This deck is empty. Add some cards to study.</div>
             {% else %}
-
-            <div class="progress-container">
-                <!-- Progress bar -->
-                <div class="progress">
-                    <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                        <span id="progressText">0%</span>
-                    </div>
-                </div>
+            <div class="progress-shell">
+                <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
             </div>
-
-            <div class="card-display">
-                <!-- Flip card -->
-                <div class="card-section">
-                    <p class="card-label">Question</p>
-                    <div class="card-content" id="cardQuestion">Loading...</div>
-                </div>
-
-                <div class="card-section answer-interactive" id="answerInteractiveCard" role="button" tabindex="0" aria-live="polite" onclick="toggleAnswer()" onkeydown="handleAnswerCardKeydown(event)">
-                    <p class="card-label">Answers</p>
-                    <div id="answerCardContent">
-                        <p class="text-muted">Click to reveal answers</p>
-                    </div>
-                </div>
+            <div class="small-muted"><span id="progressText">0%</span> complete in this pass</div>
+            <div class="flash-panels" id="studySection">
+                <article class="flash-pane">
+                    <span class="page-kicker">Prompt</span>
+                    <div id="cardQuestion" class="h4 mt-2 mb-0">Loading...</div>
+                </article>
+                <article class="flash-pane" id="answerInteractiveCard" role="button" tabindex="0" aria-live="polite" onclick="toggleAnswer()" onkeydown="handleAnswerCardKeydown(event)">
+                    <span class="page-kicker">Accepted Answers</span>
+                    <div id="answerCardContent" class="mt-3"><p class="muted-copy mb-0">Click to reveal answers</p></div>
+                </article>
             </div>
-
-            <div class="button-group navigation">
-                <!-- Keyboard-friendly controls -->
-                <button type="button" class="btn btn-primary" id="prevBtn" onclick="previousCard()" disabled>&larr; Previous</button>
-                <span class="card-counter" id="card_counter">Card 0/0</span>
-                <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextCard()">Next &rarr;</button>
+            <div class="toolbar-row">
+                <button type="button" class="btn-surface" id="prevBtn" onclick="previousCard()" disabled>Previous</button>
+                <span class="score-chip" id="card_counter">Card 0/0</span>
+                <button type="button" class="btn-primary-surface" onclick="toggleAnswer()">Reveal / Hide</button>
+                <button type="button" class="btn-surface" id="nextBtn" onclick="nextCard()">Next</button>
             </div>
-            <div class="shortcut-hint">Shortcuts: <strong>A</strong>/<strong>←</strong> previous, <strong>D</strong>/<strong>→</strong> next, <strong>Space</strong> reveal/hide answer</div>
-
+            <div class="small-muted">Shortcuts: Left or A for previous, Right or D for next, Space to reveal or hide.</div>
             {% endif %}
-        </div>
-    </div>
-    {% endif %}
-</div>
+        {% else %}
+        <div class="empty-card">Choose a deck to open the redesigned study session.</div>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}
 
+{% block scripts %}
+{% if study_deck %}
 <script>
-    const currentCards = {{ (study_deck.cards if study_deck else []) | tojson }};
-    let currentCardIndex = 0;
-    let isAnswerVisible = false;
+const currentCards = {{ (study_deck.cards if study_deck else []) | tojson }};
+let currentCardIndex = 0;
+let isAnswerVisible = false;
 
-    // Sync the screen to the active card.
-    function displayCurrentCard() {
-        // Sync the view to the active card.
-        const currentCard = currentCards[currentCardIndex];
-        document.getElementById('currentCardNumber').textContent = currentCardIndex + 1;
-        document.getElementById('card_counter').textContent = `Card ${currentCardIndex + 1} of ${currentCards.length}`;
+function displayCurrentCard() {
+    const currentCard = currentCards[currentCardIndex];
+    document.getElementById('currentCardNumber').textContent = currentCardIndex + 1;
+    document.getElementById('card_counter').textContent = `Card ${currentCardIndex + 1} of ${currentCards.length}`;
+    const progress = ((currentCardIndex + 1) / currentCards.length) * 100;
+    document.getElementById('progressBar').style.width = progress + '%';
+    document.getElementById('progressBar').setAttribute('aria-valuenow', progress);
+    document.getElementById('progressText').textContent = Math.round(progress) + '%';
+    document.getElementById('cardQuestion').textContent = currentCard.question;
+    hideAnswer();
+    document.getElementById('prevBtn').disabled = currentCardIndex === 0;
+    const nextBtn = document.getElementById('nextBtn');
+    const isLastCard = currentCardIndex === currentCards.length - 1;
+    nextBtn.textContent = isLastCard ? 'Restart Deck' : 'Next';
+    nextBtn.className = isLastCard ? 'btn-primary-surface' : 'btn-surface';
+}
 
-        const progress = ((currentCardIndex + 1) / currentCards.length) * 100;
-        document.getElementById('progressBar').style.width = progress + '%';
-        document.getElementById('progressBar').setAttribute('aria-valuenow', progress);
-        document.getElementById('progressText').textContent = Math.round(progress) + '%';
+function animateAnswerCard() {
+    const answerCard = document.getElementById('answerInteractiveCard');
+    if (!answerCard) {
+        return;
+    }
+    answerCard.classList.toggle('answer-visible', isAnswerVisible);
+}
 
-        document.getElementById('cardQuestion').textContent = currentCard.question;
+function revealAnswer() {
+    const currentCard = currentCards[currentCardIndex];
+    const answerContent = document.getElementById('answerCardContent');
+    const answersDiv = document.createElement('div');
+    answersDiv.className = 'master-answer-list';
+    currentCard.answers.forEach((answer) => {
+        const answerDiv = document.createElement('div');
+        answerDiv.className = 'master-answer-item';
+        answerDiv.textContent = answer;
+        answersDiv.appendChild(answerDiv);
+    });
+    answerContent.innerHTML = '';
+    answerContent.appendChild(answersDiv);
+    isAnswerVisible = true;
+    animateAnswerCard();
+}
+
+function hideAnswer() {
+    const answerContent = document.getElementById('answerCardContent');
+    answerContent.innerHTML = '<p class="muted-copy mb-0">Click to reveal answers</p>';
+    isAnswerVisible = false;
+    animateAnswerCard();
+}
+
+function toggleAnswer() {
+    if (isAnswerVisible) {
         hideAnswer();
-        document.getElementById('prevBtn').disabled = currentCardIndex === 0;
-
-        const nextBtn = document.getElementById('nextBtn');
-        const isLastCard = currentCardIndex === currentCards.length - 1;
-        nextBtn.textContent = isLastCard ? 'Restart Deck ↺' : 'Next →';
-        nextBtn.className = isLastCard ? 'btn btn-success' : 'btn btn-primary';
+    } else {
+        revealAnswer();
     }
+}
 
-    // Replay the answer-card pulse animation.
-    function animateAnswerCard() {
-        const answerCard = document.getElementById('answerInteractiveCard');
-        answerCard.classList.remove('answer-pulse');
-        void answerCard.offsetWidth;
-        answerCard.classList.add('answer-pulse');
+function handleAnswerCardKeydown(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleAnswer();
     }
+}
 
-    // Render all accepted answers.
-    function revealAnswer() {
-        // Render all accepted answers.
-        const currentCard = currentCards[currentCardIndex];
-        const answerContent = document.getElementById('answerCardContent');
-        const answersDiv = document.createElement('div');
-
-        // Render each accepted answer.
-        currentCard.answers.forEach((answer) => {
-            const answerDiv = document.createElement('div');
-            answerDiv.className = 'answer-item';
-            answerDiv.textContent = answer;
-            answersDiv.appendChild(answerDiv);
-        });
-
-        answerContent.innerHTML = '';
-        answerContent.appendChild(answersDiv);
-        animateAnswerCard();
-        isAnswerVisible = true;
+function previousCard() {
+    if (currentCardIndex > 0) {
+        currentCardIndex--;
+        displayCurrentCard();
     }
+}
 
-    // Restore the answer placeholder.
-    function hideAnswer() {
-        const answerContent = document.getElementById('answerCardContent');
-        answerContent.innerHTML = '<p class="text-muted">Click to reveal answers</p>';
-        animateAnswerCard();
-        isAnswerVisible = false;
+function nextCard() {
+    if (currentCardIndex < currentCards.length - 1) {
+        currentCardIndex++;
+    } else {
+        currentCardIndex = 0;
     }
+    displayCurrentCard();
+}
 
-    // Flip the answer panel between hidden and visible.
-    function toggleAnswer() {
-        if (isAnswerVisible) {
-            hideAnswer();
-        } else {
-            revealAnswer();
-        }
+document.addEventListener('keydown', function(event) {
+    if (!document.getElementById('studySection')) {
+        return;
     }
-
-    // Treat Enter and Space like a click.
-    function handleAnswerCardKeydown(event) {
-        if (event.key === 'Enter' || event.key === ' ') {
+    switch (event.key) {
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+            event.preventDefault();
+            if (!document.getElementById('prevBtn').disabled) {
+                previousCard();
+            }
+            break;
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+            event.preventDefault();
+            nextCard();
+            break;
+        case ' ':
             event.preventDefault();
             toggleAnswer();
-        }
+            break;
     }
+});
 
-    // Move to the previous card.
-    function previousCard() {
-        if (currentCardIndex > 0) {
-            currentCardIndex--;
-            displayCurrentCard();
-        }
-    }
-
-    // Advance to the next card or restart.
-    function nextCard() {
-        if (currentCardIndex < currentCards.length - 1) {
-            currentCardIndex++;
-        } else {
-            currentCardIndex = 0;
-        }
-        displayCurrentCard();
-    }
-
-    // Keyboard shortcuts stay active only in study mode.
-    document.addEventListener('keydown', function(event) {
-        if (!document.getElementById('studySection')) {
-            return;
-        }
-
-        switch (event.key) {
-            case 'ArrowLeft':
-            case 'a':
-            case 'A':
-                event.preventDefault();
-                if (!document.getElementById('prevBtn').disabled) {
-                    previousCard();
-                }
-                break;
-            case 'ArrowRight':
-            case 'd':
-            case 'D':
-                event.preventDefault();
-                nextCard();
-                break;
-            case ' ':
-                event.preventDefault();
-                toggleAnswer();
-                break;
-        }
-    });
-
-    if (currentCards.length > 0) {
-        displayCurrentCard();
-    }
+if (currentCards.length > 0) {
+    displayCurrentCard();
+}
 </script>
+{% endif %}
 {% endblock %}

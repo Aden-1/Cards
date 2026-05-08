@@ -204,6 +204,22 @@ def account():
     return render_template('account.html', user=updated_user, success='Account updated.')
 
 
+def update_theme_route():
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'Login required'}), 401
+
+    data = _request_data()
+    theme = (data.get('theme') or '').strip().lower()
+    if theme not in ('light', 'dark'):
+        return jsonify({'error': 'Invalid theme'}), 400
+
+    user.theme_preference = theme
+    from models import db
+    db.session.commit()
+    return jsonify({'success': True, 'theme': user.theme_preference})
+
+
 @admin_required
 def admin_users():
     from app import _delete_content_fts_index_row
@@ -287,7 +303,14 @@ def _owned_quiz(quiz_id, user_id):
 # Page routes.
 # Render the home page.
 def index():
-    return render_template('index.html')
+    from app import get_homepage_public_data
+
+    homepage_data = get_homepage_public_data(featured_limit=3, tag_limit=5)
+    return render_template(
+        'index.html',
+        featured_decks=homepage_data['featured_decks'],
+        featured_tags=homepage_data['featured_tags'],
+    )
 
 
 # Deck editor.
@@ -366,8 +389,9 @@ def view():
 # Matching game.
 # Render the matching game page.
 def match():
-    user_id = _current_user_id()
-    from app import get_accessible_decks, get_deck_study_data
+    user = _current_user()
+    user_id = user.user_id if user else None
+    from app import get_accessible_decks, get_match_game_data, get_match_strategy_catalog, normalize_match_strategy
 
     decks = get_accessible_decks(user_id)
     deck_data = [{
@@ -387,7 +411,16 @@ def match():
     accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
     if selected_deck_id not in accessible_deck_ids:
         selected_deck_id = None
-    match_deck = get_deck_study_data(selected_deck_id, shuffle=True) if selected_deck_id else None
+    match_strategy_catalog = get_match_strategy_catalog(include_account_only=bool(user))
+    selected_strategy = normalize_match_strategy(
+        request.args.get('strategy') or (user.match_strategy_preference if user else None),
+        include_account_only=bool(user),
+    )
+    if user and selected_strategy != (user.match_strategy_preference or 'standard_shuffle'):
+        from models import db
+        user.match_strategy_preference = selected_strategy
+        db.session.commit()
+    match_deck = get_match_game_data(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
 
     return render_template(
@@ -399,6 +432,8 @@ def match():
         selected_deck_is_owned=selected_deck_is_owned,
         selected_question_id=selected_question_id,
         error_message=error_message,
+        selected_strategy=selected_strategy,
+        match_strategy_catalog=match_strategy_catalog,
     )
 
 
@@ -443,9 +478,10 @@ def reorder():
 # Mastery mode page (spaced repetition-style practice).
 @login_required
 def master():
-    from app import get_accessible_decks, get_mastery_snapshot
+    from app import get_accessible_decks, get_mastery_snapshot, get_mastery_strategy_catalog, normalize_mastery_strategy
 
-    user_id = _current_user_id()
+    user = _current_user()
+    user_id = user.user_id if user else None
     decks = get_accessible_decks(user_id)
     deck_data = [{
         'deck_id': deck.deck_id,
@@ -463,12 +499,24 @@ def master():
     if selected_deck_id not in accessible_deck_ids:
         selected_deck_id = None
 
-    mastery_snapshot = get_mastery_snapshot(user_id, selected_deck_id) if selected_deck_id else None
+    selected_deck_meta = next((deck for deck in deck_data if deck['deck_id'] == selected_deck_id), None)
+    requested_strategy = request.args.get('strategy')
+    selected_strategy = normalize_mastery_strategy(
+        requested_strategy or (user.mastery_strategy_preference if user else None),
+        deck_sortable=bool(selected_deck_meta and selected_deck_meta['sortable'])
+    )
+
+    if user and selected_strategy != (user.mastery_strategy_preference or 'spaced'):
+        user.mastery_strategy_preference = selected_strategy
+        from models import db
+        db.session.commit()
+
+    mastery_snapshot = get_mastery_snapshot(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     round_restarted = False
     selected_master_card = mastery_snapshot['current_card'] if mastery_snapshot else None
 
     if mastery_snapshot:
-        remaining_card_ids = [card['card_id'] for card in mastery_snapshot['cards'] if card['status'] != 'mastered']
+        remaining_card_ids = [card['card_id'] for card in mastery_snapshot['queue']]
         seen_map = session.get('master_seen_cards', {})
         deck_key = str(selected_deck_id)
         seen_in_round = [int(card_id) for card_id in seen_map.get(deck_key, [])]
@@ -495,16 +543,19 @@ def master():
         mastery_snapshot=mastery_snapshot,
         selected_master_card=selected_master_card,
         round_restarted=round_restarted,
+        selected_strategy=selected_strategy,
+        mastery_strategy_catalog=get_mastery_strategy_catalog(),
     )
 
 
 @login_required
 def master_rate_route():
-    from app import record_mastery_rating
+    from app import normalize_mastery_strategy, record_mastery_rating
     from models import Deck
 
     data = _request_data()
-    user_id = _current_user_id()
+    user = _current_user()
+    user_id = user.user_id if user else None
     deck_id = _int_value(data.get('deck_id'))
     card_id = _int_value(data.get('card_id'))
     rating = (data.get('rating') or '').strip()
@@ -516,9 +567,11 @@ def master_rate_route():
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
 
+    strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+
     result = record_mastery_rating(user_id=user_id, deck_id=deck_id, card_id=card_id, rating=rating)
     if not result.get('success'):
-        return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice', notice=result.get('error', 'Could not save rating.'), level='error')
+        return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice', notice=result.get('error', 'Could not save rating.'), level='error')
 
     seen_map = session.get('master_seen_cards', {})
     deck_key = str(deck_id)
@@ -528,16 +581,17 @@ def master_rate_route():
     seen_map[deck_key] = deck_seen
     session['master_seen_cards'] = seen_map
 
-    return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice')
+    return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice')
 
 
 @login_required
 def master_reset_route():
-    from app import reset_mastery_progress
+    from app import normalize_mastery_strategy, reset_mastery_progress
     from models import Deck
 
     data = _request_data()
-    user_id = _current_user_id()
+    user = _current_user()
+    user_id = user.user_id if user else None
     deck_id = _int_value(data.get('deck_id'))
 
     if not deck_id:
@@ -547,11 +601,13 @@ def master_reset_route():
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return _redirect_with_fragment('master', notice='Deck not found.', level='error')
 
+    strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+
     reset_mastery_progress(user_id=user_id, deck_id=deck_id)
     seen_map = session.get('master_seen_cards', {})
     seen_map.pop(str(deck_id), None)
     session['master_seen_cards'] = seen_map
-    return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice', notice='Mastery progress reset for this deck.', level='success')
+    return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice', notice='Mastery progress reset for this deck.', level='success')
 
 
 # Deck routes.
@@ -846,11 +902,13 @@ def get_card_route():
 # Match only checks the pair, it does not mutate the answer row.
 # Validate one matching-game answer.
 def match_answer_route():
+    from app import record_match_attempt
     from models import CardAnswer
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))
     selected_question_id = _int_value(data.get('selected_question_id'))
+    user_id = _current_user_id()
 
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
@@ -863,11 +921,13 @@ def match_answer_route():
         return jsonify({'error': 'Select a question tile first'}), 400
 
     if answer.card_id != selected_question_id:
+        record_match_attempt(user_id, answer.answer_id, is_correct=False)
         return jsonify({'error': 'That answer does not match the selected question'}), 400
 
     # Last answer means the question tile should disappear too.
     remaining_answers = CardAnswer.query.filter_by(card_id=selected_question_id).count() - 1
     card_deleted = remaining_answers == 0
+    record_match_attempt(user_id, answer.answer_id, is_correct=True)
 
     return jsonify({
         'success': True,
@@ -876,6 +936,20 @@ def match_answer_route():
         'card_id': selected_question_id,
         'remaining_answers': remaining_answers
     })
+
+
+def match_attempt_route():
+    from app import record_match_attempt
+
+    data = _request_data()
+    answer_id = _int_value(data.get('answer_id'))
+    is_correct = str(data.get('is_correct', '')).lower() in ('1', 'true', 'yes', 'on')
+
+    if not answer_id:
+        return jsonify({'error': 'Answer ID is required'}), 400
+
+    record_match_attempt(_current_user_id(), answer_id, is_correct=is_correct)
+    return jsonify({'success': True})
 
 
 # Delete one answer in edit or match mode.
@@ -1385,8 +1459,10 @@ def register_routes(app):
 
     @app.context_processor
     def inject_security_context():
+        user = _current_user()
         return {
-            'current_user': _current_user(),
+            'current_user': user,
+            'active_theme': (user.theme_preference if user else None),
             'csrf_token': _csrf_token,
         }
 
@@ -1396,6 +1472,7 @@ def register_routes(app):
     app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=account, methods=['GET', 'POST'])
+    app.add_url_rule('/theme', endpoint='update_theme', view_func=update_theme_route, methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
@@ -1432,6 +1509,7 @@ def register_routes(app):
     app.add_url_rule('/add_card', endpoint='add_card', view_func=add_card_route, methods=['POST'])
     app.add_url_rule('/delete_card', endpoint='delete_card', view_func=delete_card_route, methods=['POST'])
     app.add_url_rule('/match_answer', endpoint='match_answer', view_func=match_answer_route, methods=['POST'])
+    app.add_url_rule('/match_attempt', endpoint='match_attempt', view_func=match_attempt_route, methods=['POST'])
     app.add_url_rule('/delete_answer', endpoint='delete_answer', view_func=delete_answer_route, methods=['POST'])
     app.add_url_rule('/list_cards', endpoint='list_cards', view_func=list_cards_route, methods=['POST'])
     app.add_url_rule('/get_card', endpoint='get_card', view_func=get_card_route, methods=['POST'])

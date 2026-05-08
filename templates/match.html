@@ -1,274 +1,788 @@
 {% extends "base.html" %}
 
-{% block title %}Matching Game - Cards App{% endblock %}
+{% block title %}Cards | Match{% endblock %}
 
 {% block content %}
-<div class="match-container">
-    <!-- Deck picker -->
-    <div class="section">
-        <div class="section-header">
-            <h5>Select Deck</h5>
-            {% if selected_deck_id and selected_deck_is_owned %}
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
-            {% endif %}
-        </div>
-        <div class="section-body">
-            {% if decks %}
-            <form method="get" action="{{ url_for('match') }}" class="deck-selector-form">
-                <div class="form-group">
-                    <label for="deck_id" class="mb-1">{{ 'Available Decks' if not current_user else 'Your Decks And Public Decks' }}</label>
-                    <select class="form-select" id="deck_id" name="deck_id" required>
-                        <option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>
-                        {% for deck in decks %}
-                        <option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>
-                            {{ deck.description }} ({{ deck.card_count }} cards)
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-buttons">
-                    <button type="submit" class="btn btn-success">Start Match</button>
-                    {% if selected_deck_id %}
-                    <a class="btn btn-secondary" href="{{ url_for('view', deck_id=selected_deck_id) }}">Study Cards</a>
-                    <a class="btn btn-secondary" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>
-                    {% endif %}
-                </div>
+<section class="page-intro">
+    <span class="page-kicker">Matching Game</span>
+    <h1 class="page-title">Match each question to its accepted answers.</h1>
+    <p class="page-description">Use the redesigned board to reinforce recall through active pairing.</p>
+</section>
+<section class="selection-grid fade-in">
+    <aside class="selection-panel">
+        <div class="panel-header"><div><h2 class="h4 mb-1">Choose Deck</h2><p class="muted-copy mb-0">{% if current_user %}Your decks and public decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p></div>{% if selected_deck_id and selected_deck_is_owned %}<a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>{% endif %}</div>
+        {% if current_user and decks %}
+        <form method="get" action="{{ url_for('match') }}" class="section-stack">
+            <div><label class="form-label" for="deck_id">Deck</label><select class="form-select" id="deck_id" name="deck_id" required><option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>{% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}</select></div>
+            <div><label class="form-label" for="matchStrategy">Strategy <span id="matchStrategyHelp" class="status-chip info" title="" aria-label="">?</span></label><select class="form-select" id="matchStrategy" name="strategy">{% for strategy in match_strategy_catalog %}<option value="{{ strategy.value }}" data-description="{{ strategy.description }}" {% if selected_strategy == strategy.value %}selected{% endif %}>{{ strategy.label }}</option>{% endfor %}</select></div>
+            <div class="deck-actions"><button class="btn-primary-surface" type="submit">Start Match</button>{% if selected_deck_id %}<a class="btn-surface" href="{{ url_for('view', deck_id=selected_deck_id) }}">Study Cards</a><a class="btn-surface" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>{% endif %}</div>
+        </form>
+        {% elif not current_user %}
+        <div class="section-stack">
+            <div class="small-muted">Guests can still play with a public deck when they open it from the library.</div>
+            {% if selected_deck_id %}
+            <form method="get" action="{{ url_for('match') }}" class="section-stack">
+                <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">
+                <div><label class="form-label" for="matchStrategyGuest">Strategy <span id="matchStrategyHelp" class="status-chip info" title="" aria-label="">?</span></label><select class="form-select" id="matchStrategyGuest" name="strategy">{% for strategy in match_strategy_catalog %}<option value="{{ strategy.value }}" data-description="{{ strategy.description }}" {% if selected_strategy == strategy.value %}selected{% endif %}>{{ strategy.label }}</option>{% endfor %}</select></div>
             </form>
-            {% else %}
-            <div class="empty-state">
-                <p>No public decks are available yet.</p>
-                {% if current_user %}
-                <a class="btn btn-primary btn-sm" href="{{ url_for('edit') }}">Create a deck</a>
-                {% else %}
-                <a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Log in to create a deck</a>
-                {% endif %}
-            </div>
             {% endif %}
+            <div class="deck-actions"><a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Decks</a><a class="btn-surface" href="{{ url_for('login', next=url_for('match')) }}">Log In</a></div>
         </div>
-    </div>
-
-    <!-- Game board -->
-    {% if match_deck %}
-    <div class="section" id="matchGameSection">
-        <div class="section-header success">
-            <div>
-                <h5 class="mb-0">{{ match_deck.description }}</h5>
-                <small class="opacity-75" style="font-size: 0.85rem;">{{ match_deck.card_count }} question{{ '' if match_deck.card_count == 1 else 's' }} • {{ match_deck.answer_count }} answer tile{{ '' if match_deck.answer_count == 1 else 's' }}</small>
-            </div>
-            <a class="btn-shuffle" href="{{ url_for('match', deck_id=match_deck.deck_id) }}">↻ Shuffle</a>
-        </div>
-        <div class="section-body">
-            {% if error_message %}
-            <div class="alert alert-danger mb-3">{{ error_message }}</div>
-            {% endif %}
-
-            {% if match_deck.card_count == 0 %}
-            <div class="empty-state">This deck is empty. Add some cards to play!</div>
-            {% else %}
-
-            <div class="instructions">
-                Select a question tile, then click an answer. Correct matches disappear!
-            </div>
-
-            <div class="game-stats">
-                <div class="stat">
-                    <div class="stat-label">Questions Left</div>
-                    <div class="stat-value" id="questionsRemaining">{{ match_deck.card_count }}</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">Answers Left</div>
-                    <div class="stat-value" id="answersRemaining">{{ match_deck.answer_count }}</div>
-                </div>
-            </div>
-
-            <div id="completionMessage" class="completion-container" style="display: none;">
-                <div class="completion-message">
-                    <h4>Perfect!</h4>
-                    <p>You've mastered all the cards. Great job!</p>
-                </div>
-            </div>
-
-            <div id="gameGridContainer" {% if match_deck.card_count > 0 %}style="display: block;"{% else %}style="display: none;"{% endif %}>
-                <div class="match-grid" id="matchGrid">
-                    <!-- Questions first -->
-                    {% for card in match_deck.cards %}
-                    <div class="match-tile question-tile" data-type="question" data-question-id="{{ card.card_id }}" data-answer-count="{{ card.answer_objects|length }}">
-                        <div class="tile-content">
-                            <div class="tile-label">Question</div>
-                            <div class="tile-text">{{ card.question }}</div>
+        {% else %}
+        <div class="empty-card">No public decks are available yet.</div>
+        {% endif %}
+    </aside>
+    <section class="flash-stage" id="matchGameSection">
+        {% if match_deck %}
+        <div class="panel-header"><div><span class="page-kicker">Live Match</span><h2 class="h3 mb-1">{{ match_deck.description }}</h2><p class="muted-copy mb-0">{{ match_deck.card_count }} questions and {{ match_deck.answer_count }} answer tiles</p></div><button class="btn-surface" type="button" id="shuffleMatchBtn">Shuffle</button></div>
+        {% if error_message %}<div class="alert alert-danger mb-0">{{ error_message }}</div>{% endif %}
+        {% if match_deck.card_count == 0 %}
+        <div class="empty-card">This deck is empty. Add some cards to play.</div>
+        {% else %}
+        <div class="small-muted" id="matchInstruction">Select a question tile, then click an answer. Correct matches disappear.</div>
+        <div class="game-stats"><div class="stat"><div class="stat-label">Questions Left</div><div class="stat-value" id="questionsRemaining">{{ match_deck.card_count }}</div></div><div class="stat"><div class="stat-label">Answers Left</div><div class="stat-value" id="answersRemaining">{{ match_deck.answer_count }}</div></div><div class="stat"><div class="stat-label">Goal</div><div class="stat-value">Clear All</div></div></div>
+        <div id="completionMessage" class="completion-container" style="display:none;"><div class="completion-message"><h3>Perfect!</h3><p>You've mastered all the cards. Great job.</p><a class="btn-primary-surface" href="{{ url_for('match', deck_id=match_deck.deck_id, strategy=selected_strategy) }}">Restart Game</a></div></div>
+        <div id="gameGridContainer">
+            <div class="match-board" id="matchGrid">
+                <section class="match-section question-section">
+                    <div class="match-column-header">
+                        <div class="match-column-copy">
+                            <span class="status-chip info">Questions</span>
+                            <span class="small-muted" id="questionHint">Select one first</span>
                         </div>
-                        <div class="answer-count-badge" id="badge-{{ card.card_id }}">{{ card.answer_objects|length }}</div>
-                    </div>
-                    {% endfor %}
-
-                    <!-- Answers -->
-                    {% for answer in match_deck.answers %}
-                        <div class="match-tile answer-tile" data-type="answer" data-answer-id="{{ answer.answer_id }}" data-question-id="{{ answer.card_id }}">
-                            <div class="tile-content">
-                                <div class="tile-label">Answer</div>
-                                <div class="tile-text">{{ answer.answer }}</div>
+                        <div class="match-timer-shell" id="matchTimerShell" hidden>
+                            <span class="small-muted">Timer:</span>
+                            <div class="match-timer-circle" id="matchTimerCircle">
+                                <svg class="match-timer-ring" viewBox="0 0 40 40" aria-hidden="true">
+                                    <circle class="match-timer-ring-track" cx="20" cy="20" r="16"></circle>
+                                    <circle class="match-timer-ring-progress" id="matchTimerRingProgress" cx="20" cy="20" r="16"></circle>
+                                </svg>
+                                <span class="match-timer-value" id="matchTimerValue">8</span>
                             </div>
                         </div>
-                    {% endfor %}
-                </div>
+                    </div>
+                    <div class="match-stack" id="questionStack"></div>
+                </section>
+                <section class="match-section answer-section">
+                    <div class="match-column-header">
+                        <span class="status-chip public">Answers</span>
+                        <span class="small-muted" id="answerHint">Then match the answer</span>
+                    </div>
+                    <div class="match-stack" id="answerStack"></div>
+                </section>
             </div>
-
-            {% endif %}
         </div>
-    </div>
-    {% endif %}
-</div>
+        {% endif %}
+        {% else %}
+        <div class="empty-card">Choose a deck to open the matching board.</div>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}
 
+{% block scripts %}
 <script>
-    // Wire the game after the page is ready.
-    document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
+    const MAX_BATCH_SIZE = 10;
+    const PROGRESSIVE_START_SIZE = 4;
+    const TIMED_RECOVERY_SECONDS = 8;
+    const TIMED_RECOVERY_CHOICE_COUNT = 6;
+    const matchDeckData = {{ match_deck | tojson if match_deck else 'null' }};
+    const selectedStrategy = {{ selected_strategy | tojson }};
     let selectedQuestionId = null;
-
+    let selectedAnswerId = null;
+    let resizeRaf = null;
+    let progressiveBatchSize = PROGRESSIVE_START_SIZE;
+    let hasLoadedFirstBatch = false;
+    let timedRecoveryMode = false;
+    let timedRecoveryStarted = false;
+    let timedRecoveryIndex = 0;
+    let timedRecoveryAnswerIds = [];
+    let timedRecoveryCountdown = TIMED_RECOVERY_SECONDS;
+    let timedRecoveryDeadline = null;
+    let timedRecoveryIntervalId = null;
+    const questionMap = new Map();
+    const answerMap = new Map();
+    const questionOrderIndex = new Map();
+    const allQuestionIds = [];
+    const pendingQuestionIds = [];
+    const activeQuestionIds = [];
+    let activeAnswerIds = [];
+    const matchedAnswerIds = new Set();
+    const completedQuestionIds = new Set();
+    const retryQuestionIds = new Set();
+    const timedRecoveryQuestionSet = new Set();
+    const timedRecoveryQuestionIds = [];
+    const sessionWeakness = new Map();
     {% if match_deck %}
-    // Return to the board after load.
     const matchGameSection = document.getElementById('matchGameSection');
-    if (matchGameSection) {
-        matchGameSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    if (matchGameSection) { matchGameSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     {% endif %}
 
-    // Keep the counters in sync with active tiles.
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function normalizeScore(value) {
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    function activeQuestionPayloads() {
+        return activeQuestionIds.map((questionId) => questionMap.get(questionId)).filter(Boolean);
+    }
+
+    function unresolvedQuestionIds() {
+        return allQuestionIds.filter((questionId) => !completedQuestionIds.has(questionId));
+    }
+
+    function unresolvedAnswerCount() {
+        return Array.from(answerMap.values()).filter((answer) => !matchedAnswerIds.has(answer.answer_id)).length;
+    }
+
+    function currentBatchSizeTarget() {
+        return selectedStrategy === 'progressive_build' ? progressiveBatchSize : MAX_BATCH_SIZE;
+    }
+
+    function shuffleArray(items) {
+        const copy = [...items];
+        for (let index = copy.length - 1; index > 0; index--) {
+            const swapIndex = Math.floor(Math.random() * (index + 1));
+            [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
+        }
+        return copy;
+    }
+
+    function updateStrategyHelp() {
+        const select = document.getElementById('matchStrategy') || document.getElementById('matchStrategyGuest');
+        const help = document.getElementById('matchStrategyHelp');
+        if (!select || !help) {
+            return;
+        }
+        const description = select.options[select.selectedIndex]?.dataset.description || '';
+        help.title = description;
+        help.setAttribute('aria-label', description);
+    }
+
+    function submitStrategySelection() {
+        const select = document.getElementById('matchStrategy') || document.getElementById('matchStrategyGuest');
+        if (!select || !matchDeckData?.deck_id) {
+            return;
+        }
+        select.form?.requestSubmit();
+    }
+
+    function applyStrategyHints() {
+        const questionHint = document.getElementById('questionHint');
+        const answerHint = document.getElementById('answerHint');
+        const instruction = document.getElementById('matchInstruction');
+        if (!questionHint || !answerHint) {
+            return;
+        }
+
+        if (timedRecoveryMode) {
+            questionHint.textContent = 'One question at a time';
+            answerHint.textContent = 'Beat the timer';
+            if (instruction) {
+                instruction.textContent = 'Timed recovery is active. Pick the correct answer before the timer runs out.';
+            }
+            return;
+        }
+
+        if (selectedStrategy === 'reverse_pressure') {
+            questionHint.textContent = 'One question at a time';
+            answerHint.textContent = 'Choose the matching answer';
+            if (instruction) {
+                instruction.textContent = 'Read the current question, then choose the correct answer from the tiles below.';
+            }
+            return;
+        }
+
+        questionHint.textContent = 'Select one first';
+        answerHint.textContent = 'Then match the answer';
+        if (instruction) {
+            instruction.textContent = 'Select a question tile, then click an answer. Correct matches disappear.';
+        }
+    }
+
+    function getFocusedQuestionId() {
+        if (timedRecoveryMode) {
+            return timedRecoveryQuestionIds[timedRecoveryIndex] ?? null;
+        }
+        if (selectedStrategy === 'reverse_pressure') {
+            return activeQuestionIds[0] ?? null;
+        }
+        return null;
+    }
+
+    function activeQuestionAnswerIds() {
+        return activeQuestionPayloads().flatMap((card) => card.answer_objects.map((answer) => answer.answer_id).filter((answerId) => !matchedAnswerIds.has(answerId)));
+    }
+
+    function rebuildActiveAnswerOrder(shuffle = false) {
+        const nextIds = activeQuestionAnswerIds();
+        if (shuffle || !activeAnswerIds.length) {
+            activeAnswerIds = shuffleArray(nextIds);
+            return;
+        }
+        const existing = activeAnswerIds.filter((answerId) => nextIds.includes(answerId));
+        const missing = nextIds.filter((answerId) => !existing.includes(answerId));
+        activeAnswerIds = existing.concat(shuffleArray(missing));
+    }
+
+    function getQuestionWeight(questionId) {
+        const question = questionMap.get(questionId);
+        return normalizeScore(question?.match_weight) + normalizeScore(sessionWeakness.get(questionId));
+    }
+
+    function sortPendingQuestions() {
+        if (selectedStrategy !== 'weakest_first' && selectedStrategy !== 'mastery_mix') {
+            return;
+        }
+        pendingQuestionIds.sort((leftId, rightId) => {
+            const weightDelta = getQuestionWeight(rightId) - getQuestionWeight(leftId);
+            if (weightDelta !== 0) {
+                return weightDelta;
+            }
+            return normalizeScore(questionOrderIndex.get(leftId)) - normalizeScore(questionOrderIndex.get(rightId));
+        });
+    }
+
+    function restoreQuestionSet(questionIds, options = {}) {
+        const addToFront = options.addToFront !== false;
+        const uniqueQuestionIds = Array.from(new Set(questionIds)).filter((questionId) => questionMap.has(questionId));
+        uniqueQuestionIds.forEach((questionId) => {
+            completedQuestionIds.delete(questionId);
+            const question = questionMap.get(questionId);
+            question.answer_objects.forEach((answer) => matchedAnswerIds.delete(answer.answer_id));
+        });
+
+        const insertionOrder = addToFront ? [...uniqueQuestionIds].reverse() : uniqueQuestionIds;
+        insertionOrder.forEach((questionId) => {
+            if (pendingQuestionIds.includes(questionId) || activeQuestionIds.includes(questionId)) {
+                return;
+            }
+            if (addToFront) {
+                pendingQuestionIds.unshift(questionId);
+            } else {
+                pendingQuestionIds.push(questionId);
+            }
+        });
+        sortPendingQuestions();
+    }
+
+    function refillActiveBatch() {
+        if (selectedStrategy === 'progressive_build' && hasLoadedFirstBatch && activeQuestionIds.length === 0 && pendingQuestionIds.length > 0 && unresolvedQuestionIds().length > 0) {
+            progressiveBatchSize = Math.min(MAX_BATCH_SIZE, progressiveBatchSize + (progressiveBatchSize < MAX_BATCH_SIZE ? 2 : 0));
+        }
+
+        sortPendingQuestions();
+        while (activeQuestionIds.length < currentBatchSizeTarget() && pendingQuestionIds.length > 0) {
+            const nextQuestionId = pendingQuestionIds.shift();
+            if (!completedQuestionIds.has(nextQuestionId) && !activeQuestionIds.includes(nextQuestionId)) {
+                activeQuestionIds.push(nextQuestionId);
+            }
+        }
+        if (activeQuestionIds.length > 0) {
+            hasLoadedFirstBatch = true;
+        }
+
+        if (activeQuestionIds.length === 0 && pendingQuestionIds.length === 0) {
+            if ((selectedStrategy === 'retry_misses' || selectedStrategy === 'mastery_mix') && retryQuestionIds.size > 0) {
+                restoreQuestionSet(shuffleArray(Array.from(retryQuestionIds)));
+                retryQuestionIds.clear();
+                refillActiveBatch();
+            }
+        }
+
+        rebuildActiveAnswerOrder(activeAnswerIds.length === 0);
+    }
+
+    function sizeMatchStacks() {
+        document.querySelectorAll('.match-stack').forEach((stack) => {
+            const tiles = Array.from(stack.querySelectorAll('.match-tile'));
+            if (!tiles.length) {
+                stack.style.removeProperty('grid-template-columns');
+                return;
+            }
+            const stackWidth = stack.clientWidth;
+            const gap = parseFloat(window.getComputedStyle(stack).gap || '0') || 0;
+            const baseFontSize = window.innerWidth <= 640 ? 0.94 : 1.03;
+            const minFontSize = window.innerWidth <= 640 ? 0.82 : 0.9;
+            const minTileSize = window.innerWidth <= 640 ? 88 : (window.innerWidth <= 960 ? 96 : 108);
+            const maxTileSize = window.innerWidth <= 640 ? 132 : 180;
+            const minimumColumns = tiles.length >= 5 ? 5 : tiles.length;
+            const maxColumns = Math.max(minimumColumns, Math.min(tiles.length, Math.floor((stackWidth + gap) / (minTileSize + gap))));
+
+            let chosenColumns = minimumColumns;
+            let chosenFontSize = minFontSize;
+            let foundLayout = false;
+
+            for (let columns = maxColumns; columns >= minimumColumns; columns--) {
+                const computedTileSize = Math.min(maxTileSize, (stackWidth - gap * (columns - 1)) / columns);
+                stack.style.gridTemplateColumns = `repeat(${columns}, minmax(0, ${computedTileSize}px))`;
+
+                for (let fontSize = baseFontSize; fontSize >= minFontSize; fontSize -= 0.04) {
+                    tiles.forEach((tile) => {
+                        tile.classList.remove('allow-text-scroll');
+                        tile.style.setProperty('--match-tile-font-size', `${fontSize.toFixed(2)}rem`);
+                    });
+
+                    let fits = true;
+                    for (const tile of tiles) {
+                        const content = tile.querySelector('.tile-content');
+                        const text = tile.querySelector('.tile-text');
+                        if (!content || !text) {
+                            continue;
+                        }
+                        if (content.scrollHeight > tile.clientHeight + 1 || text.scrollHeight > text.clientHeight + 1) {
+                            fits = false;
+                            break;
+                        }
+                    }
+
+                    if (fits) {
+                        chosenColumns = columns;
+                        chosenFontSize = fontSize;
+                        foundLayout = true;
+                        break;
+                    }
+                }
+
+                if (foundLayout) {
+                    break;
+                }
+            }
+
+            if (!foundLayout) {
+                const fallbackTileSize = Math.min(maxTileSize, (stackWidth - gap * (chosenColumns - 1)) / Math.max(chosenColumns, 1));
+                stack.style.gridTemplateColumns = `repeat(${chosenColumns}, minmax(0, ${fallbackTileSize}px))`;
+            }
+
+            tiles.forEach((tile) => {
+                tile.style.setProperty('--match-tile-font-size', `${chosenFontSize.toFixed(2)}rem`);
+                tile.classList.toggle('allow-text-scroll', !foundLayout);
+            });
+        });
+    }
+
+    function scheduleMatchStackSizing() {
+        if (resizeRaf !== null) {
+            cancelAnimationFrame(resizeRaf);
+        }
+        resizeRaf = requestAnimationFrame(() => {
+            resizeRaf = null;
+            sizeMatchStacks();
+        });
+    }
+
     function updateStats() {
-        // Count only active tiles.
-        const questionTiles = document.querySelectorAll('.match-tile.question-tile:not(.disabled)');
-        const answerTiles = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)');
-        document.getElementById('questionsRemaining').textContent = questionTiles.length;
-        document.getElementById('answersRemaining').textContent = answerTiles.length;
+        const qEl = document.getElementById('questionsRemaining');
+        const aEl = document.getElementById('answersRemaining');
+        if (timedRecoveryMode) {
+            if (qEl) { qEl.textContent = timedRecoveryQuestionIds.length; }
+            if (aEl) { aEl.textContent = timedRecoveryAnswerIds.length; }
+        } else if (selectedStrategy === 'timed_recovery' && timedRecoveryStarted && timedRecoveryQuestionIds.length === 0) {
+            if (qEl) { qEl.textContent = 0; }
+            if (aEl) { aEl.textContent = 0; }
+        } else {
+            if (qEl) { qEl.textContent = unresolvedQuestionIds().length; }
+            if (aEl) { aEl.textContent = unresolvedAnswerCount(); }
+        }
+        scheduleMatchStackSizing();
     }
 
-    // Show a short success or error toast.
     function showFeedback(message, isSuccess) {
-        const feedback = document.createElement('div');
-        feedback.className = `feedback-message ${isSuccess ? 'success' : 'error'}`;
-        feedback.textContent = message;
-        document.body.appendChild(feedback);
-        // Let the toast linger briefly before fading out.
-        setTimeout(() => {
-            feedback.style.opacity = '0';
-            feedback.style.transition = 'opacity var(--transition-slow)';
-            setTimeout(() => feedback.remove(), 300);
-        }, 2000);
+        if (window.cardsApp) { window.cardsApp.showToast(message, isSuccess ? 'success' : 'error'); }
     }
 
-    // Handle question and answer tile clicks.
+    function recordMatchAttempt(answerId, isCorrect) {
+        if (!window.cardsCsrfToken) {
+            return;
+        }
+        fetch('{{ url_for("match_attempt") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
+            body: JSON.stringify({ answer_id: answerId, is_correct: isCorrect })
+        }).catch(() => {});
+    }
+
+    function updateTimedRecoveryTimerDisplay() {
+        const timerShell = document.getElementById('matchTimerShell');
+        const timerProgress = document.getElementById('matchTimerRingProgress');
+        const timerValue = document.getElementById('matchTimerValue');
+        if (!timerShell || !timerValue) {
+            return;
+        }
+        if (!timedRecoveryMode || !getFocusedQuestionId()) {
+            timerShell.hidden = true;
+            return;
+        }
+        timerShell.hidden = false;
+        timerValue.textContent = String(Math.max(0, Math.ceil(timedRecoveryCountdown)));
+        if (timerProgress) {
+            const progress = Math.max(0, Math.min(1, timedRecoveryCountdown / TIMED_RECOVERY_SECONDS));
+            const radius = 16;
+            const circumference = 2 * Math.PI * radius;
+            timerProgress.style.strokeDasharray = `${circumference}`;
+            timerProgress.style.strokeDashoffset = `${circumference * (1 - progress)}`;
+        }
+    }
+
+    function stopTimedRecoveryTimer() {
+        if (timedRecoveryIntervalId !== null) {
+            clearInterval(timedRecoveryIntervalId);
+            timedRecoveryIntervalId = null;
+        }
+        timedRecoveryDeadline = null;
+    }
+
+    function buildTimedRecoveryAnswerIds(questionId) {
+        const question = questionMap.get(questionId);
+        if (!question) {
+            return [];
+        }
+        const correctAnswers = question.answer_objects || [];
+        const correctAnswerIds = correctAnswers.length
+            ? [shuffleArray(correctAnswers)[0].answer_id]
+            : [];
+        const distractorPool = shuffleArray(
+            Array.from(answerMap.values())
+                .filter((answer) => answer.card_id !== questionId)
+                .map((answer) => answer.answer_id)
+        );
+        const desiredDistractorCount = Math.max(2, TIMED_RECOVERY_CHOICE_COUNT - correctAnswerIds.length);
+        return shuffleArray([...correctAnswerIds, ...distractorPool.slice(0, desiredDistractorCount)]);
+    }
+
+    function setupTimedRecoveryRound() {
+        const questionId = getFocusedQuestionId();
+        if (!questionId) {
+            return;
+        }
+        timedRecoveryAnswerIds = buildTimedRecoveryAnswerIds(questionId);
+        timedRecoveryCountdown = TIMED_RECOVERY_SECONDS;
+        stopTimedRecoveryTimer();
+        timedRecoveryDeadline = Date.now() + (TIMED_RECOVERY_SECONDS * 1000);
+        updateTimedRecoveryTimerDisplay();
+        timedRecoveryIntervalId = setInterval(() => {
+            timedRecoveryCountdown = Math.max(0, (timedRecoveryDeadline - Date.now()) / 1000);
+            updateTimedRecoveryTimerDisplay();
+            if (timedRecoveryCountdown <= 0) {
+                stopTimedRecoveryTimer();
+                const timedOutQuestionId = getFocusedQuestionId();
+                const timedOutQuestion = timedOutQuestionId ? questionMap.get(timedOutQuestionId) : null;
+                const trackedAnswerId = timedOutQuestion?.answer_objects?.[0]?.answer_id;
+                if (timedOutQuestionId) {
+                    boostWeakness(timedOutQuestionId);
+                }
+                if (trackedAnswerId) {
+                    recordMatchAttempt(trackedAnswerId, false);
+                }
+                showFeedback('Time ran out. Moving to the next recovery question.', false);
+                advanceTimedRecoveryQuestion();
+            }
+        }, 100);
+    }
+
+    function beginTimedRecoveryMode() {
+        if (
+            selectedStrategy !== 'timed_recovery'
+            || timedRecoveryMode
+            || timedRecoveryQuestionIds.length === 0
+            || timedRecoveryStarted
+        ) {
+            return false;
+        }
+        timedRecoveryMode = true;
+        timedRecoveryStarted = true;
+        timedRecoveryIndex = 0;
+        activeQuestionIds.splice(0, activeQuestionIds.length);
+        activeAnswerIds = [];
+        selectedQuestionId = null;
+        selectedAnswerId = null;
+        applyStrategyHints();
+        setupTimedRecoveryRound();
+        return true;
+    }
+
+    function advanceTimedRecoveryQuestion(rotateForward = true) {
+        stopTimedRecoveryTimer();
+        selectedQuestionId = null;
+        selectedAnswerId = null;
+        if (timedRecoveryQuestionIds.length === 0) {
+            timedRecoveryMode = false;
+            timedRecoveryAnswerIds = [];
+            applyStrategyHints();
+            updateTimedRecoveryTimerDisplay();
+            checkGameCompletion();
+            return;
+        }
+        if (rotateForward) {
+            timedRecoveryIndex = (timedRecoveryIndex + 1) % timedRecoveryQuestionIds.length;
+        } else if (timedRecoveryIndex >= timedRecoveryQuestionIds.length) {
+            timedRecoveryIndex = 0;
+        }
+        setupTimedRecoveryRound();
+        renderMatchBoard();
+    }
+
+    function showCompletionState() {
+        const gameGridContainer = document.getElementById('gameGridContainer');
+        const completionMessage = document.getElementById('completionMessage');
+        if (!gameGridContainer || !completionMessage) {
+            return;
+        }
+        gameGridContainer.style.display = 'none';
+        completionMessage.style.display = 'flex';
+    }
+
+    function renderMatchBoard() {
+        if (!timedRecoveryMode) {
+            refillActiveBatch();
+        }
+
+        const questionStack = document.getElementById('questionStack');
+        const answerStack = document.getElementById('answerStack');
+        if (!questionStack || !answerStack) {
+            return;
+        }
+
+        const renderedQuestionIds = (selectedStrategy === 'reverse_pressure' || timedRecoveryMode)
+            ? (getFocusedQuestionId() ? [getFocusedQuestionId()] : [])
+            : activeQuestionIds;
+        const renderedAnswerIds = timedRecoveryMode ? timedRecoveryAnswerIds : activeAnswerIds;
+
+        questionStack.innerHTML = renderedQuestionIds.map((questionId) => {
+            const card = questionMap.get(questionId);
+            const remainingCount = card.answer_objects.filter((answer) => !matchedAnswerIds.has(answer.answer_id)).length;
+            return `<div class="match-tile question-tile${selectedQuestionId === questionId ? ' selected' : ''}" data-type="question" data-question-id="${card.card_id}" data-answer-count="${remainingCount}"><div class="tile-content"><div class="tile-label question-label">Question</div><div class="tile-text">${escapeHtml(card.question)}</div></div><div class="answer-count-badge" id="badge-${card.card_id}">${remainingCount}</div></div>`;
+        }).join('');
+
+        answerStack.innerHTML = renderedAnswerIds.map((answerId) => {
+            const answer = answerMap.get(answerId);
+            const selectedClass = selectedAnswerId === answerId ? ' selected' : '';
+            return `<div class="match-tile answer-tile${selectedClass}" data-type="answer" data-answer-id="${answer.answer_id}" data-question-id="${answer.card_id}"><div class="tile-content"><div class="tile-label answer-label">Answer</div><div class="tile-text">${escapeHtml(answer.answer)}</div></div></div>`;
+        }).join('');
+
+        bindRenderedTileEvents();
+        updateStats();
+        updateTimedRecoveryTimerDisplay();
+    }
+
+    function queueRetryForQuestion(questionId) {
+        if (!questionId || completedQuestionIds.has(questionId)) {
+            return;
+        }
+        if (selectedStrategy === 'retry_misses' || selectedStrategy === 'mastery_mix') {
+            retryQuestionIds.add(questionId);
+        }
+        if (selectedStrategy === 'timed_recovery' && !timedRecoveryQuestionSet.has(questionId)) {
+            timedRecoveryQuestionSet.add(questionId);
+            timedRecoveryQuestionIds.push(questionId);
+        }
+    }
+
+    function boostWeakness(questionId) {
+        if (!questionId) {
+            return;
+        }
+        sessionWeakness.set(questionId, normalizeScore(sessionWeakness.get(questionId)) + 1);
+        sortPendingQuestions();
+    }
+
+    function handleWrongMatch(questionId, attemptedAnswerId) {
+        queueRetryForQuestion(questionId);
+        boostWeakness(questionId);
+        recordMatchAttempt(attemptedAnswerId, false);
+        selectedQuestionId = null;
+        selectedAnswerId = null;
+
+        if (selectedStrategy === 'timed_recovery') {
+            renderMatchBoard();
+            showFeedback(timedRecoveryMode ? 'Wrong answer. Moving to the next recovery question.' : 'Wrong match. This pair will return in timed recovery.', false);
+            if (timedRecoveryMode) {
+                advanceTimedRecoveryQuestion();
+            }
+            return;
+        }
+
+        renderMatchBoard();
+        showFeedback('Wrong match', false);
+    }
+
     function handleTileClick(tile) {
         const tileType = tile.dataset.type;
+        if (selectedStrategy === 'reverse_pressure' || timedRecoveryMode) {
+            const focusQuestionId = getFocusedQuestionId();
+            if (!focusQuestionId) {
+                return;
+            }
+            if (tileType === 'question') {
+                showFeedback('Choose the matching answer below', false);
+                return;
+            }
+            const answerId = parseInt(tile.dataset.answerId, 10);
+            const answer = answerMap.get(answerId);
+            if (!answer) {
+                return;
+            }
+            if (answer.card_id !== focusQuestionId) {
+                handleWrongMatch(focusQuestionId, answer.answer_id);
+                return;
+            }
+            handleMatch(answer.answer_id);
+            return;
+        }
 
         if (tileType === 'question') {
-            // Clear the prior selection before highlighting a new one.
-            document.querySelectorAll('.match-tile.question-tile.selected').forEach(t => {
-                t.classList.remove('selected');
-            });
-            tile.classList.add('selected');
-            selectedQuestionId = parseInt(tile.dataset.questionId);
+            selectedAnswerId = null;
+            selectedQuestionId = parseInt(tile.dataset.questionId, 10);
+            renderMatchBoard();
         } else if (tileType === 'answer') {
             if (selectedQuestionId === null) {
                 showFeedback('Select a question first', false);
                 return;
             }
-
-            const answer_id = parseInt(tile.dataset.answerId);
-            const questionId = parseInt(tile.dataset.questionId);
-
+            const answerId = parseInt(tile.dataset.answerId, 10);
+            const questionId = parseInt(tile.dataset.questionId, 10);
             if (questionId !== selectedQuestionId) {
-                showFeedback('Wrong match', false);
+                handleWrongMatch(selectedQuestionId, answerId);
                 return;
             }
-
-            handleMatch(answer_id, tile);
+            handleMatch(answerId);
         }
     }
 
-    // Ask the server before removing a matched tile.
-    function handleMatch(answer_id, answerTile) {
-        // Server confirms the match before we remove the tile.
-        answerTile.classList.add('tile-removing');
+    function handleMatch(answerId) {
+        const answer = answerMap.get(answerId);
+        if (!answer) {
+            return;
+        }
+        matchedAnswerIds.add(answerId);
+        if (timedRecoveryMode) {
+            timedRecoveryAnswerIds = timedRecoveryAnswerIds.filter((currentId) => currentId !== answerId);
+        } else {
+            activeAnswerIds = activeAnswerIds.filter((currentId) => currentId !== answerId);
+        }
+        recordMatchAttempt(answerId, true);
+        showFeedback('Correct!', true);
 
-         fetch('{{ url_for("match_answer") }}', {
-             method: 'POST',
-             headers: {
-                 'Content-Type': 'application/json',
-                 'X-CSRFToken': window.cardsCsrfToken,
-             },
-             body: JSON.stringify({
-                 answer_id: answer_id,
-                 selected_question_id: selectedQuestionId
-            })
-        })
-        // Convert the server response into game state updates.
-        .then(response => response.json())
-        // Remove tiles only after the match is accepted.
-        .then(data => {
-            if (data.success) {
-                showFeedback('Correct!', true);
-                answerTile.classList.add('disabled');
-
-                const badge = document.getElementById(`badge-${selectedQuestionId}`);
-                if (badge) {
-                    const currentCount = parseInt(badge.textContent);
-                    badge.textContent = Math.max(0, currentCount - 1);
-                }
-
-                const remainingAnswersForQuestion = document.querySelectorAll(
-                    `.match-tile.answer-tile:not(.disabled)[data-question-id="${selectedQuestionId}"]`
-                ).length;
-
-                if (remainingAnswersForQuestion === 0) {
-                const questionTile = document.querySelector(`.match-tile.question-tile[data-question-id="${selectedQuestionId}"]`);
-                if (questionTile) {
-                    questionTile.classList.add('tile-removing');
-                    // Remove the question tile after its answers are gone.
-                    setTimeout(() => {
-                        questionTile.classList.add('disabled');
-                        updateStats();
-                        checkGameCompletion();
-                        }, 300);
-                    }
-                    selectedQuestionId = null;
-                } else {
-                    updateStats();
-                }
-            } else {
-                showFeedback(data.error || 'Error', false);
-                answerTile.classList.remove('tile-removing');
+        const targetQuestionId = answer.card_id;
+        const remainingAnswersForQuestion = questionMap.get(targetQuestionId).answer_objects.filter((item) => !matchedAnswerIds.has(item.answer_id)).length;
+        if (timedRecoveryMode) {
+            timedRecoveryQuestionSet.delete(targetQuestionId);
+            timedRecoveryQuestionIds.splice(timedRecoveryIndex, 1);
+            if (timedRecoveryIndex >= timedRecoveryQuestionIds.length) {
+                timedRecoveryIndex = 0;
             }
-        })
-        // Fail closed if the request fails.
-        .catch(error => {
-            console.error('Error:', error);
-            showFeedback('Error processing match', false);
-            answerTile.classList.remove('tile-removing');
-        });
+            advanceTimedRecoveryQuestion(false);
+            return;
+        }
+        if (remainingAnswersForQuestion === 0) {
+            completedQuestionIds.add(targetQuestionId);
+            const activeIndex = activeQuestionIds.indexOf(targetQuestionId);
+            if (activeIndex >= 0) {
+                activeQuestionIds.splice(activeIndex, 1);
+            }
+        }
+
+        selectedQuestionId = null;
+        selectedAnswerId = null;
+        renderMatchBoard();
+        checkGameCompletion();
     }
 
-    // Swap to the win state when nothing remains.
     function checkGameCompletion() {
-        const remainingAnswers = document.querySelectorAll('.match-tile.answer-tile:not(.disabled)').length;
-        const remainingQuestions = document.querySelectorAll('.match-tile.question-tile:not(.disabled)').length;
+        const remainingAnswers = unresolvedAnswerCount();
+        const remainingQuestions = unresolvedQuestionIds().length;
+        const gameGridContainer = document.getElementById('gameGridContainer');
+        const completionMessage = document.getElementById('completionMessage');
+        if (!gameGridContainer || !completionMessage) {
+            return;
+        }
 
-        if (remainingAnswers === 0 && remainingQuestions === 0) {
-            document.getElementById('gameGridContainer').style.display = 'none';
-            document.getElementById('completionMessage').style.display = 'flex';
+        if (!timedRecoveryMode && remainingAnswers === 0 && remainingQuestions === 0 && beginTimedRecoveryMode()) {
+            renderMatchBoard();
+            return;
+        }
+
+        const timedRecoveryFinished = selectedStrategy === 'timed_recovery'
+            && timedRecoveryStarted
+            && !timedRecoveryMode
+            && timedRecoveryQuestionIds.length === 0;
+        const standardFinished = selectedStrategy !== 'timed_recovery'
+            && remainingAnswers === 0
+            && remainingQuestions === 0;
+
+        if (timedRecoveryFinished || (selectedStrategy === 'timed_recovery' && !timedRecoveryStarted && remainingAnswers === 0 && remainingQuestions === 0 && timedRecoveryQuestionIds.length === 0)) {
+            showCompletionState();
+        } else if (standardFinished) {
+            showCompletionState();
+        } else {
+            gameGridContainer.style.display = '';
+            completionMessage.style.display = 'none';
         }
     }
 
-    // Make every tile clickable.
-    document.querySelectorAll('.match-tile').forEach(tile => {
-        // Each tile gets the same click behavior.
-        tile.addEventListener('click', function() {
-            if (!this.classList.contains('disabled') && !this.classList.contains('tile-removing')) {
+    function bindRenderedTileEvents() {
+        document.querySelectorAll('.match-tile').forEach((tile) => {
+            tile.addEventListener('click', function() {
                 handleTileClick(this);
-            }
+            });
         });
-    });
+    }
 
-    updateStats();
+    function reshuffleVisibleTiles() {
+        if (timedRecoveryMode) {
+            timedRecoveryAnswerIds = shuffleArray(timedRecoveryAnswerIds);
+        } else {
+            activeQuestionIds.splice(0, activeQuestionIds.length, ...shuffleArray(activeQuestionIds));
+            activeAnswerIds = shuffleArray(activeAnswerIds);
+        }
+        selectedQuestionId = null;
+        selectedAnswerId = null;
+        renderMatchBoard();
+    }
+
+    function initializeMatchState() {
+        if (!matchDeckData || !matchDeckData.cards) {
+            return;
+        }
+        matchDeckData.cards.forEach((card, index) => {
+            questionMap.set(card.card_id, card);
+            questionOrderIndex.set(card.card_id, index);
+            allQuestionIds.push(card.card_id);
+            pendingQuestionIds.push(card.card_id);
+            card.answer_objects.forEach((answer) => {
+                answerMap.set(answer.answer_id, answer);
+            });
+        });
+        if (selectedStrategy === 'progressive_build') {
+            progressiveBatchSize = PROGRESSIVE_START_SIZE;
+        } else {
+            progressiveBatchSize = MAX_BATCH_SIZE;
+        }
+        applyStrategyHints();
+        renderMatchBoard();
+    }
+
+    document.getElementById('matchStrategy')?.addEventListener('change', function () {
+        updateStrategyHelp();
+        submitStrategySelection();
+    });
+    document.getElementById('matchStrategyGuest')?.addEventListener('change', function () {
+        updateStrategyHelp();
+        submitStrategySelection();
+    });
+    document.getElementById('shuffleMatchBtn')?.addEventListener('click', reshuffleVisibleTiles);
+    window.addEventListener('resize', scheduleMatchStackSizing, { passive: true });
+    updateStrategyHelp();
+    initializeMatchState();
 });
 </script>
 {% endblock %}
-

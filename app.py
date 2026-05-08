@@ -4,11 +4,13 @@ import unicodedata
 import os
 import csv
 import io
+from collections import Counter
+from datetime import datetime, timezone
 
 from flask import Flask
 from flask_migrate import Migrate
 from sqlalchemy import text
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress
+from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
@@ -25,6 +27,47 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 migrate = Migrate(app, db)
+
+
+def _ensure_user_theme_preference_column():
+    """Add User.theme_preference for existing SQLite databases if missing."""
+    inspector = db.inspect(db.engine)
+    columns = {column['name'] for column in inspector.get_columns('user')}
+    if 'theme_preference' in columns:
+        return
+    db.session.execute(
+        text("ALTER TABLE user ADD COLUMN theme_preference VARCHAR(10) NOT NULL DEFAULT 'dark'")
+    )
+    db.session.commit()
+
+
+def _ensure_user_mastery_strategy_preference_column():
+    """Add User.mastery_strategy_preference for existing SQLite databases if missing."""
+    inspector = db.inspect(db.engine)
+    columns = {column['name'] for column in inspector.get_columns('user')}
+    if 'mastery_strategy_preference' in columns:
+        return
+    db.session.execute(
+        text("ALTER TABLE user ADD COLUMN mastery_strategy_preference VARCHAR(30) NOT NULL DEFAULT 'spaced'")
+    )
+    db.session.commit()
+
+
+def _ensure_user_match_strategy_preference_column():
+    """Add User.match_strategy_preference for existing SQLite databases if missing."""
+    inspector = db.inspect(db.engine)
+    columns = {column['name'] for column in inspector.get_columns('user')}
+    if 'match_strategy_preference' in columns:
+        return
+    db.session.execute(
+        text("ALTER TABLE user ADD COLUMN match_strategy_preference VARCHAR(30) NOT NULL DEFAULT 'standard_shuffle'")
+    )
+    db.session.commit()
+
+
+def _ensure_match_pair_progress_table():
+    """Create MatchPairProgress table for existing databases if missing."""
+    MatchPairProgress.__table__.create(bind=db.engine, checkfirst=True)
 
 
 # Normalize answer input into a clean list.
@@ -395,6 +438,45 @@ def get_accessible_decks(user_id=None):
     if user_id is None:
         return Deck.query.filter(Deck.is_public == True).all()
     return Deck.query.filter((Deck.owned_by == user_id) | (Deck.is_public == True)).all()
+
+
+def get_homepage_public_data(featured_limit=3, tag_limit=5):
+    public_decks = Deck.query.filter(Deck.is_public == True).all()
+    featured_limit = max(0, int(featured_limit))
+    tag_limit = max(0, int(tag_limit))
+
+    featured_decks = []
+    if public_decks and featured_limit > 0:
+        featured_decks = random.sample(public_decks, min(featured_limit, len(public_decks)))
+
+    tag_counter = Counter()
+    for deck in public_decks:
+        seen_tags = set()
+        for raw_tag in (deck.tags or '').split(','):
+            cleaned_tag = raw_tag.strip()
+            normalized_tag = cleaned_tag.lower()
+            if not cleaned_tag or normalized_tag in seen_tags:
+                continue
+            seen_tags.add(normalized_tag)
+            tag_counter[cleaned_tag] += 1
+
+    featured_tags = [
+        {'tag': tag, 'count': count}
+        for tag, count in sorted(tag_counter.items(), key=lambda item: (-item[1], item[0].lower()))[:tag_limit]
+    ]
+
+    return {
+        'featured_decks': [
+            {
+                'deck_id': deck.deck_id,
+                'description': deck.description,
+                'detailed_description': deck.detailed_description,
+                'card_count': len(deck.cards),
+            }
+            for deck in featured_decks
+        ],
+        'featured_tags': featured_tags,
+    }
 
 
 # Fetch a deck by id.
@@ -895,6 +977,147 @@ def get_deck_study_data(deck_id, shuffle=True):
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle, shuffle_answers=shuffle)
 
 
+def get_match_strategy_catalog(include_account_only=True):
+    catalog = [
+        {'value': 'standard_shuffle', 'label': 'Standard', 'description': 'Shuffle the deck and clear the board in balanced batches.', 'requires_account': False},
+        {'value': 'retry_misses', 'label': 'Retry Misses', 'description': 'Bring missed pairs back for another pass after the current round.', 'requires_account': False},
+        {'value': 'progressive_build', 'label': 'Progressive Difficulty', 'description': 'Start with fewer pairs and add more as you clear each batch.', 'requires_account': False},
+        {'value': 'reverse_pressure', 'label': 'Reverse Pressure', 'description': 'Show one question at a time with several answer choices, then rotate to the next one.', 'requires_account': False},
+        {'value': 'timed_recovery', 'label': 'Recovery Sprint', 'description': 'Play a normal round first, then race through your missed questions one at a time against the clock.', 'requires_account': False},
+        {'value': 'weakest_first', 'label': 'Weakest First', 'description': 'Move your hardest pairs to the front based on past mistakes.', 'requires_account': True},
+        {'value': 'mastery_mix', 'label': 'Mastery Mix', 'description': 'Blend weak pairs, fresh pairs, and retries into one steady rotation.', 'requires_account': True},
+    ]
+    if include_account_only:
+        return catalog
+    return [strategy for strategy in catalog if not strategy.get('requires_account')]
+
+
+def normalize_match_strategy(strategy, include_account_only=True):
+    requested = (strategy or '').strip().lower()
+    allowed = {item['value'] for item in get_match_strategy_catalog(include_account_only=include_account_only)}
+    return requested if requested in allowed else 'standard_shuffle'
+
+
+def _get_match_progress_by_answer(user_id, answer_ids):
+    if not user_id or not answer_ids:
+        return {}
+    rows = MatchPairProgress.query.filter(
+        MatchPairProgress.user_id == user_id,
+        MatchPairProgress.answer_id.in_(answer_ids)
+    ).all()
+    return {row.answer_id: row for row in rows}
+
+
+def _match_pair_weight(answer_payload):
+    return (
+        (answer_payload.get('incorrect_count') or 0) * 3
+        - (answer_payload.get('correct_count') or 0)
+        + (2 if answer_payload.get('last_outcome') == 'incorrect' else 0)
+    )
+
+
+def _match_card_weight(card_payload):
+    if not card_payload.get('answer_objects'):
+        return 0
+    return max(_match_pair_weight(answer) for answer in card_payload['answer_objects'])
+
+
+def _interleave_match_groups(groups):
+    queues = [list(group) for group in groups if group]
+    ordered = []
+    while queues:
+        next_queues = []
+        for queue in queues:
+            if queue:
+                ordered.append(queue.pop(0))
+            if queue:
+                next_queues.append(queue)
+        queues = next_queues
+    return ordered
+
+
+def _build_match_question_order(cards, strategy):
+    if strategy == 'weakest_first':
+        return sorted(cards, key=lambda card: (-card.get('match_weight', 0), card.get('position', 0), card.get('card_id', 0)))
+
+    if strategy == 'mastery_mix':
+        weak = [card for card in cards if card.get('match_weight', 0) > 0]
+        fresh = [card for card in cards if card.get('total_attempts', 0) == 0]
+        steady = [card for card in cards if card not in weak and card not in fresh]
+        random.shuffle(weak)
+        random.shuffle(fresh)
+        random.shuffle(steady)
+        return _interleave_match_groups([weak, fresh, steady, weak])
+
+    randomized = list(cards)
+    random.shuffle(randomized)
+    return randomized
+
+
+def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
+    deck = Deck.query.get(deck_id)
+    if not deck:
+        return None
+
+    serialized = _serialize_deck(deck, detailed_cards=True, shuffle_cards=False, shuffle_answers=False)
+    cards = serialized['cards']
+    answer_ids = [answer['answer_id'] for card in cards for answer in card.get('answer_objects', [])]
+    progress_by_answer_id = _get_match_progress_by_answer(user_id, answer_ids)
+
+    answers = []
+    for card in cards:
+        enriched_answers = []
+        for answer in card.get('answer_objects', []):
+            progress = progress_by_answer_id.get(answer['answer_id'])
+            enriched_answer = {
+                **answer,
+                'card_id': card['card_id'],
+                'correct_count': progress.correct_count if progress else 0,
+                'incorrect_count': progress.incorrect_count if progress else 0,
+                'last_outcome': progress.last_outcome if progress else None,
+            }
+            enriched_answer['attempt_count'] = enriched_answer['correct_count'] + enriched_answer['incorrect_count']
+            enriched_answer['match_weight'] = _match_pair_weight(enriched_answer)
+            enriched_answers.append(enriched_answer)
+            answers.append(enriched_answer)
+        card['answer_objects'] = enriched_answers
+        card['answer_count'] = len(enriched_answers)
+        card['total_attempts'] = sum(answer['attempt_count'] for answer in enriched_answers)
+        card['incorrect_count'] = sum(answer['incorrect_count'] for answer in enriched_answers)
+        card['match_weight'] = _match_card_weight(card)
+
+    normalized_strategy = normalize_match_strategy(strategy)
+    ordered_cards = _build_match_question_order(cards, normalized_strategy)
+
+    return {
+        'deck_id': serialized['deck_id'],
+        'description': serialized['description'],
+        'detailed_description': serialized.get('detailed_description'),
+        'tags': serialized.get('tags'),
+        'card_count': serialized['card_count'],
+        'answer_count': serialized['answer_count'],
+        'cards': ordered_cards,
+        'answers': answers,
+        'strategy': normalized_strategy,
+    }
+
+
+def record_match_attempt(user_id, answer_id, is_correct):
+    if not user_id or not answer_id:
+        return
+    progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).first()
+    if not progress:
+        progress = MatchPairProgress(user_id=user_id, answer_id=answer_id, correct_count=0, incorrect_count=0)
+        db.session.add(progress)
+    if is_correct:
+        progress.correct_count = (progress.correct_count or 0) + 1
+        progress.last_outcome = 'correct'
+    else:
+        progress.incorrect_count = (progress.incorrect_count or 0) + 1
+        progress.last_outcome = 'incorrect'
+    db.session.commit()
+
+
 # Compare submitted order against saved positions.
 def check_deck_order(deck_id, ordered_card_ids):
     """Validate a user-submitted card order against stored card positions."""
@@ -1005,7 +1228,137 @@ def _mastery_status_for_rating(rating):
     return 'unknown'
 
 
-def get_mastery_snapshot(user_id, deck_id):
+def get_mastery_strategy_catalog():
+    return [
+        {'value': 'linear', 'label': 'Linear', 'requires_sortable': True, 'description': 'Follow the saved deck order from start to finish.'},
+        {'value': 'weakest_first', 'label': 'Weakest First', 'requires_sortable': False, 'description': 'Prioritize cards you miss most often or struggle with most.'},
+        {'value': 'spaced', 'label': 'Spaced', 'requires_sortable': False, 'description': 'Harder cards come back sooner and stronger cards wait longer.'},
+        {'value': 'mastery_mix', 'label': 'Mastery Mix', 'requires_sortable': False, 'description': 'Blend weak, learning, and newer cards into one balanced queue.'},
+        {'value': 'random', 'label': 'Random', 'requires_sortable': False, 'description': 'Shuffle the remaining cards into a random order.'},
+    ]
+
+
+def normalize_mastery_strategy(strategy, deck_sortable=False):
+    requested = (strategy or '').strip().lower()
+    allowed = {'weakest_first', 'spaced', 'mastery_mix', 'random'}
+    if deck_sortable:
+        allowed.add('linear')
+    return requested if requested in allowed else 'spaced'
+
+
+def _mastery_card_priority_bucket(card_payload):
+    if (card_payload.get('dont_know_count') or 0) > 0 or card_payload.get('last_rating') == 'dont_know':
+        return 0
+    if card_payload.get('status') == 'learning' or (card_payload.get('learning_count') or 0) > 0:
+        return 1
+    if (card_payload.get('reviewed_count') or 0) == 0:
+        return 2
+    return 3
+
+
+def _order_mastery_cards_by_weakest(card_payloads):
+    return sorted(
+        card_payloads,
+        key=lambda card: (
+            _mastery_card_priority_bucket(card),
+            -(card.get('dont_know_count') or 0),
+            -(card.get('learning_count') or 0),
+            card.get('understood_count') or 0,
+            card.get('reviewed_count') or 0,
+            card.get('position') or 0,
+            card.get('card_id') or 0,
+        ),
+    )
+
+
+def _mastery_spacing_hours(card_payload):
+    reviewed_count = card_payload.get('reviewed_count') or 0
+    if reviewed_count == 0:
+        return 0.0
+    if card_payload.get('last_rating') == 'dont_know':
+        return 0.25
+    if card_payload.get('status') == 'learning' or card_payload.get('last_rating') == 'still_learning':
+        return min(72.0, 6.0 * (2 ** min(card_payload.get('learning_count') or 0, 4)))
+    return min(96.0, 12.0 * (2 ** min(card_payload.get('understood_count') or 0, 3)))
+
+
+def _order_mastery_cards_by_spaced(card_payloads):
+    now = datetime.now(timezone.utc)
+
+    def due_key(card):
+        updated_at = card.get('updated_at')
+        if updated_at is not None:
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            elapsed_hours = max(0.0, (now - updated_at).total_seconds() / 3600.0)
+        else:
+            elapsed_hours = 999999.0
+
+        target_hours = _mastery_spacing_hours(card)
+        due_ratio = float('inf') if target_hours == 0 else elapsed_hours / target_hours
+
+        return (
+            -due_ratio,
+            _mastery_card_priority_bucket(card),
+            -(card.get('dont_know_count') or 0),
+            -(card.get('learning_count') or 0),
+            card.get('position') or 0,
+            card.get('card_id') or 0,
+        )
+
+    return sorted(card_payloads, key=due_key)
+
+
+def _order_mastery_cards_by_mix(card_payloads):
+    weakest_sorted = _order_mastery_cards_by_weakest(card_payloads)
+    weak = []
+    learning = []
+    fresh = []
+    review = []
+
+    for card in weakest_sorted:
+        bucket = _mastery_card_priority_bucket(card)
+        if bucket == 0:
+            weak.append(card)
+        elif bucket == 1:
+            learning.append(card)
+        elif bucket == 2:
+            fresh.append(card)
+        else:
+            review.append(card)
+
+    queue = []
+    pattern = [weak, learning, fresh, weak, review]
+    while any(pattern_group for pattern_group in (weak, learning, fresh, review)):
+        appended = False
+        for group in pattern:
+            if group:
+                queue.append(group.pop(0))
+                appended = True
+        if not appended:
+            break
+    return queue
+
+
+def order_mastery_cards(card_payloads, strategy, deck_sortable=False):
+    normalized_strategy = normalize_mastery_strategy(strategy, deck_sortable=deck_sortable)
+    cards = list(card_payloads)
+
+    if normalized_strategy == 'linear':
+        return sorted(cards, key=lambda card: (card.get('position') or 0, card.get('card_id') or 0))
+    if normalized_strategy == 'weakest_first':
+        return _order_mastery_cards_by_weakest(cards)
+    if normalized_strategy == 'spaced':
+        return _order_mastery_cards_by_spaced(cards)
+    if normalized_strategy == 'mastery_mix':
+        return _order_mastery_cards_by_mix(cards)
+    if normalized_strategy == 'random':
+        random.shuffle(cards)
+        return cards
+    return _order_mastery_cards_by_spaced(cards)
+
+
+def get_mastery_snapshot(user_id, deck_id, strategy='spaced'):
     deck = Deck.query.get(deck_id)
     if not deck:
         return None
@@ -1016,7 +1369,9 @@ def get_mastery_snapshot(user_id, deck_id):
         return {
             'deck': deck,
             'cards': [],
+            'queue': [],
             'current_card': None,
+            'strategy': normalize_mastery_strategy(strategy, deck_sortable=deck.sortable),
             'stats': {
                 'total': 0,
                 'mastered': 0,
@@ -1056,17 +1411,24 @@ def get_mastery_snapshot(user_id, deck_id):
             'position': card.position,
             'status': status,
             'reviewed_count': progress.reviewed_count if progress else 0,
+            'understood_count': progress.understood_count if progress else 0,
+            'learning_count': progress.learning_count if progress else 0,
+            'dont_know_count': progress.dont_know_count if progress else 0,
+            'last_rating': progress.last_rating if progress else None,
+            'updated_at': progress.updated_at if progress else None,
         })
 
-    current_card = remaining_cards[0] if remaining_cards else None
-    current_payload = None
-    if current_card:
-        current_payload = next((payload for payload in card_payloads if payload['card_id'] == current_card.card_id), None)
+    normalized_strategy = normalize_mastery_strategy(strategy, deck_sortable=deck.sortable)
+    remaining_payloads = [payload for payload in card_payloads if payload['status'] != 'mastered']
+    queue_payloads = order_mastery_cards(remaining_payloads, normalized_strategy, deck_sortable=deck.sortable)
+    current_payload = queue_payloads[0] if queue_payloads else None
 
     return {
         'deck': deck,
         'cards': card_payloads,
+        'queue': queue_payloads,
         'current_card': current_payload,
+        'strategy': normalized_strategy,
         'stats': {
             'total': len(cards),
             'mastered': mastered_count,
@@ -1219,6 +1581,12 @@ def generate_quiz_data(deck_id=None, custom_quiz_id=None):
         
     return quiz_questions
 
+
+with app.app_context():
+    _ensure_user_theme_preference_column()
+    _ensure_user_mastery_strategy_preference_column()
+    _ensure_user_match_strategy_preference_column()
+    _ensure_match_pair_progress_table()
 
 # Register all application routes
 register_routes(app)

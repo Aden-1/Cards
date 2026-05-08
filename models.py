@@ -13,6 +13,9 @@ class User(db.Model):
     email = db.Column(db.String(255), nullable=True, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default='standard')
+    theme_preference = db.Column(db.String(10), nullable=False, default='dark')
+    mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
+    match_strategy_preference = db.Column(db.String(30), nullable=False, default='standard_shuffle')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -76,6 +79,21 @@ class CardMasteryProgress(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'card_id', name='uq_card_mastery_user_card'),
+    )
+
+
+class MatchPairProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    answer_id = db.Column(db.Integer, db.ForeignKey('card_answer.answer_id'), nullable=False, index=True)
+    correct_count = db.Column(db.Integer, nullable=False, default=0)
+    incorrect_count = db.Column(db.Integer, nullable=False, default=0)
+    last_outcome = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'answer_id', name='uq_match_pair_user_answer'),
     )
 
 # Custom quiz tables.

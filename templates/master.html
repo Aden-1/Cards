@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Master{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Mastery Mode</span>
+    <h1 class="page-title">Loop the cards you still need.</h1>
+    <p class="page-description">This flow keeps mastered cards out of the way and helps you focus on what still needs reinforcement.</p>
+</section>
+<section class="master-grid fade-in">
+    <aside class="selection-panel" id="mastery-sidebar">
+        <div class="panel-header">
+            <div>
+                <h2 class="h4 mb-1">Select Deck</h2>
+                <p class="muted-copy mb-0">Choose a study deck for spaced repetition style review.</p>
+            </div>
+        </div>
+        <form method="get" action="{{ url_for('master') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="deck_id">Deck</label>
+                <select class="form-select" id="deck_id" name="deck_id" required>
+                    <option value="">Choose a deck...</option>
+                    {% for deck in decks %}
+                    <option value="{{ deck.deck_id }}" data-sortable="{{ 'true' if deck.sortable else 'false' }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="masteryStrategy">Strategy <span id="masteryStrategyHelp" class="status-chip info" title="" aria-label="">?</span></label>
+                <select class="form-select" id="masteryStrategy" name="strategy">
+                    {% for strategy in mastery_strategy_catalog %}
+                    <option value="{{ strategy.value }}" data-requires-sortable="{{ 'true' if strategy.requires_sortable else 'false' }}" data-description="{{ strategy.description }}" {% if selected_strategy == strategy.value %}selected{% endif %}>{{ strategy.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="deck-actions">
+                <button class="btn-primary-surface" type="submit">Start Mastery</button>
+                {% if selected_deck_id %}
+                <button class="btn-danger-surface" type="submit" form="masterResetForm">Reset Progress</button>
+                {% endif %}
+            </div>
+        </form>
+        {% if selected_deck_id %}
+        <form method="post" action="{{ url_for('master_reset') }}" data-master-action="true" id="masterResetForm">
+            <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">
+            <input type="hidden" name="strategy" value="{{ selected_strategy }}">
+        </form>
+        {% endif %}
+        {% if mastery_snapshot %}
+        <div class="master-stats mt-3">
+            <div class="master-stat"><div class="master-stat-label">Total</div><div class="master-stat-value">{{ mastery_snapshot.stats.total }}</div></div>
+            <div class="master-stat"><div class="master-stat-label">Mastered</div><div class="master-stat-value">{{ mastery_snapshot.stats.mastered }}</div></div>
+            <div class="master-stat"><div class="master-stat-label">Remaining</div><div class="master-stat-value">{{ mastery_snapshot.stats.remaining }}</div></div>
+        </div>
+        {% endif %}
+    </aside>
+    <section class="section-stack" id="mastery-practice">
+        {% if mastery_snapshot %}
+            {% if round_restarted %}
+            <div class="alert alert-success mb-0">One full review pass is complete. A new round has started using your unmastered cards.</div>
+            {% endif %}
+            {% if mastery_snapshot.stats.total == 0 %}
+            <div class="empty-card">This deck has no cards yet.</div>
+            {% elif selected_master_card %}
+            <article class="master-card current">
+                <div class="panel-header">
+                    <div>
+                        <span class="page-kicker">Current Card</span>
+                        <p class="muted-copy mb-0">Reviewed {{ selected_master_card.reviewed_count }} time{{ '' if selected_master_card.reviewed_count == 1 else 's' }}. Status: <span class="status-chip {{ 'public' if selected_master_card.status == 'mastered' else ('warning' if selected_master_card.status == 'learning' else 'info') }}">{{ selected_master_card.status }}</span></p>
+                    </div>
+                </div>
+                <div class="flash-panels mt-3">
+                    <article class="flash-pane">
+                        <span class="page-kicker">Prompt</span>
+                        <div class="h4 mt-2 mb-0">{{ selected_master_card.question }}</div>
+                    </article>
+                    <article class="flash-pane" id="masteryAnswerCard" data-answers='{{ selected_master_card.answers | tojson | forceescape }}' data-answer-visible="false" role="button" tabindex="0" onclick="toggleMasterAnswer()" onkeydown="handleMasterAnswerKeydown(event)">
+                        <span class="page-kicker">Accepted Answers</span>
+                        <div id="masteryAnswerContent" class="mt-3"><p class="muted-copy mb-0">Click to reveal answers</p></div>
+                    </article>
+                </div>
+                <div class="master-actions mt-3">
+                    <form method="post" action="{{ url_for('master_rate') }}" data-master-action="true">
+                        <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">
+                        <input type="hidden" name="card_id" value="{{ selected_master_card.card_id }}">
+                        <input type="hidden" name="strategy" value="{{ selected_strategy }}">
+                        <input type="hidden" name="rating" value="dont_know">
+                        <button class="btn-danger-surface" type="submit">Don't Know</button>
+                    </form>
+                    <form method="post" action="{{ url_for('master_rate') }}" data-master-action="true">
+                        <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">
+                        <input type="hidden" name="card_id" value="{{ selected_master_card.card_id }}">
+                        <input type="hidden" name="strategy" value="{{ selected_strategy }}">
+                        <input type="hidden" name="rating" value="still_learning">
+                        <button class="btn-surface" type="submit">Still Learning</button>
+                    </form>
+                    <form method="post" action="{{ url_for('master_rate') }}" data-master-action="true">
+                        <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">
+                        <input type="hidden" name="card_id" value="{{ selected_master_card.card_id }}">
+                        <input type="hidden" name="strategy" value="{{ selected_strategy }}">
+                        <input type="hidden" name="rating" value="understood">
+                        <button class="btn-primary-surface" type="submit">Understood</button>
+                    </form>
+                    <button class="btn-surface ms-auto" type="button" onclick="toggleMasterAnswer()">Reveal / Hide Answers</button>
+                </div>
+            </article>
+            {% else %}
+            <div class="completion-message"><h2 class="h3">Everything in this deck is mastered.</h2><p class="mb-0">Reset progress if you want to run the full set again.</p></div>
+            {% endif %}
+            <article class="master-card">
+                <details>
+                    <summary class="panel-header">
+                        <div>
+                            <span class="page-kicker">Deck Snapshot</span>
+                            <h2 class="h3 mb-1">{{ mastery_snapshot.deck.description }}</h2>
+                            <p class="muted-copy mb-0">Track which cards are mastered, learning, or still untouched.</p>
+                        </div>
+                        <span class="btn-surface">Show Cards</span>
+                    </summary>
+                    <div class="cards-list-stack mt-3">
+                        {% for card in mastery_snapshot.cards %}
+                        <article class="card-editor-item {{ 'is-active' if selected_master_card and selected_master_card.card_id == card.card_id else '' }}">
+                            <div class="card-editor-head">
+                                <div>
+                                    <div class="card-item-question">{{ card.question }}</div>
+                                    <div class="small-muted mt-1">Reviewed {{ card.reviewed_count }} time{{ '' if card.reviewed_count == 1 else 's' }}</div>
+                                </div>
+                                <span class="status-chip {{ 'public' if card.status == 'mastered' else ('warning' if card.status == 'learning' else 'info') }}">{{ card.status }}</span>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </details>
+            </article>
+        {% else %}
+        <div class="empty-card">Choose a deck to open mastery mode.</div>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function renderMasterAnswerState() {
+    const answerCard = document.getElementById('masteryAnswerCard');
+    const answerContent = document.getElementById('masteryAnswerContent');
+    if (!answerCard || !answerContent) {
+        return;
+    }
+
+    const isVisible = answerCard.dataset.answerVisible === 'true';
+    answerCard.classList.toggle('answer-visible', isVisible);
+
+    if (!isVisible) {
+        answerContent.innerHTML = '<p class="muted-copy mb-0">Click to reveal answers</p>';
+        return;
+    }
+
+    let answers = [];
+    try {
+        answers = JSON.parse(answerCard.dataset.answers || '[]');
+    } catch (error) {
+        answers = [];
+    }
+
+    const answersDiv = document.createElement('div');
+    answersDiv.className = 'master-answer-list';
+    answers.forEach((answer) => {
+        const answerDiv = document.createElement('div');
+        answerDiv.className = 'master-answer-item';
+        answerDiv.textContent = answer;
+        answersDiv.appendChild(answerDiv);
+    });
+    answerContent.innerHTML = '';
+    answerContent.appendChild(answersDiv);
+}
+
+function toggleMasterAnswer() {
+    const answerCard = document.getElementById('masteryAnswerCard');
+    if (!answerCard) {
+        return;
+    }
+    answerCard.dataset.answerVisible = answerCard.dataset.answerVisible === 'true' ? 'false' : 'true';
+    renderMasterAnswerState();
+}
+
+function handleMasterAnswerKeydown(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleMasterAnswer();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    function syncMasteryStrategyOptions() {
+        const deckSelect = document.getElementById('deck_id');
+        const strategySelect = document.getElementById('masteryStrategy');
+        const strategyHelp = document.getElementById('masteryStrategyHelp');
+        if (!deckSelect || !strategySelect) {
+            return;
+        }
+
+        const selectedDeckOption = deckSelect.options[deckSelect.selectedIndex];
+        const allowLinear = selectedDeckOption && selectedDeckOption.dataset.sortable === 'true';
+        let hasVisibleSelection = false;
+
+        Array.from(strategySelect.options).forEach((option) => {
+            const requiresSortable = option.dataset.requiresSortable === 'true';
+            const shouldShow = !requiresSortable || allowLinear;
+            option.hidden = !shouldShow;
+            option.disabled = !shouldShow;
+            if (shouldShow && option.selected) {
+                hasVisibleSelection = true;
+            }
+        });
+
+        if (!hasVisibleSelection) {
+            const fallbackOption = Array.from(strategySelect.options).find((option) => !option.disabled);
+            if (fallbackOption) {
+                fallbackOption.selected = true;
+            }
+        }
+
+        const activeOption = strategySelect.options[strategySelect.selectedIndex];
+        if (strategyHelp && activeOption) {
+            const description = activeOption.dataset.description || '';
+            strategyHelp.title = description;
+            strategyHelp.setAttribute('aria-label', description);
+        }
+    }
+
+    function submitMasterySelection() {
+        const deckSelect = document.getElementById('deck_id');
+        const strategySelect = document.getElementById('masteryStrategy');
+        if (!deckSelect || !strategySelect || !deckSelect.value) {
+            return;
+        }
+        strategySelect.form?.requestSubmit();
+    }
+
+    function ensureCsrfField(form) {
+        if (!form || !window.cardsCsrfToken) {
+            return;
+        }
+        let csrfInput = form.querySelector('input[name="csrf_token"]');
+        if (!csrfInput) {
+            csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrf_token';
+            form.appendChild(csrfInput);
+        }
+        csrfInput.value = window.cardsCsrfToken;
+    }
+
+    function submitNormally(form) {
+        ensureCsrfField(form);
+        form.removeAttribute('data-master-action');
+        form.submit();
+    }
+
+    function bindMasterActions() {
+        document.querySelectorAll('form[data-master-action="true"]').forEach((form) => {
+            if (form.dataset.masterBound === 'true') {
+                return;
+            }
+            form.dataset.masterBound = 'true';
+            ensureCsrfField(form);
+            form.addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
+                if (submitButton) {
+                    submitButton.disabled = true;
+                }
+
+                try {
+                    const formData = new FormData(form);
+                    if (!formData.get('csrf_token') && window.cardsCsrfToken) {
+                        formData.append('csrf_token', window.cardsCsrfToken);
+                    }
+                    const response = await fetch(form.action, {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-Requested-With': 'fetch'
+                        }
+                    });
+                    const html = await response.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const nextSidebar = doc.getElementById('mastery-sidebar');
+                    const nextPractice = doc.getElementById('mastery-practice');
+                    const currentSidebar = document.getElementById('mastery-sidebar');
+                    const currentPractice = document.getElementById('mastery-practice');
+
+                    if (!nextSidebar || !nextPractice || !currentSidebar || !currentPractice) {
+                        submitNormally(form);
+                        return;
+                    }
+
+                    currentSidebar.replaceWith(nextSidebar);
+                    currentPractice.replaceWith(nextPractice);
+                    if (response.url) {
+                        window.history.replaceState({}, document.title, response.url);
+                    }
+                    bindMasterActions();
+                    renderMasterAnswerState();
+                } catch (error) {
+                    console.error('Unable to refresh mastery state', error);
+                    submitNormally(form);
+                } finally {
+                    if (submitButton) {
+                        submitButton.disabled = false;
+                    }
+                }
+            });
+        });
+    }
+
+    document.getElementById('deck_id')?.addEventListener('change', function () {
+        syncMasteryStrategyOptions();
+        submitMasterySelection();
+    });
+    document.getElementById('masteryStrategy')?.addEventListener('change', function () {
+        syncMasteryStrategyOptions();
+        submitMasterySelection();
+    });
+    bindMasterActions();
+    syncMasteryStrategyOptions();
+    renderMasterAnswerState();
+});
+</script>
+{% endblock %}

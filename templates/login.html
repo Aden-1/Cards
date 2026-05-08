@@ -1,33 +1,43 @@
 {% extends "base.html" %}
 
-{% block title %}Log In - Cards App{% endblock %}
+{% block title %}Cards | Log In{% endblock %}
 
 {% block content %}
-<div class="auth-container">
-    <div class="section">
-        <div class="section-header">
-            <h5 class="mb-0">Log In</h5>
+<section class="auth-grid fade-in">
+    <article class="hero-panel">
+        <span class="page-kicker">Welcome Back</span>
+        <h1 class="page-title">Log in and pick up where your study flow left off.</h1>
+        <p class="page-description">Access your decks, public copies, mastery progress, and quiz editor from the redesigned workspace.</p>
+        <ul class="auth-hero-list">
+            <li>Resume focused review from the study view.</li>
+            <li>Manage deck publishing, tags, and card edits.</li>
+            <li>Jump straight into mastery rounds and quiz practice.</li>
+        </ul>
+    </article>
+    <article class="auth-card">
+        <div>
+            <span class="page-kicker">Account Access</span>
+            <h2 class="h3 mb-2">Log In</h2>
+            <p class="muted-copy mb-0">Use your account credentials to continue.</p>
         </div>
-        <div class="section-body">
-            {% if error %}
-            <div class="alert alert-danger">{{ error }}</div>
-            {% endif %}
-            <form method="post" action="{{ url_for('login') }}" class="auth-form">
-                <input type="hidden" name="next" value="{{ next or request.args.get('next', '') }}">
-                <div class="form-group">
-                    <label for="username" class="form-label">Username</label>
-                    <input type="text" class="form-control" id="username" name="username" autocomplete="username" required>
-                </div>
-                <div class="form-group">
-                    <label for="password" class="form-label">Password</label>
-                    <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required>
-                </div>
-                <div class="auth-actions">
-                    <button type="submit" class="btn btn-primary">Log In</button>
-                    <a class="btn btn-secondary" href="{{ url_for('register') }}">Create Account</a>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+        {% if error %}
+        <div class="alert alert-danger mb-0">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="{{ url_for('login') }}" class="section-stack">
+            <input type="hidden" name="next" value="{{ next or request.args.get('next', '') }}">
+            <div>
+                <label class="form-label" for="username">Username</label>
+                <input class="form-control" type="text" id="username" name="username" autocomplete="username" required placeholder="Enter your username">
+            </div>
+            <div>
+                <label class="form-label" for="password">Password</label>
+                <input class="form-control" type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password">
+            </div>
+            <div class="auth-actions">
+                <button class="btn-primary-surface" type="submit">Log In</button>
+                <a class="btn-surface" href="{{ url_for('register') }}">Create Account</a>
+            </div>
+        </form>
+    </article>
+</section>
 {% endblock %}

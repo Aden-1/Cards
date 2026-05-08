@@ -1,324 +1,209 @@
 {% extends "base.html" %}
 
-{% block title %}Edit Decks & Cards - Cards App{% endblock %}
+{% block title %}Cards | Manage Decks{% endblock %}
 
 {% block content %}
-<div class="edit-container">
-    <!-- Deck creation -->
-    <div class="page-header">
-        <h1>Manage Decks & Cards</h1>
-        <p class="text-secondary">Create, organize, and fine-tune your study decks.</p>
+<section class="page-intro">
+    <span class="page-kicker">Creator Studio</span>
+    <h1 class="page-title">Manage decks and cards</h1>
+    <p class="page-description">A brand-new authoring experience while keeping every existing deck workflow intact.</p>
+</section>
+<section class="section-stack fade-in">
+    <div class="editor-grid">
+        <article class="editor-card">
+            <div class="panel-header mb-3">
+                <div>
+                    <span class="page-kicker">New Deck</span>
+                    <h2 class="h3 mb-1">Create from scratch</h2>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('create_deck') }}" class="section-stack track-unsaved-form">
+                <input type="hidden" name="user_id" value="{{ user_id }}">
+                <div>
+                    <label class="form-label" for="deckDescription">Deck Name</label>
+                    <input class="form-control" type="text" id="deckDescription" name="description" required placeholder="e.g., Spanish Vocabulary">
+                </div>
+                <div>
+                    <label class="form-label" for="deckDetailedDescription">Description</label>
+                    <textarea class="form-control" id="deckDetailedDescription" name="detailed_description" rows="2" placeholder="What is this deck about?"></textarea>
+                </div>
+                <div>
+                    <label class="form-label" for="deckTags">Tags</label>
+                    <input class="form-control" type="text" id="deckTags" name="tags" placeholder="e.g., language, spanish, beginners">
+                </div>
+                <div class="toolbar-row">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="deckSortable" name="sortable"><label class="form-check-label" for="deckSortable">Keep in order</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="deckPublic" name="is_public"><label class="form-check-label" for="deckPublic">Public</label></div>
+                </div>
+                <div class="form-actions"><button class="btn-primary-surface" type="submit">Create Deck</button></div>
+            </form>
+        </article>
+        <article class="editor-card" id="deck-import">
+            <div class="panel-header mb-3">
+                <div>
+                    <span class="page-kicker">Import</span>
+                    <h2 class="h3 mb-1">Copy and paste a deck</h2>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('import_deck') }}" class="section-stack track-unsaved-form">
+                <div class="row g-3">
+                    <div class="col-md-6"><label class="form-label" for="importDeckDescription">Deck Name</label><input class="form-control" type="text" id="importDeckDescription" name="description" required placeholder="e.g., AP Biology Unit 3"></div>
+                    <div class="col-md-6"><label class="form-label" for="importDeckTags">Tags</label><input class="form-control" type="text" id="importDeckTags" name="tags" placeholder="e.g., biology, ap, cells"></div>
+                </div>
+                <div><label class="form-label" for="importDeckDetailedDescription">Description</label><textarea class="form-control" id="importDeckDetailedDescription" name="detailed_description" rows="2" placeholder="What will this imported deck help someone study?"></textarea></div>
+                <div>
+                    <label class="form-label" for="importDeckText">Paste Deck Text</label>
+                    <textarea class="form-control" id="importDeckText" name="import_text" rows="8" required placeholder="One card per line, for example: Question,Answer"></textarea>
+                    <div class="form-text">Accepted formats: comma-separated or tab-separated lines. Quoted CSV values are supported.</div>
+                </div>
+                <div class="toolbar-row">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="importDeckSortable" name="sortable"><label class="form-check-label" for="importDeckSortable">Keep in order</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="importDeckPublic" name="is_public"><label class="form-check-label" for="importDeckPublic">Public</label></div>
+                    <button class="btn-primary-surface" type="submit">Import Deck</button>
+                </div>
+            </form>
+        </article>
     </div>
 
-    <div class="section">
-        <div class="section-header">
+    <article class="surface p-4" id="decks-section">
+        <div class="panel-header mb-3">
             <div>
-                <h5 class="mb-0">Create New Deck</h5>
+                <span class="page-kicker">Library</span>
+                <h2 class="h3 mb-1">Your decks</h2>
+                <p class="muted-copy mb-0">{{ decks|length }} total deck{{ '' if decks|length == 1 else 's' }}</p>
             </div>
-            <button id="createDeckToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#createDeckCollapse" aria-expanded="false" aria-controls="createDeckCollapse">
-                Open
-            </button>
         </div>
-        <div id="createDeckCollapse" class="collapse">
-            <div class="section-body">
-                <div class="form-section mt-1">
-                    <form method="post" action="{{ url_for('create_deck') }}" class="form-row track-unsaved-form">
-                        <input type="hidden" name="user_id" value="{{ user_id }}">
-                        <div class="form-group mb-0">
-                            <label for="deckDescription" class="mb-1">Deck Name</label>
-                            <input type="text" class="form-control mb-2" id="deckDescription" name="description" placeholder="e.g., Spanish Vocabulary" required>
-                            <label for="deckDetailedDescription" class="mb-1">Description (Optional)</label>
-                            <textarea class="form-control mb-2" id="deckDetailedDescription" name="detailed_description" rows="2" placeholder="What is this deck about?"></textarea>
-                            <label for="deckTags" class="mb-1">Tags (Optional)</label>
-                            <input type="text" class="form-control" id="deckTags" name="tags" placeholder="e.g., language, spanish, beginners">
-                        </div>
-                        <div>
-                            <div class="form-check mb-3">
-                                <input type="checkbox" class="form-check-input" id="deckSortable" name="sortable">
-                                <label class="form-check-label" for="deckSortable">Keep in order (sortable)</label>
-                            </div>
-                            <div class="form-check mb-3">
-                                <input type="checkbox" class="form-check-input" id="deckPublic" name="is_public">
-                                <label class="form-check-label" for="deckPublic">Public (visible to everyone)</label>
-                            </div>
-                            <button type="submit" class="btn btn-success">Create</button>
-                        </div>
-                    </form>
+        {% if decks %}
+        <div class="deck-grid stagger">
+            {% for deck in decks %}
+            <article class="deck-card {{ 'is-active' if selected_deck_id == deck.deck_id else '' }}">
+                <div class="panel-header">
+                    <h3 class="h5 mb-0">{{ deck.description }}</h3>
+                    <div class="card-rail">
+                        <span class="status-chip {{ 'warning' if deck.sortable else 'info' }}">{{ 'Sortable' if deck.sortable else 'Shuffled' }}</span>
+                        <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
+                    </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="section" id="deck-import">
-        <div class="section-header">
-            <div>
-                <h5 class="mb-0">Import Deck (Copy/Paste)</h5>
-            </div>
-            <button id="importDeckToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#importDeckCollapse" aria-expanded="false" aria-controls="importDeckCollapse">
-                Open
-            </button>
-        </div>
-        <div id="importDeckCollapse" class="collapse">
-            <div class="section-body">
-                <div class="form-section mt-1">
-                    <form method="post" action="{{ url_for('import_deck') }}" class="track-unsaved-form">
-                        <div class="row g-2">
-                            <div class="col-md-6">
-                                <label for="importDeckDescription" class="mb-1">Deck Name</label>
-                                <input type="text" class="form-control mb-2" id="importDeckDescription" name="description" placeholder="Imported Deck" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="importDeckTags" class="mb-1">Tags (Optional)</label>
-                                <input type="text" class="form-control mb-2" id="importDeckTags" name="tags" placeholder="e.g., import, study">
+                {% if deck.tags %}<div class="card-rail">{% for tag in deck.tags.split(',') %}{% if tag.strip() %}<span class="tag-chip">{{ tag.strip() }}</span>{% endif %}{% endfor %}</div>{% endif %}
+                <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
+                <div class="deck-actions mt-auto">
+                    <a class="btn-primary-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}#deck-editor">Edit</a>
+                    <details class="delete-confirm">
+                        <summary class="btn-danger-surface">Delete</summary>
+                        <div class="delete-confirm-panel">
+                            <p class="mb-3">Delete this entire deck and all cards?</p>
+                            <div class="deck-actions">
+                                <form method="post" action="{{ url_for('delete_deck') }}">
+                                    <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                                    <button class="btn-danger-surface" type="submit">Yes, delete deck</button>
+                                </form>
+                                <button type="button" class="btn-surface close-delete-panel">Cancel</button>
                             </div>
                         </div>
-                        <label for="importDeckDetailedDescription" class="mb-1">Description (Optional)</label>
-                        <textarea class="form-control mb-2" id="importDeckDetailedDescription" name="detailed_description" rows="2"></textarea>
-
-                        <label for="importDeckText" class="mb-1">Paste Deck Text</label>
-                        <textarea class="form-control mb-2" id="importDeckText" name="import_text" rows="8" placeholder="One card per line, for example: Question,Answer" required></textarea>
-                        <div class="form-text mb-2">Accepted formats: comma-separated or tab-separated lines. Quoted CSV values are supported.</div>
-
-                        <div class="d-flex align-items-center gap-3">
-                            <div class="form-check mb-0">
-                                <input type="checkbox" class="form-check-input" id="importDeckSortable" name="sortable">
-                                <label class="form-check-label" for="importDeckSortable">Keep in order (sortable)</label>
-                            </div>
-                            <div class="form-check mb-0">
-                                <input type="checkbox" class="form-check-input" id="importDeckPublic" name="is_public">
-                                <label class="form-check-label" for="importDeckPublic">Public (visible to everyone)</label>
-                            </div>
-                            <button type="submit" class="btn btn-success">Import Deck</button>
-                        </div>
-                    </form>
+                    </details>
                 </div>
-            </div>
+            </article>
+            {% endfor %}
         </div>
-    </div>
-
-    <!-- Deck list -->
-    <div class="section" id="decks-section">
-        <div class="section-header">
-            <div>
-                <h5 class="mb-0">Your Decks</h5>
-                <small>{{ decks|length }} total deck{{ '' if decks|length == 1 else 's' }}</small>
-            </div>
-            <button id="decksToggleBtn" class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#yourDecksCollapse" aria-expanded="{{ 'false' if selected_deck else 'true' }}" aria-controls="yourDecksCollapse">
-                {{ 'Open' if selected_deck else 'Close' }}
-            </button>
-        </div>
-        <div id="yourDecksCollapse" class="collapse {{ '' if selected_deck else 'show' }}">
-            <div class="section-body">
-                {% if decks %}
-                <div class="deck-grid polished">
-                    {% for deck in decks %}
-                    <article class="deck-card {{ 'active' if selected_deck_id == deck.deck_id else '' }}">
-                        <div class="deck-card-top">
-                            <h6 class="deck-card-title">{{ deck.description }}</h6>
-                            <span class="deck-card-mode {{ 'sortable' if deck.sortable else 'shuffled' }}">{{ 'Sortable' if deck.sortable else 'Shuffled' }}</span>
-                            <span class="deck-card-mode {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
-                        </div>
-                        {% if deck.tags %}
-                        <div class="deck-tags mt-1">
-                            {% for tag in deck.tags.split(',') %}
-                            {% if tag.strip() %}
-                            <span class="badge bg-secondary rounded-pill me-1">{{ tag.strip() }}</span>
-                            {% endif %}
-                            {% endfor %}
-                        </div>
-                        {% endif %}
-                        <div class="deck-card-meta">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
-                        <div class="deck-card-actions">
-                            <a class="btn btn-primary btn-sm flex-grow-1" href="{{ url_for('edit', deck_id=deck.deck_id) }}#deck-editor">Edit</a>
-                            <details class="delete-confirm">
-                                <summary class="btn btn-danger btn-sm">Delete</summary>
-                                <div class="delete-confirm-panel">
-                                    <p class="mb-2">Delete this entire deck and all cards?</p>
-                                    <div class="delete-confirm-actions">
-                                        <form method="post" action="{{ url_for('delete_deck') }}">
-                                            <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
-                                            <button type="submit" class="btn btn-danger btn-sm">Yes, delete deck</button>
-                                        </form>
-                                        <button type="button" class="btn btn-secondary btn-sm close-delete-panel">Cancel</button>
-                                    </div>
-                                </div>
-                            </details>
-                        </div>
-                    </article>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <p>No decks yet. Create one to get started.</p>
-                    <a class="btn btn-primary btn-sm" href="#deckDescription">Create your first deck</a>
-                </div>
-                {% endif %}
-            </div>
-        </div>
-    </div>
+        {% else %}
+        <div class="empty-card">No decks yet. Create one to get started.</div>
+        {% endif %}
+    </article>
 
     {% if selected_deck %}
-    <!-- Active deck editor -->
-    <div class="section" id="deck-editor">
-        <div class="section-header success">
+    <article class="surface p-4" id="deck-editor">
+        <div class="panel-header mb-3">
             <div>
-                <h5 class="mb-0">Editing: {{ selected_deck.description }}</h5>
-                <small>{{ selected_deck.card_count }} cards and {{ selected_deck.answer_count }} answers</small>
+                <span class="page-kicker">Editing</span>
+                <h2 class="h3 mb-1">{{ selected_deck.description }}</h2>
+                <p class="muted-copy mb-0">{{ selected_deck.card_count }} cards and {{ selected_deck.answer_count }} answers</p>
             </div>
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('edit') }}#decks-section">Done</a>
+            <a class="btn-surface" href="{{ url_for('edit') }}#decks-section">Done</a>
         </div>
-        <div class="section-body">
-            <div class="form-section mb-3">
-                <details>
-                    <summary><h6 class="mb-0 d-inline">Deck Settings</h6></summary>
-                    <div class="mt-3">
-                        <form method="post" action="{{ url_for('edit_deck') }}" class="deck-settings-form track-unsaved-form">
-                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                            <div class="deck-settings-top-row">
-                                <div class="form-group mb-0">
-                                    <label for="editDeckDescription" class="mb-1">Name</label>
-                                    <input type="text" class="form-control mb-2" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required>
-
-                                    <label for="editDeckDetailedDescription" class="mb-1">Description</label>
-                                    <textarea class="form-control mb-2" id="editDeckDetailedDescription" name="detailed_description" rows="2">{{ selected_deck.detailed_description or '' }}</textarea>
-
-                                    <label for="editDeckTags" class="mb-1">Tags</label>
-                                    <input type="text" class="form-control" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}" placeholder="Comma-separated tags">
-                                </div>
-                            </div>
-                            <div class="deck-settings-bottom-row mt-2">
-                                <div class="form-check mb-0">
-                                    <input type="checkbox" class="form-check-input" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}>
-                                    <label class="form-check-label" for="editDeckSortable">Keep in order (sortable)</label>
-                                </div>
-                                <div class="form-check mb-0 ms-3">
-                                    <input type="checkbox" class="form-check-input" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}>
-                                    <label class="form-check-label" for="editDeckPublic">Public (visible to everyone)</label>
-                                </div>
-                                <button type="submit" class="btn btn-primary deck-settings-save-btn">Save</button>
-                            </div>
-                        </form>
+        <div class="section-stack">
+            <article class="editor-card">
+                <div class="panel-header mb-3"><h3 class="h5 mb-0">Deck Settings</h3></div>
+                <form method="post" action="{{ url_for('edit_deck') }}" class="section-stack track-unsaved-form">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                    <div><label class="form-label" for="editDeckDescription">Name</label><input class="form-control" type="text" id="editDeckDescription" name="description" value="{{ selected_deck.description }}" required></div>
+                    <div><label class="form-label" for="editDeckDetailedDescription">Description</label><textarea class="form-control" id="editDeckDetailedDescription" name="detailed_description" rows="2">{{ selected_deck.detailed_description or '' }}</textarea></div>
+                    <div><label class="form-label" for="editDeckTags">Tags</label><input class="form-control" type="text" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}"></div>
+                    <div class="toolbar-row">
+                        <div class="form-check"><input class="form-check-input" type="checkbox" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}><label class="form-check-label" for="editDeckSortable">Keep in order</label></div>
+                        <div class="form-check"><input class="form-check-input" type="checkbox" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}><label class="form-check-label" for="editDeckPublic">Public</label></div>
                     </div>
-                </details>
-            </div>
-
-            <div class="form-section mb-3">
-                <details>
-                    <summary><h6 class="mb-0 d-inline">Export Deck (Copy/Paste)</h6></summary>
-                    <div class="mt-3">
-                        <label for="deckExportText" class="form-label">Compatible export format</label>
-                        <textarea class="form-control mb-2" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
-                        <button type="button" class="btn btn-secondary btn-sm" id="copyDeckExportBtn">Copy Export Text</button>
-                    </div>
-                </details>
-            </div>
-
-            <div class="form-section mb-4">
-                <!-- Add card -->
-                <details>
-                    <summary><h6 class="mb-0 d-inline">Add Card</h6></summary>
-                    <div class="mt-3">
-                        <form method="post" action="{{ url_for('add_card') }}" class="add-card-form track-unsaved-form">
-                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                            <div class="add-card-fields-grid">
-                                <div class="form-group mb-0 add-card-question-field">
-                                    <label for="question" class="form-label">Question</label>
-                                    <input type="text" class="form-control" id="question" name="question" required>
-                                </div>
-                                <div class="form-group mb-0 add-card-answer-field">
-                                    <label for="answersInput" class="form-label">Answers</label>
-                                    <textarea class="form-control" id="answersInput" name="answers" rows="4" placeholder="Separate multiple answers with commas" required></textarea>
-                                    <div class="form-text">Example: "Capital city, Paris"</div>
-                                </div>
-                            </div>
-                            <div class="add-card-submit-wrap">
-                                <button type="submit" class="btn btn-success">Add Card</button>
-                            </div>
-                        </form>
-                    </div>
-                </details>
-            </div>
-
-            <h6 class="mb-3">Cards in Deck</h6>
-            {% if selected_deck.sortable %}
-            <!-- Drag/drop order matters for sortable decks -->
-            <div class="drag-instructions mb-2">Drag one card onto another to swap order. Swapped cards are briefly highlighted.</div>
-            {% endif %}
-
+                    <div class="form-actions"><button class="btn-primary-surface" type="submit">Save Deck</button></div>
+                </form>
+            </article>
+            <article class="editor-card">
+                <div class="panel-header mb-3"><h3 class="h5 mb-0">Export Deck</h3></div>
+                <label class="form-label" for="deckExportText">Compatible export format</label>
+                <textarea class="form-control" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
+                <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button></div>
+            </article>
+            <article class="editor-card">
+                <div class="panel-header mb-3"><h3 class="h5 mb-0">Add Card</h3></div>
+                <form method="post" action="{{ url_for('add_card') }}" class="section-stack track-unsaved-form">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                    <div><label class="form-label" for="question">Question</label><input class="form-control" type="text" id="question" name="question" required placeholder="e.g., What is the capital of France?"></div>
+                    <div><label class="form-label" for="answersInput">Answers</label><textarea class="form-control" id="answersInput" name="answers" rows="4" required placeholder="Separate multiple answers with commas"></textarea><div class="form-text">Example: Capital city, Paris</div></div>
+                    <div class="form-actions"><button class="btn-primary-surface" type="submit">Add Card</button></div>
+                </form>
+            </article>
+            {% if selected_deck.sortable %}<div class="small-muted">Drag one card onto another to swap order. Swapped cards are briefly highlighted.</div>{% endif %}
             {% if selected_cards %}
             <div class="cards-list-stack" id="editableCardsList">
                 {% for card in selected_cards %}
                 <article class="card-editor-item {% if selected_deck.sortable %}sortable-card{% endif %}" data-card-id="{{ card.card_id }}">
                     <div class="card-editor-head">
                         <div>
-                            <div class="card-item-question mb-1">{{ card.question }}</div>
-                            {% if selected_deck.sortable %}
-                            <div class="card-order-meta" data-role="card-position">Position {{ card.position }}</div>
-                            {% endif %}
+                            <div class="card-item-question">{{ card.question }}</div>
+                            {% if selected_deck.sortable %}<div class="small-muted mt-1" data-role="card-position">Position {{ card.position }}</div>{% endif %}
                         </div>
-                        {% if selected_deck.sortable %}
-                        <div class="drag-grip" aria-hidden="true">::</div>
-                        {% endif %}
+                        {% if selected_deck.sortable %}<div class="drag-grip" aria-hidden="true">::</div>{% endif %}
                     </div>
-
                     {% if card.answer_objects %}
-                        <div class="answer-management-block">
-                            <!-- Per-answer delete -->
-                            <div class="answer-management-label">
-                            {{ card.answer_objects|length }} answer{{ '' if card.answer_objects|length == 1 else 's' }} for this question
+                    <div class="answer-list mt-3">
+                        {% for answer in card.answer_objects %}
+                        <div class="answer-row">
+                            <span class="answer-row-text">{{ answer.answer }}</span>
+                            <details class="delete-confirm compact">
+                                <summary class="btn-danger-surface">Remove answer</summary>
+                                <div class="delete-confirm-panel compact">
+                                    <p class="mb-3">Remove this answer from the current question?</p>
+                                    <form method="post" action="{{ url_for('delete_answer') }}">
+                                        <input type="hidden" name="answer_id" value="{{ answer.answer_id }}">
+                                        <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                                        <input type="hidden" name="context" value="edit">
+                                        <button class="btn-danger-surface" type="submit">Yes, remove answer</button>
+                                    </form>
+                                </div>
+                            </details>
                         </div>
-                        <div class="answer-management-help">Choose "Remove answer" to delete one specific answer from this question.</div>
-                        <div class="answer-list">
-                            {% for answer in card.answer_objects %}
-                            <div class="answer-row">
-                                <span class="answer-row-text">{{ answer.answer }}</span>
-                                <details class="delete-confirm compact">
-                                    <summary class="btn btn-outline-danger btn-sm">Remove answer</summary>
-                                    <div class="delete-confirm-panel compact">
-                                        <p class="mb-2">Remove this answer from the current question?</p>
-                                        <form method="post" action="{{ url_for('delete_answer') }}">
-                                            <input type="hidden" name="answer_id" value="{{ answer.answer_id }}">
-                                            <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                                            <input type="hidden" name="context" value="edit">
-                                            <button type="submit" class="btn btn-danger btn-sm">Yes, remove answer</button>
-                                        </form>
-                                    </div>
-                                </details>
-                            </div>
-                            {% endfor %}
-                        </div>
+                        {% endfor %}
                     </div>
                     {% endif %}
-
-                    <div class="card-item-actions mt-3">
+                    <div class="card-actions mt-3">
                         <details class="flex-grow-1">
-                            <summary class="btn btn-sm btn-primary">Edit Question + Answers</summary>
-                            <div class="mt-3 p-3 bg-surface rounded">
-                                <form method="post" action="{{ url_for('edit_card') }}" class="track-unsaved-form">
+                            <summary class="btn-primary-surface">Edit Question + Answers</summary>
+                            <div class="detail-panel">
+                                <form method="post" action="{{ url_for('edit_card') }}" class="section-stack track-unsaved-form">
                                     <input type="hidden" name="card_id" value="{{ card.card_id }}">
                                     <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                                    <div class="form-group">
-                                        <label class="form-label">Question</label>
-                                        <input type="text" class="form-control" name="question" value="{{ card.question }}" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Answers</label>
-                                        <textarea class="form-control" name="answers" rows="3" required>{{ card.answers | join(', ') }}</textarea>
-                                        <div class="form-text">Comma-separated answers for this question</div>
-                                    </div>
-                                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                                    <div><label class="form-label">Question</label><input class="form-control" type="text" name="question" value="{{ card.question }}" required></div>
+                                    <div><label class="form-label">Answers</label><textarea class="form-control" name="answers" rows="3" required>{{ card.answers | join(', ') }}</textarea><div class="form-text">Comma-separated answers for this question</div></div>
+                                    <div class="form-actions"><button class="btn-primary-surface" type="submit">Save Changes</button></div>
                                 </form>
                             </div>
                         </details>
                         <details class="delete-confirm">
-                            <!-- Card actions -->
-                            <summary class="btn btn-danger btn-sm">Delete Card</summary>
+                            <summary class="btn-danger-surface">Delete Card</summary>
                             <div class="delete-confirm-panel">
-                                <p class="mb-2">Delete this card and all of its answers?</p>
+                                <p class="mb-3">Delete this card and all of its answers?</p>
                                 <form method="post" action="{{ url_for('delete_card') }}">
                                     <input type="hidden" name="card_id" value="{{ card.card_id }}">
                                     <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                                    <button type="submit" class="btn btn-danger btn-sm">Yes, delete card</button>
+                                    <button class="btn-danger-surface" type="submit">Yes, delete card</button>
                                 </form>
                             </div>
                         </details>
@@ -326,23 +211,19 @@
                 </article>
                 {% endfor %}
             </div>
-            <div class="cards-end-spacer" aria-hidden="true"></div>
             {% else %}
-            <div class="empty-state">
-                <p>No cards yet. Add one to get started.</p>
-                <a class="btn btn-primary btn-sm" href="#question">Add your first card</a>
-            </div>
+            <div class="empty-card">No cards yet. Add one to get started.</div>
             {% endif %}
         </div>
-    </div>
+    </article>
     {% endif %}
-</div>
+</section>
+{% endblock %}
 
+{% block scripts %}
 {% if selected_deck %}
 <script>
-    // Scroll back to the active editor.
-    document.addEventListener('DOMContentLoaded', function() {
-    // Keep the current deck editor in view after load.
+document.addEventListener('DOMContentLoaded', function() {
     const editor = document.getElementById('deck-editor');
     if (editor) {
         editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -350,132 +231,52 @@
 });
 </script>
 {% endif %}
-
 <script>
-    // Wire unsaved-state and drag handlers.
-    document.addEventListener('DOMContentLoaded', function() {
-    // Track edits so refreshes don't drop work silently.
+document.addEventListener('DOMContentLoaded', function() {
     let hasUnsavedChanges = false;
     let isSubmittingTrackedForm = false;
-
-    // Visit every tracked form.
     document.querySelectorAll('form.track-unsaved-form').forEach((form) => {
-        // Mark the form dirty on any change.
         form.querySelectorAll('input, textarea, select').forEach((field) => {
-            // Input events mean the form has changed.
-            field.addEventListener('input', () => {
-                hasUnsavedChanges = true;
-            });
-            // Change events mean the form has changed too.
-            field.addEventListener('change', () => {
-                hasUnsavedChanges = true;
-            });
+            field.addEventListener('input', () => { hasUnsavedChanges = true; });
+            field.addEventListener('change', () => { hasUnsavedChanges = true; });
         });
-        // Submission clears the dirty flag.
         form.addEventListener('submit', () => {
             isSubmittingTrackedForm = true;
             hasUnsavedChanges = false;
         });
     });
-
-    // Warn before leaving with edits unsaved.
     window.addEventListener('beforeunload', function(event) {
         if (hasUnsavedChanges && !isSubmittingTrackedForm) {
             event.preventDefault();
             event.returnValue = '';
         }
     });
-
-    const decksToggleBtn = document.getElementById('decksToggleBtn');
-    const decksCollapse = document.getElementById('yourDecksCollapse');
-    if (decksToggleBtn && decksCollapse) {
-        // Mirror the collapse state on the button.
-        const setToggleText = (isOpen) => {
-            decksToggleBtn.textContent = isOpen ? 'Close' : 'Open';
-            decksToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-        };
-        setToggleText(decksCollapse.classList.contains('show'));
-        // Bootstrap collapse events keep the label accurate.
-        decksCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
-        // Bootstrap collapse events keep the label accurate.
-        decksCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
-    }
-
-    const createDeckToggleBtn = document.getElementById('createDeckToggleBtn');
-    const createDeckCollapse = document.getElementById('createDeckCollapse');
-    if (createDeckToggleBtn && createDeckCollapse) {
-        const setToggleText = (isOpen) => {
-            createDeckToggleBtn.textContent = isOpen ? 'Close' : 'Open';
-            createDeckToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-        };
-        setToggleText(createDeckCollapse.classList.contains('show'));
-        createDeckCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
-        createDeckCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
-    }
-
-    const importDeckToggleBtn = document.getElementById('importDeckToggleBtn');
-    const importDeckCollapse = document.getElementById('importDeckCollapse');
-    if (importDeckToggleBtn && importDeckCollapse) {
-        const setToggleText = (isOpen) => {
-            importDeckToggleBtn.textContent = isOpen ? 'Close' : 'Open';
-            importDeckToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-        };
-        setToggleText(importDeckCollapse.classList.contains('show'));
-        importDeckCollapse.addEventListener('shown.bs.collapse', () => setToggleText(true));
-        importDeckCollapse.addEventListener('hidden.bs.collapse', () => setToggleText(false));
-    }
-
-    // Close confirmation panels on cancel.
     document.querySelectorAll('.close-delete-panel').forEach((button) => {
-        // Close the details element after cancel.
         button.addEventListener('click', function() {
             const details = this.closest('details');
-            if (details) {
-                details.removeAttribute('open');
-            }
+            if (details) { details.removeAttribute('open'); }
         });
     });
-
-    // Keep opened edit panels centered on screen.
     document.querySelectorAll('#editableCardsList details').forEach((details) => {
-        // Scroll open panels into view.
         details.addEventListener('toggle', function() {
-            if (this.open) {
-                this.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
+            if (this.open) { this.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
         });
     });
-
     const cardsList = document.getElementById('editableCardsList');
     const sortableEnabled = {{ 'true' if selected_deck and selected_deck.sortable else 'false' }};
-    if (!cardsList || !sortableEnabled) {
-        return;
-    }
-
+    if (!cardsList || !sortableEnabled) { return; }
     let activeDrag = null;
-
-    // Renumber cards after a local swap.
     function updatePositionLabels() {
-        // Keep the visible position labels in sync.
         cardsList.querySelectorAll('.card-editor-item').forEach((item, index) => {
             const label = item.querySelector('[data-role="card-position"]');
-            if (label) {
-                label.textContent = `Position ${index + 1}`;
-            }
+            if (label) { label.textContent = `Position ${index + 1}`; }
         });
     }
-
-    // Remove hover styling from every row.
     function clearDragOver() {
         cardsList.querySelectorAll('.card-editor-item.drag-over').forEach((item) => item.classList.remove('drag-over'));
     }
-
-    // Start dragging one card row.
     function beginDrag(event, item) {
-        if (event.button !== 0 || event.target.closest('.card-item-actions') || event.target.closest('.answer-management-block')) {
-            return;
-        }
-
+        if (event.button !== 0 || event.target.closest('.card-actions') || event.target.closest('.answer-list')) { return; }
         const rect = item.getBoundingClientRect();
         const ghost = item.cloneNode(true);
         ghost.classList.add('drag-preview');
@@ -483,126 +284,58 @@
         ghost.style.left = `${rect.left}px`;
         ghost.style.top = `${rect.top}px`;
         document.body.appendChild(ghost);
-
-        activeDrag = {
-            source: item,
-            card_id: Number(item.dataset.cardId),
-            ghost,
-            offsetX: event.clientX - rect.left,
-            offsetY: event.clientY - rect.top,
-            target: null,
-        };
-
-        item.classList.add('dragging');
         item.style.visibility = 'hidden';
+        item.classList.add('dragging');
         document.body.classList.add('dragging-active');
+        activeDrag = { item, ghost, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, target: null };
         event.preventDefault();
     }
-
-    // Move the drag preview and target marker.
-    function moveDrag(event) {
-        if (!activeDrag) {
-            return;
-        }
+    function updateDrag(event) {
+        if (!activeDrag) { return; }
         activeDrag.ghost.style.left = `${event.clientX - activeDrag.offsetX}px`;
         activeDrag.ghost.style.top = `${event.clientY - activeDrag.offsetY}px`;
-
         clearDragOver();
         const candidate = document.elementFromPoint(event.clientX, event.clientY);
         const target = candidate ? candidate.closest('.card-editor-item') : null;
-        if (!target || target === activeDrag.source || !cardsList.contains(target)) {
+        if (!target || target === activeDrag.item || !cardsList.contains(target)) {
             activeDrag.target = null;
-            document.body.classList.add('dragging-invalid');
             return;
         }
-
-        document.body.classList.remove('dragging-invalid');
         target.classList.add('drag-over');
         activeDrag.target = target;
     }
-
-    // Finish the drag and persist the swap.
-    async function endDrag() {
-        if (!activeDrag) {
-            return;
-        }
-
-        const { source, target, card_id, ghost } = activeDrag;
-        source.classList.remove('dragging');
-        source.style.visibility = '';
-        if (ghost.parentNode) {
-            ghost.parentNode.removeChild(ghost);
-        }
+    function endDrag() {
+        if (!activeDrag) { return; }
+        activeDrag.item.style.visibility = '';
+        activeDrag.item.classList.remove('dragging');
+        document.body.classList.remove('dragging-active');
         clearDragOver();
-        document.body.classList.remove('dragging-active', 'dragging-invalid');
-
-        if (target && target !== source) {
-            const targetcard_id = Number(target.dataset.cardId);
-            const sourceNext = source.nextSibling;
-            const targetNext = target.nextSibling;
-
-            if (sourceNext === target) {
-                cardsList.insertBefore(target, source);
-            } else if (targetNext === source) {
-                cardsList.insertBefore(source, target);
-            } else {
-                cardsList.insertBefore(source, targetNext);
-                cardsList.insertBefore(target, sourceNext);
-            }
-
-        source.classList.add('just-swapped');
-        target.classList.add('just-swapped');
-        updatePositionLabels();
-
-        // Drop the highlight after the animation finishes.
-        setTimeout(() => {
-            source.classList.remove('just-swapped');
-            target.classList.remove('just-swapped');
-        }, 700);
-
-             try {
-                 const response = await fetch('{{ url_for("swap_cards") }}', {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
-                     body: JSON.stringify({ card_id: card_id, target_card_id: targetcard_id }),
-                 });
-                const data = await response.json();
-                if (!data.success) {
-                    window.location.reload();
-                }
-            } catch (error) {
-                window.location.reload();
-            }
+        if (activeDrag.ghost.parentNode) { activeDrag.ghost.parentNode.removeChild(activeDrag.ghost); }
+        if (activeDrag.target && activeDrag.target !== activeDrag.item) {
+            const sourceId = Number(activeDrag.item.dataset.cardId);
+            const targetId = Number(activeDrag.target.dataset.cardId);
+            fetch('{{ url_for("swap_cards") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
+                body: JSON.stringify({ card_id: sourceId, target_card_id: targetId })
+            }).then((r) => r.json()).then((data) => {
+                if (data.success) { window.location.reload(); }
+                else if (window.cardsApp) { window.cardsApp.showToast(data.error || 'Unable to swap cards.', 'error'); }
+            }).catch(() => {
+                if (window.cardsApp) { window.cardsApp.showToast('Unable to swap cards right now.', 'error'); }
+            });
         }
-
         activeDrag = null;
+        updatePositionLabels();
     }
-
-    // Attach drag support only to sortable rows.
     cardsList.querySelectorAll('.sortable-card').forEach((item) => {
         item.addEventListener('pointerdown', (event) => beginDrag(event, item));
     });
-
-    document.addEventListener('pointermove', moveDrag);
+    document.addEventListener('pointermove', updateDrag);
     document.addEventListener('pointerup', endDrag);
     document.addEventListener('pointercancel', endDrag);
-
-    const copyDeckExportBtn = document.getElementById('copyDeckExportBtn');
-    const deckExportText = document.getElementById('deckExportText');
-    if (copyDeckExportBtn && deckExportText) {
-        copyDeckExportBtn.addEventListener('click', async function() {
-            try {
-                await navigator.clipboard.writeText(deckExportText.value || '');
-                copyDeckExportBtn.textContent = 'Copied';
-                setTimeout(() => {
-                    copyDeckExportBtn.textContent = 'Copy Export Text';
-                }, 1200);
-            } catch (error) {
-                deckExportText.focus();
-                deckExportText.select();
-            }
-        });
-    }
 });
 </script>
 {% endblock %}
+
+
