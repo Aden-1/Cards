@@ -1,79 +1,171 @@
 # Database Documentation
 
-The app uses SQLite with SQLAlchemy ORM and Flask-Migrate for migrations.
+The app uses SQLite with SQLAlchemy ORM and Flask-Migrate.
 
-## Configuration
+## Current Setup
 
-- **Database**: SQLite (`cards.db`)
-- **Location**: `instance/cards.db`
-- **ORM**: Flask-SQLAlchemy
-- **Migrations**: Flask-Migrate (Alembic)
+- Database file: `instance/cards.db`
+- ORM: Flask-SQLAlchemy
+- Migrations: Flask-Migrate / Alembic
+- Search index: `public_content_fts` FTS5 virtual table for public decks and quizzes
+- Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
 
 ```bash
-flask db init        # Initialize migrations folder (first time only)
-flask db migrate     # Create a new migration
-flask db upgrade     # Apply migrations to database
-flask db downgrade   # Rollback to previous migration
+flask db init
+flask db migrate
+flask db upgrade
+flask db downgrade
 ```
 
-## Database Models
+## Models
 
 ### User
 ```python
 class User(db.Model):
-    userID = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     username = db.Column(db.String(100), nullable=False, unique=True)
-    decksOwned = db.relationship('Deck', backref='owner', cascade='all, delete-orphan')
+    email = db.Column(db.String(255), nullable=True, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='standard')
+    theme_preference = db.Column(db.String(10), nullable=False, default='dark')
+    mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
+    match_strategy_preference = db.Column(db.String(30), nullable=False, default='standard_shuffle')
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
+    quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### Deck
 ```python
 class Deck(db.Model):
-    deckID = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    ownedBy = db.Column(db.Integer, db.ForeignKey('user.userID'), nullable=False)
+    deck_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
     description = db.Column(db.String(255), nullable=True)
+    detailed_description = db.Column(db.Text, nullable=True)
+    tags = db.Column(db.String(255), nullable=True)
     sortable = db.Column(db.Boolean, default=False)
-    cards = db.relationship('Card', backref='deck', cascade='all, delete-orphan')
+    is_public = db.Column(db.Boolean, default=False)
+    cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### Card
 ```python
 class Card(db.Model):
-    cardID = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    deckID = db.Column(db.Integer, db.ForeignKey('deck.deckID'), nullable=False)
+    card_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id'), nullable=False)
     question = db.Column(db.Text, nullable=False)
     position = db.Column(db.Integer, nullable=False)
-    answers = db.relationship('CardAnswer', backref='card', cascade='all, delete-orphan')
+    answers = db.relationship('CardAnswer', backref='card', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='card', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### CardAnswer
 ```python
 class CardAnswer(db.Model):
-    answerID = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    cardID = db.Column(db.Integer, db.ForeignKey('card.cardID'), nullable=False)
+    answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
     answer = db.Column(db.Text, nullable=False)
 ```
 
-## Relational Models
+### CardMasteryProgress
+```python
+class CardMasteryProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='new')
+    understood_count = db.Column(db.Integer, nullable=False, default=0)
+    learning_count = db.Column(db.Integer, nullable=False, default=0)
+    dont_know_count = db.Column(db.Integer, nullable=False, default=0)
+    reviewed_count = db.Column(db.Integer, nullable=False, default=0)
+    last_rating = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'card_id', name='uq_card_mastery_user_card'),
+    )
+```
 
-    User (userID PK, username)
-    Deck (deckID PK, ownedBy FK, description, sortable)
-    Card (cardID PK, deckID FK, question, position)
-    CardAnswer (answerID PK, cardID FK, answer)
+### MatchPairProgress
+```python
+class MatchPairProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    answer_id = db.Column(db.Integer, db.ForeignKey('card_answer.answer_id'), nullable=False, index=True)
+    correct_count = db.Column(db.Integer, nullable=False, default=0)
+    incorrect_count = db.Column(db.Integer, nullable=False, default=0)
+    last_outcome = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'answer_id', name='uq_match_pair_user_answer'),
+    )
+```
 
-Relationships:
-- User 1:N Deck
-- Deck 1:N Card
-- Card 1:N CardAnswer
+### Quiz
+```python
+class Quiz(db.Model):
+    quiz_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    tags = db.Column(db.String(255), nullable=True)
+    is_public = db.Column(db.Boolean, default=False)
+    questions = db.relationship('QuizQuestion', backref='quiz', lazy=True, cascade='all, delete-orphan')
+```
 
-Cascade delete is configured so deleting a user/deck/card removes all child records.
+### QuizQuestion
+```python
+class QuizQuestion(db.Model):
+    question_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id'), nullable=False)
+    question = db.Column(db.Text, nullable=False)
+    type = db.Column(db.String(50), nullable=False, default='dynamic')
+    options = db.relationship('QuizOption', backref='question', lazy=True, cascade='all, delete-orphan')
+```
+
+### QuizOption
+```python
+class QuizOption(db.Model):
+    option_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    question_id = db.Column(db.Integer, db.ForeignKey('quiz_question.question_id'), nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    is_correct = db.Column(db.Boolean, default=False)
+```
+
+## Relationship Summary
+
+- `User` 1:N `Deck`
+- `User` 1:N `Quiz`
+- `User` 1:N `CardMasteryProgress`
+- `Deck` 1:N `Card`
+- `Card` 1:N `CardAnswer`
+- `Card` 1:N `CardMasteryProgress`
+- `CardAnswer` 1:N `MatchPairProgress`
+- `Quiz` 1:N `QuizQuestion`
+- `QuizQuestion` 1:N `QuizOption`
+
+## Behavior Notes
+
+- `Card.position` stores the saved deck order for the reorder game.
+- Removing the last `CardAnswer` deletes the parent `Card`.
+- Editing a card replaces its full answer set.
+- Public decks and quizzes are mirrored into the FTS index for search.
+- The search index stores title, description, and tags only.
+- Passwords are stored as Werkzeug password hashes, not plaintext.
+- The first registered user is assigned the `admin` role.
+- `CardMasteryProgress` is unique per `(user_id, card_id)`.
+- `MatchPairProgress` is unique per `(user_id, answer_id)`.
+- User records persist theme, match strategy, and mastery strategy preferences.
+- The app includes lightweight startup self-healing for newer SQLite columns and the match progress table.
 
 ## Usage
 
-Models are imported from `models.py`:
-
 ```python
-from models import db, User, Deck, Card, CardAnswer
+from models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption
 ```

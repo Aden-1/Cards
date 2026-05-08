@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Admin Users{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Admin Console</span>
+    <h1 class="page-title">User account management</h1>
+    <p class="page-description">Review roles, promote accounts, and remove users from a cleaner operational view.</p>
+</section>
+<section class="admin-table-shell fade-in">
+    <div class="panel-header mb-3">
+        <div>
+            <h2 class="h3 mb-1">Accounts</h2>
+            <p class="muted-copy mb-0">{{ users|length }} total account{{ '' if users|length == 1 else 's' }}</p>
+        </div>
+    </div>
+    {% if users %}
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for user in users %}
+                <tr>
+                    <td>{{ user.user_id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.email or 'No email' }}</td>
+                    <td>
+                        <span class="status-chip {{ 'public' if user.role == 'admin' else ('warning' if user.role == 'moderator' else 'info') }}">{{ user.role }}</span>
+                    </td>
+                    <td>{{ 'Active' if user.is_active else 'Inactive' }}</td>
+                    <td>
+                        <div class="toolbar-row">
+                            {% if user.role == 'standard' %}
+                            <form method="post" action="{{ url_for('admin_users') }}">
+                                <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                                <input type="hidden" name="action" value="promote_moderator">
+                                <button class="btn-surface" type="submit">Make Moderator</button>
+                            </form>
+                            <form method="post" action="{{ url_for('admin_users') }}">
+                                <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                                <input type="hidden" name="action" value="promote_admin">
+                                <button class="btn-primary-surface" type="submit">Make Admin</button>
+                            </form>
+                            {% elif user.role == 'moderator' %}
+                            <form method="post" action="{{ url_for('admin_users') }}">
+                                <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                                <input type="hidden" name="action" value="demote_standard">
+                                <button class="btn-surface" type="submit">Make Standard</button>
+                            </form>
+                            <form method="post" action="{{ url_for('admin_users') }}">
+                                <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                                <input type="hidden" name="action" value="promote_admin">
+                                <button class="btn-primary-surface" type="submit">Make Admin</button>
+                            </form>
+                            {% else %}
+                            <span class="small-muted">Already admin</span>
+                            {% endif %}
+                            {% if current_user.user_id != user.user_id %}
+                            <form method="post" action="{{ url_for('admin_users') }}">
+                                <input type="hidden" name="user_id" value="{{ user.user_id }}">
+                                <input type="hidden" name="action" value="delete">
+                                <button class="btn-danger-surface" type="submit">Delete Account</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-card">No users found.</div>
+    {% endif %}
+</section>
+{% endblock %}

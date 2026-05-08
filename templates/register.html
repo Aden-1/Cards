@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Register{% endblock %}
+
+{% block content %}
+<section class="auth-grid fade-in">
+    <article class="hero-panel">
+        <span class="page-kicker">Create Your Space</span>
+        <h1 class="page-title">Start building a sharper learning system.</h1>
+        <p class="page-description">Create an account to manage decks, publish public study sets, unlock mastery mode, and save custom quizzes.</p>
+        <ul class="auth-hero-list">
+            <li>Own private and public decks from one studio.</li>
+            <li>Turn strong public content into reusable copies.</li>
+            <li>Track mastery progress across repeated review rounds.</li>
+        </ul>
+    </article>
+    <article class="auth-card">
+        <div>
+            <span class="page-kicker">Join</span>
+            <h2 class="h3 mb-2">Create Account</h2>
+            <p class="muted-copy mb-0">A username and password are enough to get started.</p>
+        </div>
+        {% if error %}
+        <div class="alert alert-danger mb-0">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="{{ url_for('register') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="username">Username</label>
+                <input class="form-control" type="text" id="username" name="username" autocomplete="username" minlength="3" maxlength="40" required placeholder="Choose a username">
+            </div>
+            <div>
+                <label class="form-label" for="email">Email Optional</label>
+                <input class="form-control" type="email" id="email" name="email" autocomplete="email" placeholder="name@example.com">
+            </div>
+            <div>
+                <label class="form-label" for="password">Password</label>
+                <input class="form-control" type="password" id="password" name="password" autocomplete="new-password" minlength="8" required placeholder="Create a password">
+            </div>
+            <div>
+                <label class="form-label" for="confirm_password">Confirm Password</label>
+                <input class="form-control" type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="8" required placeholder="Repeat your password">
+            </div>
+            <div class="auth-actions">
+                <button class="btn-primary-surface" type="submit">Create Account</button>
+                <a class="btn-surface" href="{{ url_for('login') }}">Log In</a>
+            </div>
+        </form>
+    </article>
+</section>
+{% endblock %}

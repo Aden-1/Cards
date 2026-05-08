@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Quiz{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Quiz Launcher</span>
+    <h1 class="page-title">Turn decks and custom quizzes into scored practice.</h1>
+    <p class="page-description">Generate a quiz from a deck or open one of your saved custom quizzes without leaving the current interface.</p>
+</section>
+<section class="editor-grid fade-in">
+    <article class="editor-card">
+        <span class="page-kicker">Deck Source</span>
+        <h2 class="h3 mb-3">Generate from a deck</h2>
+        {% if current_user %}
+        <form method="get" action="{{ url_for('quiz') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="deck_id">Deck</label>
+                <select class="form-select" id="deck_id" name="deck_id">
+                    <option value="">Choose a deck...</option>
+                    {% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-actions"><button class="btn-primary-surface" type="submit">Generate Deck Quiz</button></div>
+        </form>
+        {% else %}
+        <div class="section-stack">
+            <p class="muted-copy mb-0">Guests can still take a quiz when they open a public deck or public quiz from search.</p>
+            <div class="deck-actions">
+                <a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Decks</a>
+                <a class="btn-surface" href="{{ url_for('login', next=url_for('quiz')) }}">Log In</a>
+            </div>
+        </div>
+        {% endif %}
+    </article>
+    <article class="editor-card">
+        <span class="page-kicker">Custom Source</span>
+        <h2 class="h3 mb-3">Open a custom quiz</h2>
+        {% if current_user %}
+        <form method="get" action="{{ url_for('quiz') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="custom_quiz_id">Custom Quiz</label>
+                <select class="form-select" id="custom_quiz_id" name="custom_quiz_id">
+                    <option value="">Choose a custom quiz...</option>
+                    {% for cq in custom_quizzes %}<option value="{{ cq.quiz_id }}" {% if selected_custom_quiz_id == cq.quiz_id %}selected{% endif %}>{{ cq.title }} ({{ cq.questions|length }} Qs)</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-actions"><button class="btn-surface" type="submit">Take Custom Quiz</button></div>
+        </form>
+        <p class="small-muted mb-0">Want to build a specific test? <a href="{{ url_for('edit_quiz_route') if current_user else url_for('login') }}">Manage quizzes</a>.</p>
+        {% else %}
+        <div class="section-stack">
+            <p class="muted-copy mb-0">Log in to browse your saved quizzes, or search the public library to open one directly.</p>
+            <div class="deck-actions">
+                <a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Quizzes</a>
+                <a class="btn-surface" href="{{ url_for('login', next=url_for('quiz')) }}">Log In</a>
+            </div>
+        </div>
+        {% endif %}
+    </article>
+</section>
+{% if quiz_data %}
+<section class="surface p-4 fade-in mt-4" id="quizGameSection">
+    <div class="panel-header mb-3">
+        <div><span class="page-kicker">Live Quiz</span><h2 class="h3 mb-1">Answer every question, then score the run.</h2></div>
+    </div>
+    <div class="quiz-stack" id="quizForm">
+        {% for q in quiz_data %}
+        <article class="quiz-question-shell quiz-question" data-question-id="{{ q.id }}">
+            <h3 class="h5 mb-3">{{ loop.index }}. {{ q.question }}</h3>
+            <div class="section-stack">
+                {% for opt in q.options %}
+                <label class="option-row form-check">
+                    <input class="form-check-input option-checkbox me-2" type="checkbox" value="{{ opt.text|escape }}" id="opt_{{ q.id }}_{{ loop.index }}">
+                    <span class="form-check-label" for="opt_{{ q.id }}_{{ loop.index }}">{{ opt.text }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <div class="feedback mt-3 small-muted" style="display:none;"></div>
+        </article>
+        {% endfor %}
+        <div id="quizScore"></div>
+        <div class="quiz-actions mt-2">
+            <button id="submitQuiz" class="btn-primary-surface" type="button">Submit Quiz</button>
+            <a id="retakeQuiz" href="javascript:window.location.reload()" class="btn-surface" style="display:none;">Retake Quiz</a>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if quiz_data %}
+<script>
+const quizData = {{ quiz_data|tojson }};
+document.getElementById('submitQuiz')?.addEventListener('click', () => {
+    const answers = {};
+    document.querySelectorAll('.quiz-question').forEach((el) => {
+        const qId = el.dataset.questionId;
+        const selected = [];
+        el.querySelectorAll('.option-checkbox:checked').forEach((cb) => selected.push(cb.value));
+        answers[qId] = selected;
+    });
+    fetch('{{ url_for("score_quiz") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
+        body: JSON.stringify({ answers: answers, quiz_data: quizData })
+    })
+    .then((r) => r.json())
+    .then((data) => {
+        if (!data.success) { return; }
+        document.getElementById('quizScore').innerHTML = `<div class="quiz-score-banner">Your Score: ${data.score} / ${data.total}</div>`;
+        data.results.forEach((res) => {
+            const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
+            if (!qEl) { return; }
+            const feedback = qEl.querySelector('.feedback');
+            feedback.style.display = 'block';
+            if (res.is_correct) {
+                qEl.classList.add('correct');
+                feedback.className = 'feedback mt-3';
+                feedback.innerHTML = '<span class="status-chip public">Correct</span>';
+            } else {
+                qEl.classList.add('incorrect');
+                feedback.className = 'feedback mt-3';
+                feedback.innerHTML = `<span class="status-chip danger">Incorrect</span> <span class="small-muted">Correct answers: ${res.correct_answers.join(', ')}</span>`;
+            }
+        });
+        document.getElementById('submitQuiz').style.display = 'none';
+        document.getElementById('retakeQuiz').style.display = 'inline-flex';
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

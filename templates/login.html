@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Log In{% endblock %}
+
+{% block content %}
+<section class="auth-grid fade-in">
+    <article class="hero-panel">
+        <span class="page-kicker">Welcome Back</span>
+        <h1 class="page-title">Log in and pick up where your study flow left off.</h1>
+        <p class="page-description">Access your decks, public copies, mastery progress, and quiz editor from the redesigned workspace.</p>
+        <ul class="auth-hero-list">
+            <li>Resume focused review from the study view.</li>
+            <li>Manage deck publishing, tags, and card edits.</li>
+            <li>Jump straight into mastery rounds and quiz practice.</li>
+        </ul>
+    </article>
+    <article class="auth-card">
+        <div>
+            <span class="page-kicker">Account Access</span>
+            <h2 class="h3 mb-2">Log In</h2>
+            <p class="muted-copy mb-0">Use your account credentials to continue.</p>
+        </div>
+        {% if error %}
+        <div class="alert alert-danger mb-0">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="{{ url_for('login') }}" class="section-stack">
+            <input type="hidden" name="next" value="{{ next or request.args.get('next', '') }}">
+            <div>
+                <label class="form-label" for="username">Username</label>
+                <input class="form-control" type="text" id="username" name="username" autocomplete="username" required placeholder="Enter your username">
+            </div>
+            <div>
+                <label class="form-label" for="password">Password</label>
+                <input class="form-control" type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password">
+            </div>
+            <div class="auth-actions">
+                <button class="btn-primary-surface" type="submit">Log In</button>
+                <a class="btn-surface" href="{{ url_for('register') }}">Create Account</a>
+            </div>
+        </form>
+    </article>
+</section>
+{% endblock %}

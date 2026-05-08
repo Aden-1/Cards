@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Public Quiz{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Public Quiz Preview</span>
+    <h1 class="page-title">{{ quiz.title }}</h1>
+    <p class="page-description">Inspect the quiz structure, then take it live or copy it into your own quiz collection.</p>
+</section>
+<section class="section-stack fade-in">
+    <article class="public-card">
+        <div class="panel-header">
+            <div>
+                <h2 class="h3 mb-1">Quiz Details</h2>
+                <p class="muted-copy mb-0">{{ quiz.questions|length }} question{{ '' if quiz.questions|length == 1 else 's' }}</p>
+            </div>
+            <span class="status-chip public">Public</span>
+        </div>
+        {% if quiz.description %}<p class="muted-copy mb-0">{{ quiz.description }}</p>{% endif %}
+        {% if quiz.tags %}<div class="card-rail">{% for tag in quiz.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
+        <div class="deck-actions">
+            <a class="btn-primary-surface" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
+            {% if quiz.owned_by == user_id %}
+            <a class="btn-surface" href="{{ url_for('edit_quiz_route', quiz_id=quiz.quiz_id) }}">Edit</a>
+            {% elif current_user %}
+            <form method="post" action="{{ url_for('copy_public_quiz') }}">
+                <input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}">
+                <button class="btn-surface" type="submit">Copy To My Quizzes</button>
+            </form>
+            {% else %}
+            <a class="btn-surface" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
+            {% endif %}
+            <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back To Search</a>
+        </div>
+    </article>
+    <article class="surface p-4">
+        <div class="panel-header mb-3"><h2 class="h3 mb-0">Questions</h2></div>
+        {% if quiz.questions %}
+        <div class="public-preview-list stagger">
+            {% for question in quiz.questions %}
+            <article class="card-editor-item">
+                <div class="card-item-question"><strong>{{ loop.index }}.</strong> {{ question.question }} <span class="status-chip info">{{ question.type }}</span></div>
+                <div class="answer-list mt-3">
+                    {% for option in question.options %}<div class="answer-row"><span class="answer-row-text">{{ option.text }}</span></div>{% endfor %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-card">This quiz has no questions yet.</div>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

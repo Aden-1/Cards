@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Search{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Search Library</span>
+    <h1 class="page-title">Public decks and quizzes in one place</h1>
+    {% if query %}
+    <p class="page-description">Showing results for <strong>{{ query }}</strong>. {% if (decks or quizzes) and not has_exact_match %}No strong exact matches were found, so related results are shown too.{% endif %}</p>
+    {% else %}
+    <p class="page-description">Search tags, topics, and study sets from the public library.</p>
+    {% endif %}
+    {% if expanded_tokens %}<p class="small-muted mb-0">Related terms used: {{ expanded_tokens[:8] | join(', ') }}</p>{% endif %}
+</section>
+<form class="search-bar fade-in mb-4" action="{{ url_for('search') }}" method="get">
+    <input id="publicSearchInput" class="form-control form-control-lg" data-random-placeholder="search" type="search" name="q" value="{{ query }}" placeholder="Search the public library">
+    <button class="btn-primary-surface" type="submit">Search</button>
+</form>
+<section class="section-stack">
+    <article class="surface p-4 fade-in">
+        <div class="panel-header mb-3">
+            <div><h2 class="h3 mb-1">Decks</h2><p class="muted-copy mb-0">{{ decks|length }} result{{ '' if decks|length == 1 else 's' }}</p></div>
+        </div>
+        {% if decks %}
+        <div class="public-grid stagger">
+            {% for deck in decks %}
+            <article class="public-card">
+                <div class="panel-header">
+                    <h3 class="h5 mb-0">{{ deck.description }}</h3>
+                    <span class="status-chip public">Public</span>
+                </div>
+                {% if deck.is_owned %}<div class="status-chip success">You own this deck</div>{% endif %}
+                {% if deck.tags %}
+                <div class="card-rail">
+                    {% for tag in deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}
+                </div>
+                {% endif %}
+                {% if deck.detailed_description %}<p class="muted-copy mb-0">{{ deck.detailed_description[:100] }}{{ '...' if deck.detailed_description|length > 100 else '' }}</p>{% endif %}
+                <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
+                <div class="deck-actions mt-auto">
+                    <a class="btn-primary-surface" href="{{ url_for('public_deck', deck_id=deck.deck_id) }}">View</a>
+                    {% if current_user and deck.is_owned %}
+                    <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
+                    {% else %}
+                    <a class="btn-surface" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-card">{% if query %}No public decks matched <strong>{{ query }}</strong>.{% else %}Enter a search term above to find public decks.{% endif %}</div>
+        {% endif %}
+    </article>
+    <article class="surface p-4 fade-in">
+        <div class="panel-header mb-3">
+            <div><h2 class="h3 mb-1">Quizzes</h2><p class="muted-copy mb-0">{{ quizzes|length }} result{{ '' if quizzes|length == 1 else 's' }}</p></div>
+        </div>
+        {% if quizzes %}
+        <div class="public-grid stagger">
+            {% for quiz in quizzes %}
+            <article class="public-card">
+                <div class="panel-header">
+                    <h3 class="h5 mb-0">{{ quiz.title }}</h3>
+                    <span class="status-chip public">Public</span>
+                </div>
+                {% if quiz.is_owned %}<div class="status-chip success">You own this quiz</div>{% endif %}
+                {% if quiz.tags %}
+                <div class="card-rail">
+                    {% for tag in quiz.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}
+                </div>
+                {% endif %}
+                {% if quiz.description %}<p class="muted-copy mb-0">{{ quiz.description[:100] }}{{ '...' if quiz.description|length > 100 else '' }}</p>{% endif %}
+                <div class="score-chip">{{ quiz.question_count }} question{{ '' if quiz.question_count == 1 else 's' }}</div>
+                <div class="deck-actions mt-auto">
+                    <a class="btn-primary-surface" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
+                    <a class="btn-surface" href="{{ url_for('public_quiz', quiz_id=quiz.quiz_id) }}">Preview</a>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-card">{% if query %}No public quizzes matched <strong>{{ query }}</strong>.{% else %}Enter a search term above to find public quizzes.{% endif %}</div>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

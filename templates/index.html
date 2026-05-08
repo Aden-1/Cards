@@ -1,36 +1,77 @@
 {% extends "base.html" %}
 
-{% block title %}Home - Cards App{% endblock %}
+{% block title %}Cards | Discover{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-8 mx-auto">
-        <h1>Cards App</h1>
-        <p class="lead">A unique learning app using flashcards!</p>
-
-        <div class="card mb-4">
-            <div class="card-body">
-                <h5 class="card-title">How to use</h5>
-                <ol>
-                    <li>Go to "Manage Decks" to create a new deck</li>
-                    <li>Add flashcards with questions and answers</li>
-                    <li>Go to "Study Cards" to review your flashcards</li>
-                    <li>Click the button to reveal answers</li>
-                </ol>
-            </div>
+<section class="hero-layout fade-in">
+    <article class="hero-panel">
+        <span class="page-kicker">Discovery Engine</span>
+        <h1 class="display-title">Make <span class="glow-text">great decks</span> effortless to discover.</h1>
+        <p class="lead-copy">A redesigned learning hub for building decks, finding public study sets, and jumping into the right mode without friction.</p>
+        <form class="hero-search home-search" action="{{ url_for('search') }}" method="get">
+            <input id="homeSearchInput" class="form-control form-control-lg" data-random-placeholder="search" type="search" name="q" placeholder="Search public decks and quizzes">
+            <button class="btn-primary-surface home-cta" type="submit">Search Library</button>
+        </form>
+        <div class="metrics-grid stagger">
+            <div class="metric-card"><span class="metric-value">Adaptive</span><span class="metric-label">Study, game, quiz, and mastery flows</span></div>
+            <div class="metric-card"><span class="metric-value">Public</span><span class="metric-label">Searchable decks and custom quizzes</span></div>
+            <div class="metric-card"><span class="metric-value">Fast</span><span class="metric-label">Low-friction creation and instant practice</span></div>
         </div>
-
-        <div class="row">
-            <div class="col-md-6 mb-3">
-                <a href="{{ url_for('edit') }}" class="btn btn-primary btn-lg w-100">Manage Decks</a>
-            </div>
-            <div class="col-md-6 mb-3">
-                <a href="{{ url_for('view') }}" class="btn btn-success btn-lg w-100">Study Cards</a>
-            </div>
+    </article>
+    <aside class="info-panel stagger">
+        <div>
+            <span class="page-kicker">Top Categories</span>
+            <h2 class="page-title">Jump into the mode that fits the moment.</h2>
         </div>
+        <div class="card-rail">
+            {% if featured_tags %}
+                {% for item in featured_tags %}
+                <a class="tag-chip" href="{{ url_for('search', q=item.tag) }}">{{ item.tag }}</a>
+                {% endfor %}
+            {% else %}
+                <a class="tag-chip" href="{{ url_for('search') }}">Browse public decks</a>
+            {% endif %}
+        </div>
+        <p class="muted-copy mb-0">These are the most commonly used tags across public decks.</p>
+        <div class="hero-actions">
+            <a class="btn-primary-surface home-cta" href="{{ url_for('edit') if current_user else url_for('register') }}">Manage Decks</a>
+            <a class="btn-surface home-cta" href="{{ url_for('view') }}">Study Mode</a>
+            <a class="btn-surface home-cta" href="{{ url_for('master') if current_user else url_for('login', next=url_for('master')) }}">Master Mode</a>
+            <a class="btn-surface home-cta" href="{{ url_for('match') }}">Matching Game</a>
+            <a class="btn-surface home-cta" href="{{ url_for('reorder') }}">Reorder Game</a>
+            <a class="btn-surface home-cta" href="{{ url_for('quiz') }}">Take a Quiz</a>
+        </div>
+    </aside>
+</section>
+<section class="surface p-4 p-lg-5 fade-in">
+    <div class="panel-header">
+        <div>
+            <span class="page-kicker">Featured Decks</span>
+            <h2 class="page-title">Live public decks worth exploring.</h2>
+            <p class="muted-copy mb-0">A rotating set of public decks pulled from the current library.</p>
+        </div>
+        <a class="btn-surface" href="{{ url_for('search') }}">Search all public decks</a>
     </div>
-</div>
+    <div class="deck-grid stagger mt-4" id="featuredDecks">
+        {% if featured_decks %}
+            {% for deck in featured_decks %}
+            <article class="deck-card">
+                <span class="status-chip public">Featured</span>
+                <h3 class="h4 mb-0">{{ deck.description }}</h3>
+                <p class="muted-copy mb-0">{{ deck.detailed_description or 'Public study deck ready to review.' }}</p>
+                <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
+                <div class="deck-actions mt-auto">
+                    <a class="btn-primary-surface home-cta" href="{{ url_for('public_deck', deck_id=deck.deck_id) }}">View Deck</a>
+                </div>
+            </article>
+            {% endfor %}
+        {% else %}
+            <article class="deck-card">
+                <span class="status-chip warning">Unavailable</span>
+                <h3 class="h4 mb-0">No featured decks right now</h3>
+                <p class="muted-copy mb-0">Try the search page to browse the full public library.</p>
+            </article>
+        {% endif %}
+    </div>
+</section>
 {% endblock %}
-
-
-
