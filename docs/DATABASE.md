@@ -8,6 +8,7 @@ The app uses SQLite with SQLAlchemy ORM and Flask-Migrate.
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
 - Search index: `public_content_fts` FTS5 virtual table for public decks and quizzes
+- Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
 
@@ -25,7 +26,18 @@ flask db downgrade
 class User(db.Model):
     user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     username = db.Column(db.String(100), nullable=False, unique=True)
+    email = db.Column(db.String(255), nullable=True, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='standard')
+    theme_preference = db.Column(db.String(10), nullable=False, default='dark')
+    mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
+    match_strategy_preference = db.Column(db.String(30), nullable=False, default='standard_shuffle')
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
+    quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### Deck
@@ -49,6 +61,7 @@ class Card(db.Model):
     question = db.Column(db.Text, nullable=False)
     position = db.Column(db.Integer, nullable=False)
     answers = db.relationship('CardAnswer', backref='card', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='card', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### CardAnswer
@@ -57,6 +70,41 @@ class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
     answer = db.Column(db.Text, nullable=False)
+```
+
+### CardMasteryProgress
+```python
+class CardMasteryProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='new')
+    understood_count = db.Column(db.Integer, nullable=False, default=0)
+    learning_count = db.Column(db.Integer, nullable=False, default=0)
+    dont_know_count = db.Column(db.Integer, nullable=False, default=0)
+    reviewed_count = db.Column(db.Integer, nullable=False, default=0)
+    last_rating = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'card_id', name='uq_card_mastery_user_card'),
+    )
+```
+
+### MatchPairProgress
+```python
+class MatchPairProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    answer_id = db.Column(db.Integer, db.ForeignKey('card_answer.answer_id'), nullable=False, index=True)
+    correct_count = db.Column(db.Integer, nullable=False, default=0)
+    incorrect_count = db.Column(db.Integer, nullable=False, default=0)
+    last_outcome = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'answer_id', name='uq_match_pair_user_answer'),
+    )
 ```
 
 ### Quiz
@@ -94,8 +142,11 @@ class QuizOption(db.Model):
 
 - `User` 1:N `Deck`
 - `User` 1:N `Quiz`
+- `User` 1:N `CardMasteryProgress`
 - `Deck` 1:N `Card`
 - `Card` 1:N `CardAnswer`
+- `Card` 1:N `CardMasteryProgress`
+- `CardAnswer` 1:N `MatchPairProgress`
 - `Quiz` 1:N `QuizQuestion`
 - `QuizQuestion` 1:N `QuizOption`
 
@@ -106,9 +157,15 @@ class QuizOption(db.Model):
 - Editing a card replaces its full answer set.
 - Public decks and quizzes are mirrored into the FTS index for search.
 - The search index stores title, description, and tags only.
+- Passwords are stored as Werkzeug password hashes, not plaintext.
+- The first registered user is assigned the `admin` role.
+- `CardMasteryProgress` is unique per `(user_id, card_id)`.
+- `MatchPairProgress` is unique per `(user_id, answer_id)`.
+- User records persist theme, match strategy, and mastery strategy preferences.
+- The app includes lightweight startup self-healing for newer SQLite columns and the match progress table.
 
 ## Usage
 
 ```python
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption
+from models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption
 ```
