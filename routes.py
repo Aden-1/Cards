@@ -440,6 +440,120 @@ def reorder():
     )
 
 
+# Mastery mode page (spaced repetition-style practice).
+@login_required
+def master():
+    from app import get_accessible_decks, get_mastery_snapshot
+
+    user_id = _current_user_id()
+    decks = get_accessible_decks(user_id)
+    deck_data = [{
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
+        'sortable': deck.sortable,
+        'is_public': deck.is_public,
+        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
+        'card_count': len(deck.cards),
+    } for deck in decks]
+
+    selected_deck_id = _int_value(request.args.get('deck_id'))
+    accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
+    if selected_deck_id not in accessible_deck_ids:
+        selected_deck_id = None
+
+    mastery_snapshot = get_mastery_snapshot(user_id, selected_deck_id) if selected_deck_id else None
+    round_restarted = False
+    selected_master_card = mastery_snapshot['current_card'] if mastery_snapshot else None
+
+    if mastery_snapshot:
+        remaining_card_ids = [card['card_id'] for card in mastery_snapshot['cards'] if card['status'] != 'mastered']
+        seen_map = session.get('master_seen_cards', {})
+        deck_key = str(selected_deck_id)
+        seen_in_round = [int(card_id) for card_id in seen_map.get(deck_key, [])]
+        unseen_ids = [card_id for card_id in remaining_card_ids if card_id not in seen_in_round]
+
+        if remaining_card_ids and not unseen_ids:
+            # One full pass finished; start the next pass using only unmastered cards.
+            round_restarted = True
+            seen_in_round = []
+            seen_map[deck_key] = seen_in_round
+            session['master_seen_cards'] = seen_map
+            unseen_ids = list(remaining_card_ids)
+
+        if unseen_ids:
+            selected_master_card = next((card for card in mastery_snapshot['cards'] if card['card_id'] == unseen_ids[0]), None)
+        else:
+            selected_master_card = None
+
+    return render_template(
+        'master.html',
+        user_id=user_id,
+        decks=deck_data,
+        selected_deck_id=selected_deck_id,
+        mastery_snapshot=mastery_snapshot,
+        selected_master_card=selected_master_card,
+        round_restarted=round_restarted,
+    )
+
+
+@login_required
+def master_rate_route():
+    from app import record_mastery_rating
+    from models import Deck
+
+    data = _request_data()
+    user_id = _current_user_id()
+    deck_id = _int_value(data.get('deck_id'))
+    card_id = _int_value(data.get('card_id'))
+    rating = (data.get('rating') or '').strip()
+
+    if not deck_id or not card_id:
+        return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck and card are required.', level='error')
+
+    deck_record = Deck.query.get(deck_id)
+    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+        return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
+
+    result = record_mastery_rating(user_id=user_id, deck_id=deck_id, card_id=card_id, rating=rating)
+    if not result.get('success'):
+        return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice', notice=result.get('error', 'Could not save rating.'), level='error')
+
+    seen_map = session.get('master_seen_cards', {})
+    deck_key = str(deck_id)
+    deck_seen = [int(existing) for existing in seen_map.get(deck_key, [])]
+    if card_id not in deck_seen:
+        deck_seen.append(card_id)
+    seen_map[deck_key] = deck_seen
+    session['master_seen_cards'] = seen_map
+
+    return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice')
+
+
+@login_required
+def master_reset_route():
+    from app import reset_mastery_progress
+    from models import Deck
+
+    data = _request_data()
+    user_id = _current_user_id()
+    deck_id = _int_value(data.get('deck_id'))
+
+    if not deck_id:
+        return _redirect_with_fragment('master', notice='Deck is required.', level='error')
+
+    deck_record = Deck.query.get(deck_id)
+    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+        return _redirect_with_fragment('master', notice='Deck not found.', level='error')
+
+    reset_mastery_progress(user_id=user_id, deck_id=deck_id)
+    seen_map = session.get('master_seen_cards', {})
+    seen_map.pop(str(deck_id), None)
+    session['master_seen_cards'] = seen_map
+    return _redirect_with_fragment('master', deck_id=deck_id, fragment='mastery-practice', notice='Mastery progress reset for this deck.', level='success')
+
+
 # Deck routes.
 
 # Handle deck creation.
@@ -1285,6 +1399,7 @@ def register_routes(app):
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
+    app.add_url_rule('/master', endpoint='master', view_func=master, methods=['GET'])
     app.add_url_rule('/match', endpoint='match', view_func=match)
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
     app.add_url_rule('/search', endpoint='search', view_func=search_route)
@@ -1303,6 +1418,8 @@ def register_routes(app):
     app.add_url_rule('/edit_quiz_question', endpoint='edit_quiz_question', view_func=edit_quiz_question_route, methods=['POST'])
     app.add_url_rule('/delete_quiz_question', endpoint='delete_quiz_question', view_func=delete_quiz_question_route, methods=['POST'])
     app.add_url_rule('/score_quiz', endpoint='score_quiz', view_func=score_quiz_route, methods=['POST'])
+    app.add_url_rule('/master/rate', endpoint='master_rate', view_func=master_rate_route, methods=['POST'])
+    app.add_url_rule('/master/reset', endpoint='master_reset', view_func=master_reset_route, methods=['POST'])
 
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=create_deck_route, methods=['POST'])

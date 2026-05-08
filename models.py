@@ -18,6 +18,7 @@ class User(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
     quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -49,6 +50,7 @@ class Card(db.Model):
     question = db.Column(db.Text, nullable=False)
     position = db.Column(db.Integer, nullable=False)
     answers = db.relationship('CardAnswer', backref='card', lazy=True, cascade='all, delete-orphan')
+    mastery_progress = db.relationship('CardMasteryProgress', backref='card', lazy=True, cascade='all, delete-orphan')
 
 
 # Single accepted answer for a card.
@@ -56,6 +58,25 @@ class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
     answer = db.Column(db.Text, nullable=False)
+
+
+# Per-user learning state for one card.
+class CardMasteryProgress(db.Model):
+    progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='new')
+    understood_count = db.Column(db.Integer, nullable=False, default=0)
+    learning_count = db.Column(db.Integer, nullable=False, default=0)
+    dont_know_count = db.Column(db.Integer, nullable=False, default=0)
+    reviewed_count = db.Column(db.Integer, nullable=False, default=0)
+    last_rating = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'card_id', name='uq_card_mastery_user_card'),
+    )
 
 # Custom quiz tables.
 class Quiz(db.Model):

@@ -13,6 +13,7 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Mark decks and quizzes public or private
 - Search public decks and custom quizzes
 - Build custom quizzes with static or dynamic questions
+- Master a deck with per-card confidence ratings and persistent progress
 
 ## Quick Start
 
@@ -53,6 +54,7 @@ Visit `http://localhost:5000`
 - `/edit` manages decks and cards
 - `/view` shows study mode
 - `/match` runs the matching game
+- `/master` runs mastery mode with persistent per-card progress
 - `/reorder` runs the ordering game
 - `/search` finds public decks and quizzes
 - `/quiz` launches deck or custom quizzes
@@ -64,6 +66,18 @@ Visit `http://localhost:5000`
 - SQLite data lives in `instance/cards.db`
 - Run `python -m flask db upgrade` after pulling schema changes
 - Search falls back to plain matching if the FTS index is unavailable
+
+## Master Mode Notes
+
+- Master mode is a separate page from standard study mode (`/master`).
+- It requires a logged-in account so progress can be saved per user.
+- Each card is rated as:
+  - `I Know This` (marks card as mastered)
+  - `Still Learning` (keeps card in rotation)
+  - `I Missed This` (keeps card in rotation)
+- The app persists progress in `card_mastery_progress` (new migration required).
+- After one pass through all currently unmastered cards, the app starts a new pass automatically using only cards that are still unmastered.
+- When all cards are mastered, the deck is marked complete until the user chooses `Reset Progress`.
 
 ## Related Docs
 

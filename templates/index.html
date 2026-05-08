@@ -23,6 +23,9 @@
                     <a class="btn-hero app-btn app-btn-mint" href="{{ url_for('view') }}">
                         <span class="icon">&rarr;</span> Study Mode
                     </a>
+                    <a class="btn-hero app-btn app-btn-mint" href="{{ url_for('master') if current_user else url_for('login', next=url_for('master')) }}">
+                        <span class="icon">&rarr;</span> Master Mode
+                    </a>
                     <a class="btn-hero app-btn app-btn-soft" href="{{ url_for('match') }}">
                         <span class="icon">&rarr;</span> Matching Game
                     </a>
@@ -46,6 +49,7 @@
                 <li><strong>Create a deck</strong> for one topic</li>
                 <li><strong>Add question cards</strong> with one or more accepted answers</li>
                 <li><strong>Study mode</strong> for focused review</li>
+                <li><strong>Master mode</strong> to loop only the cards you still need</li>
                 <li><strong>Matching mode</strong> to actively recall and reinforce</li>
                 <li><strong>Reorder mode</strong> to rebuild the original sequence</li>
                 <li><strong>Quiz mode</strong> to test your mastery against distractors</li>

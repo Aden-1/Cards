@@ -8,7 +8,7 @@ import io
 from flask import Flask
 from flask_migrate import Migrate
 from sqlalchemy import text
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption
+from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
@@ -995,6 +995,131 @@ def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
     if not deck:
         return None
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle_cards, shuffle_answers=shuffle_answers)
+
+
+def _mastery_status_for_rating(rating):
+    if rating == 'understood':
+        return 'mastered'
+    if rating == 'still_learning':
+        return 'learning'
+    return 'unknown'
+
+
+def get_mastery_snapshot(user_id, deck_id):
+    deck = Deck.query.get(deck_id)
+    if not deck:
+        return None
+
+    cards = list(deck.cards)
+    cards.sort(key=lambda card: card.position)
+    if not cards:
+        return {
+            'deck': deck,
+            'cards': [],
+            'current_card': None,
+            'stats': {
+                'total': 0,
+                'mastered': 0,
+                'learning': 0,
+                'unknown': 0,
+                'remaining': 0,
+            }
+        }
+
+    card_ids = [card.card_id for card in cards]
+    progress_rows = CardMasteryProgress.query.filter(
+        CardMasteryProgress.user_id == user_id,
+        CardMasteryProgress.card_id.in_(card_ids)
+    ).all()
+    progress_by_card_id = {row.card_id: row for row in progress_rows}
+
+    card_payloads = []
+    mastered_count = 0
+    learning_count = 0
+    unknown_count = 0
+    remaining_cards = []
+    for card in cards:
+        progress = progress_by_card_id.get(card.card_id)
+        status = progress.status if progress else 'new'
+        if status == 'mastered':
+            mastered_count += 1
+        elif status == 'learning':
+            learning_count += 1
+        else:
+            unknown_count += 1
+        if status != 'mastered':
+            remaining_cards.append(card)
+        card_payloads.append({
+            'card_id': card.card_id,
+            'question': card.question,
+            'answers': [answer.answer for answer in card.answers],
+            'position': card.position,
+            'status': status,
+            'reviewed_count': progress.reviewed_count if progress else 0,
+        })
+
+    current_card = remaining_cards[0] if remaining_cards else None
+    current_payload = None
+    if current_card:
+        current_payload = next((payload for payload in card_payloads if payload['card_id'] == current_card.card_id), None)
+
+    return {
+        'deck': deck,
+        'cards': card_payloads,
+        'current_card': current_payload,
+        'stats': {
+            'total': len(cards),
+            'mastered': mastered_count,
+            'learning': learning_count,
+            'unknown': unknown_count,
+            'remaining': len(remaining_cards),
+        }
+    }
+
+
+def record_mastery_rating(user_id, deck_id, card_id, rating):
+    card = Card.query.get(card_id)
+    if not card or card.deck_id != deck_id:
+        return {'success': False, 'error': 'Card not found in deck'}
+
+    if rating not in ('understood', 'still_learning', 'dont_know'):
+        return {'success': False, 'error': 'Invalid rating'}
+
+    progress = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).first()
+    if not progress:
+        progress = CardMasteryProgress(
+            user_id=user_id,
+            card_id=card_id,
+            status='new',
+            understood_count=0,
+            learning_count=0,
+            dont_know_count=0,
+            reviewed_count=0,
+        )
+        db.session.add(progress)
+
+    progress.reviewed_count = (progress.reviewed_count or 0) + 1
+    progress.last_rating = rating
+    if rating == 'understood':
+        progress.understood_count = (progress.understood_count or 0) + 1
+    elif rating == 'still_learning':
+        progress.learning_count = (progress.learning_count or 0) + 1
+    elif rating == 'dont_know':
+        progress.dont_know_count = (progress.dont_know_count or 0) + 1
+
+    progress.status = _mastery_status_for_rating(rating)
+    db.session.commit()
+    return {'success': True}
+
+
+def reset_mastery_progress(user_id, deck_id):
+    card_ids_query = db.session.query(Card.card_id).filter(Card.deck_id == deck_id)
+    deleted_rows = CardMasteryProgress.query.filter(
+        CardMasteryProgress.user_id == user_id,
+        CardMasteryProgress.card_id.in_(card_ids_query)
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    return deleted_rows
 
 
 # Generate quiz questions from a deck or custom quiz.
