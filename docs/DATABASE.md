@@ -1,13 +1,14 @@
 # Database Documentation
 
-The app uses SQLite with SQLAlchemy ORM and Flask-Migrate.
+The app supports SQLite and PostgreSQL with SQLAlchemy ORM and Flask-Migrate.
 
 ## Current Setup
 
-- Database file: `instance/cards.db`
+- Default database file: `instance/cards.db`
+- PostgreSQL configuration: set `DATABASE_URL=postgresql://user:password@host/database`
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
-- Search index: `public_content_fts` FTS5 virtual table for public decks and quizzes
+- Search index: SQLite uses the `public_content_fts` FTS5 virtual table; PostgreSQL uses `public_content_search` with a weighted `tsvector` index
 - Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
@@ -38,6 +39,7 @@ class User(db.Model):
     decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
     quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
     mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
+    match_progress = db.relationship('MatchPairProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### Deck
@@ -70,6 +72,7 @@ class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
     answer = db.Column(db.Text, nullable=False)
+    match_progress = db.relationship('MatchPairProgress', backref='answer', lazy=True, cascade='all, delete-orphan')
 ```
 
 ### CardMasteryProgress
@@ -143,6 +146,7 @@ class QuizOption(db.Model):
 - `User` 1:N `Deck`
 - `User` 1:N `Quiz`
 - `User` 1:N `CardMasteryProgress`
+- `User` 1:N `MatchPairProgress`
 - `Deck` 1:N `Card`
 - `Card` 1:N `CardAnswer`
 - `Card` 1:N `CardMasteryProgress`
@@ -155,14 +159,14 @@ class QuizOption(db.Model):
 - `Card.position` stores the saved deck order for the reorder game.
 - Removing the last `CardAnswer` deletes the parent `Card`.
 - Editing a card replaces its full answer set.
-- Public decks and quizzes are mirrored into the FTS index for search.
+- Public decks and quizzes are mirrored into the backend-specific full-text index for search.
 - The search index stores title, description, and tags only.
 - Passwords are stored as Werkzeug password hashes, not plaintext.
 - The first registered user is assigned the `admin` role.
 - `CardMasteryProgress` is unique per `(user_id, card_id)`.
 - `MatchPairProgress` is unique per `(user_id, answer_id)`.
 - User records persist theme, match strategy, and mastery strategy preferences.
-- The app includes lightweight startup self-healing for newer SQLite columns and the match progress table.
+- The app includes lightweight startup self-healing for newer SQLite columns and the match progress table; migrations provide the same schema on PostgreSQL.
 
 ## Usage
 

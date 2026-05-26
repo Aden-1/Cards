@@ -48,7 +48,7 @@ Visit `http://localhost:5000`
 ## Tech Stack
 
 - Backend: Flask (Python)
-- Database: SQLite with SQLAlchemy ORM
+- Database: SQLite or PostgreSQL with SQLAlchemy ORM
 - Frontend: HTML, Jinja2 Templates, Bootstrap, JavaScript
 
 ## Data Model Notes
@@ -79,6 +79,7 @@ Visit `http://localhost:5000`
 ## Local Development Notes
 
 - SQLite data lives in `instance/cards.db`
+- Set `DATABASE_URL=postgresql://user:password@host/database` for PostgreSQL; the app uses the bundled Psycopg 3 driver.
 - Run `python -m flask db upgrade` after pulling schema changes
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user

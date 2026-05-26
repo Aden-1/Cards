@@ -22,6 +22,7 @@ class User(db.Model):
     decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
     quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
     mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
+    match_progress = db.relationship('MatchPairProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -61,6 +62,7 @@ class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
     answer = db.Column(db.Text, nullable=False)
+    match_progress = db.relationship('MatchPairProgress', backref='answer', lazy=True, cascade='all, delete-orphan')
 
 
 # Per-user learning state for one card.
