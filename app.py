@@ -15,14 +15,23 @@ from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
-# Session and cookie security. Set SECRET_KEY in production.
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-only-change-me')
+# Environment mode for deploy-safe defaults.
+is_production = os.environ.get('FLASK_ENV', '').lower() == 'production'
+
+# Session and cookie security. SECRET_KEY is required in production.
+secret_key = os.environ.get('SECRET_KEY')
+if is_production and not secret_key:
+    raise RuntimeError('SECRET_KEY must be set in production')
+app.config['SECRET_KEY'] = secret_key or 'dev-only-change-me'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
 
-# Local SQLite config.
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cards.db'
+# Database config. Use DATABASE_URL on Heroku with local SQLite fallback.
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///cards.db')
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -1593,7 +1602,7 @@ register_routes(app)
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=not is_production)
 
 
 
