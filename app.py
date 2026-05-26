@@ -27,7 +27,7 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
 
-# Database config. Use DATABASE_URL on Heroku with local SQLite fallback.
+# Database config. Use DATABASE_URL in deployed environments with local SQLite fallback.
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///cards.db')
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
@@ -586,30 +586,81 @@ def _build_fts_query(query_text):
     return ' OR '.join(parts), tokens
 
 
+def _search_backend_name():
+    # Reflect the SQLAlchemy engine dialect (e.g., sqlite, postgresql).
+    return db.engine.dialect.name
+
+
+def _is_sqlite_backend():
+    # SQLite keeps the existing FTS5 implementation.
+    return _search_backend_name() == 'sqlite'
+
+
+def _is_postgres_backend():
+    # Postgres uses tsvector-based full-text search.
+    return _search_backend_name().startswith('postgresql')
+
+
 # Public search index helpers.
-# Create the public content FTS table if needed.
 def _ensure_content_fts_index():
-    db.session.execute(text("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS public_content_fts USING fts5(
-            item_type UNINDEXED,
-            item_id UNINDEXED,
-            title,
-            description,
-            tags,
-            tokenize = 'porter unicode61 remove_diacritics 2'
-        )
-    """))
+    # Create backend-specific full-text structures only when needed.
+    if _is_sqlite_backend():
+        db.session.execute(text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS public_content_fts USING fts5(
+                item_type UNINDEXED,
+                item_id UNINDEXED,
+                title,
+                description,
+                tags,
+                tokenize = 'porter unicode61 remove_diacritics 2'
+            )
+        """))
+    elif _is_postgres_backend():
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS public_content_search (
+                item_type VARCHAR(20) NOT NULL,
+                item_id INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                search_vector tsvector,
+                PRIMARY KEY (item_type, item_id)
+            )
+        """))
+        db.session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_public_content_search_vector
+            ON public_content_search USING GIN (search_vector)
+        """))
+        db.session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_public_content_search_item_type
+            ON public_content_search (item_type)
+        """))
     db.session.commit()
+
+
+def _postgres_search_vector_expression():
+    # Weight fields so title and tags rank above long descriptions.
+    return (
+        "setweight(to_tsvector('english', coalesce(:title, '')), 'A') || "
+        "setweight(to_tsvector('english', coalesce(:tags, '')), 'B') || "
+        "setweight(to_tsvector('english', coalesce(:description, '')), 'C')"
+    )
 
 
 # Remove one row from the public search index.
 def _delete_content_fts_index_row(item_type, item_id):
     try:
         _ensure_content_fts_index()
-        db.session.execute(
-            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
-            {'item_type': item_type, 'item_id': str(item_id)}
-        )
+        if _is_sqlite_backend():
+            db.session.execute(
+                text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': str(item_id)}
+            )
+        else:
+            db.session.execute(
+                text("DELETE FROM public_content_search WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': int(item_id)}
+            )
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -619,24 +670,49 @@ def _delete_content_fts_index_row(item_type, item_id):
 def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is_public):
     try:
         _ensure_content_fts_index()
-        db.session.execute(
-            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
-            {'item_type': item_type, 'item_id': str(item_id)}
-        )
-        if is_public:
+        if _is_sqlite_backend():
             db.session.execute(
-                text("""
-                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                    VALUES (:item_type, :item_id, :title, :description, :tags)
-                """),
-                {
-                    'item_type': item_type,
-                    'item_id': str(item_id),
-                    'title': title or '',
-                    'description': description or '',
-                    'tags': tags or '',
-                }
+                text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': str(item_id)}
             )
+            if is_public:
+                db.session.execute(
+                    text("""
+                        INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                        VALUES (:item_type, :item_id, :title, :description, :tags)
+                    """),
+                    {
+                        'item_type': item_type,
+                        'item_id': str(item_id),
+                        'title': title or '',
+                        'description': description or '',
+                        'tags': tags or '',
+                    }
+                )
+        else:
+            db.session.execute(
+                text("DELETE FROM public_content_search WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': int(item_id)}
+            )
+            if is_public:
+                db.session.execute(
+                    text(f"""
+                        INSERT INTO public_content_search (
+                            item_type, item_id, title, description, tags, search_vector
+                        )
+                        VALUES (
+                            :item_type, :item_id, :title, :description, :tags,
+                            {_postgres_search_vector_expression()}
+                        )
+                    """),
+                    {
+                        'item_type': item_type,
+                        'item_id': int(item_id),
+                        'title': title or '',
+                        'description': description or '',
+                        'tags': tags or '',
+                    }
+                )
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -669,37 +745,76 @@ def _sync_content_fts_index_for_quiz(quiz):
 # Rebuild the full public search index.
 def _rebuild_content_fts_index():
     _ensure_content_fts_index()
-    db.session.execute(text("DELETE FROM public_content_fts"))
-
-    for deck in Deck.query.filter(Deck.is_public == True).all():
-        db.session.execute(
-            text("""
-                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                VALUES (:item_type, :item_id, :title, :description, :tags)
-            """),
-            {
-                'item_type': 'deck',
-                'item_id': str(deck.deck_id),
-                'title': deck.description or '',
-                'description': deck.detailed_description or '',
-                'tags': deck.tags or '',
-            }
-        )
-
-    for quiz in Quiz.query.filter(Quiz.is_public == True).all():
-        db.session.execute(
-            text("""
-                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                VALUES (:item_type, :item_id, :title, :description, :tags)
-            """),
-            {
-                'item_type': 'quiz',
-                'item_id': str(quiz.quiz_id),
-                'title': quiz.title or '',
-                'description': quiz.description or '',
-                'tags': quiz.tags or '',
-            }
-        )
+    if _is_sqlite_backend():
+        db.session.execute(text("DELETE FROM public_content_fts"))
+        for deck in Deck.query.filter(Deck.is_public == True).all():
+            db.session.execute(
+                text("""
+                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                    VALUES (:item_type, :item_id, :title, :description, :tags)
+                """),
+                {
+                    'item_type': 'deck',
+                    'item_id': str(deck.deck_id),
+                    'title': deck.description or '',
+                    'description': deck.detailed_description or '',
+                    'tags': deck.tags or '',
+                }
+            )
+        for quiz in Quiz.query.filter(Quiz.is_public == True).all():
+            db.session.execute(
+                text("""
+                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                    VALUES (:item_type, :item_id, :title, :description, :tags)
+                """),
+                {
+                    'item_type': 'quiz',
+                    'item_id': str(quiz.quiz_id),
+                    'title': quiz.title or '',
+                    'description': quiz.description or '',
+                    'tags': quiz.tags or '',
+                }
+            )
+    else:
+        db.session.execute(text("DELETE FROM public_content_search"))
+        for deck in Deck.query.filter(Deck.is_public == True).all():
+            db.session.execute(
+                text(f"""
+                    INSERT INTO public_content_search (
+                        item_type, item_id, title, description, tags, search_vector
+                    )
+                    VALUES (
+                        :item_type, :item_id, :title, :description, :tags,
+                        {_postgres_search_vector_expression()}
+                    )
+                """),
+                {
+                    'item_type': 'deck',
+                    'item_id': int(deck.deck_id),
+                    'title': deck.description or '',
+                    'description': deck.detailed_description or '',
+                    'tags': deck.tags or '',
+                }
+            )
+        for quiz in Quiz.query.filter(Quiz.is_public == True).all():
+            db.session.execute(
+                text(f"""
+                    INSERT INTO public_content_search (
+                        item_type, item_id, title, description, tags, search_vector
+                    )
+                    VALUES (
+                        :item_type, :item_id, :title, :description, :tags,
+                        {_postgres_search_vector_expression()}
+                    )
+                """),
+                {
+                    'item_type': 'quiz',
+                    'item_id': int(quiz.quiz_id),
+                    'title': quiz.title or '',
+                    'description': quiz.description or '',
+                    'tags': quiz.tags or '',
+                }
+            )
 
     db.session.commit()
 
@@ -733,7 +848,7 @@ def search_public_content(query_text, limit=50, user_id=None):
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
     fts_query, query_tokens = _build_fts_query(query_text)
-    if not fts_query:
+    if not query_tokens:
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
     deck_results = []
@@ -742,26 +857,8 @@ def search_public_content(query_text, limit=50, user_id=None):
 
     try:
         _ensure_content_fts_index()
-        results = db.session.execute(
-            text("""
-                SELECT
-                    item_type,
-                    item_id,
-                    bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
-                    snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
-                    snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
-                    snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
-                FROM public_content_fts
-                WHERE public_content_fts MATCH :match_query
-                ORDER BY rank
-                LIMIT :limit
-            """),
-            {'match_query': fts_query, 'limit': int(limit)}
-        ).fetchall()
-
-        if not results:
-            # Rebuild if the index is empty or stale.
-            _rebuild_content_fts_index()
+        if _is_sqlite_backend():
+            # SQLite FTS5 path with bm25 ranking and snippets.
             results = db.session.execute(
                 text("""
                     SELECT
@@ -778,12 +875,74 @@ def search_public_content(query_text, limit=50, user_id=None):
                 """),
                 {'match_query': fts_query, 'limit': int(limit)}
             ).fetchall()
+        else:
+            # Postgres full-text path with weighted ranking and highlighted snippets.
+            results = db.session.execute(
+                text("""
+                    SELECT
+                        item_type,
+                        item_id,
+                        ts_rank_cd(
+                            search_vector,
+                            websearch_to_tsquery('english', :query_text)
+                        ) AS rank,
+                        ts_headline('english', title, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS title_snippet,
+                        ts_headline('english', description, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=12,MinWords=3') AS description_snippet,
+                        ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
+                    FROM public_content_search
+                    WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
+                    ORDER BY rank DESC
+                    LIMIT :limit
+                """),
+                {'query_text': query_text, 'limit': int(limit)}
+            ).fetchall()
+
+        if not results:
+            # Rebuild if the index is empty or stale.
+            _rebuild_content_fts_index()
+            if _is_sqlite_backend():
+                results = db.session.execute(
+                    text("""
+                        SELECT
+                            item_type,
+                            item_id,
+                            bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
+                            snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
+                            snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
+                            snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
+                        FROM public_content_fts
+                        WHERE public_content_fts MATCH :match_query
+                        ORDER BY rank
+                        LIMIT :limit
+                    """),
+                    {'match_query': fts_query, 'limit': int(limit)}
+                ).fetchall()
+            else:
+                results = db.session.execute(
+                    text("""
+                        SELECT
+                            item_type,
+                            item_id,
+                            ts_rank_cd(
+                                search_vector,
+                                websearch_to_tsquery('english', :query_text)
+                            ) AS rank,
+                            ts_headline('english', title, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS title_snippet,
+                            ts_headline('english', description, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=12,MinWords=3') AS description_snippet,
+                            ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
+                        FROM public_content_search
+                        WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
+                        ORDER BY rank DESC
+                        LIMIT :limit
+                    """),
+                    {'query_text': query_text, 'limit': int(limit)}
+                ).fetchall()
 
         for row in results:
             item_type = row[0]
             item_id = int(row[1])
             rank_value = float(row[2]) if row[2] is not None else 0.0
-            score = round(-rank_value, 4)
+            score = round((-rank_value if _is_sqlite_backend() else rank_value), 4)
             reasons = []
             if row[3]:
                 reasons.append(f"title: {row[3]}")
