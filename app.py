@@ -40,7 +40,11 @@ migrate = Migrate(app, db)
 
 def _ensure_user_theme_preference_column():
     """Add User.theme_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'theme_preference' in columns:
         return
@@ -52,7 +56,11 @@ def _ensure_user_theme_preference_column():
 
 def _ensure_user_mastery_strategy_preference_column():
     """Add User.mastery_strategy_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'mastery_strategy_preference' in columns:
         return
@@ -64,7 +72,11 @@ def _ensure_user_mastery_strategy_preference_column():
 
 def _ensure_user_match_strategy_preference_column():
     """Add User.match_strategy_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'match_strategy_preference' in columns:
         return
@@ -76,6 +88,11 @@ def _ensure_user_match_strategy_preference_column():
 
 def _ensure_match_pair_progress_table():
     """Create MatchPairProgress table for existing databases if missing."""
+    if not _is_sqlite_backend():
+        return
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     MatchPairProgress.__table__.create(bind=db.engine, checkfirst=True)
 
 
