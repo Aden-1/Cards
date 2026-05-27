@@ -32,10 +32,6 @@
             </div>
             <div class="deck-actions">
                 <button class="btn-primary-surface" type="submit">Start Studying</button>
-                {% if selected_deck_id %}
-                <a class="btn-surface" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>
-                <a class="btn-surface" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>
-                {% endif %}
             </div>
         </form>
         {% elif not current_user %}

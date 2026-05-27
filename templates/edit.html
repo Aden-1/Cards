@@ -80,7 +80,7 @@
                 <div class="panel-header">
                     <h3 class="h5 mb-0">{{ deck.description }}</h3>
                     <div class="card-rail">
-                        <span class="status-chip {{ 'warning' if deck.sortable else 'info' }}">{{ 'Sortable' if deck.sortable else 'Shuffled' }}</span>
+                        <span class="status-chip {{ 'warning' if deck.sortable else 'info' }}">{{ 'Sorted' if deck.sortable else 'Shuffled' }}</span>
                         <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
                     </div>
                 </div>

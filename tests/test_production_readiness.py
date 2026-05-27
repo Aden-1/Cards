@@ -8,7 +8,7 @@ os.environ['DATABASE_URL'] = 'sqlite://'
 
 import app as cards_app
 import routes
-from models import Card, CardAnswer, Deck, MatchPairProgress, QuizAttempt, User, db
+from models import Card, CardAnswer, Deck, MatchPairProgress, Quiz, QuizAttempt, QuizOption, QuizQuestion, User, db
 
 
 class ProductionReadinessTests(unittest.TestCase):
@@ -148,6 +148,58 @@ class ProductionReadinessTests(unittest.TestCase):
             progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).one()
             self.assertEqual(progress.correct_count, 0)
             self.assertEqual(progress.incorrect_count, 1)
+
+    def test_deck_quiz_page_renders_answer_options(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('deck_quiz_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Deck Quiz', is_public=True)
+            card = Card(deck_id=deck.deck_id, question='Largest ocean?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add_all([
+                CardAnswer(card_id=card.card_id, answer='Pacific Ocean'),
+                CardAnswer(card_id=card.card_id, answer='The Pacific'),
+            ])
+            db.session.commit()
+            deck_id = deck.deck_id
+
+        response = self.client.get(f'/quiz?deck_id={deck_id}')
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Largest ocean?', page)
+        self.assertIn('submitQuiz', page)
+        self.assertIn('Pacific Ocean', page)
+
+    def test_custom_quiz_page_renders_dynamic_question_options(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('custom_quiz_owner', 'password12345')
+            quiz = Quiz(owned_by=owner.user_id, title='World Capitals', is_public=True)
+            db.session.add(quiz)
+            db.session.flush()
+
+            dynamic_question = QuizQuestion(quiz_id=quiz.quiz_id, question='Capital of Japan?', type='dynamic')
+            other_question = QuizQuestion(quiz_id=quiz.quiz_id, question='Capital of Italy?', type='dynamic')
+            db.session.add_all([dynamic_question, other_question])
+            db.session.flush()
+
+            db.session.add_all([
+                QuizOption(question_id=dynamic_question.question_id, text='Tokyo', is_correct=True),
+                QuizOption(question_id=dynamic_question.question_id, text='Tokio', is_correct=True),
+                QuizOption(question_id=other_question.question_id, text='Rome', is_correct=True),
+                QuizOption(question_id=other_question.question_id, text='Milan', is_correct=True),
+                QuizOption(question_id=other_question.question_id, text='Naples', is_correct=True),
+            ])
+            db.session.commit()
+            quiz_id = quiz.quiz_id
+
+        response = self.client.get(f'/quiz?custom_quiz_id={quiz_id}')
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Capital of Japan?', page)
+        self.assertIn('submitQuiz', page)
+        self.assertIn('Tokyo', page)
 
 
 if __name__ == '__main__':

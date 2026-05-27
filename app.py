@@ -1614,7 +1614,7 @@ def check_deck_order(deck_id, ordered_card_ids):
     if not deck:
         return {'valid': False, 'error': 'Deck not found'}
     if not deck.sortable:
-        return {'valid': False, 'error': 'Deck is not sortable'}
+        return {'valid': False, 'error': 'Deck is not sorted'}
 
     # Stored positions define the correct order.
     cards = sorted(list(deck.cards), key=lambda card: card.position)
@@ -1649,7 +1649,7 @@ def move_card_in_deck(card_id, direction):
     if not card:
         return {'success': False, 'error': 'Card not found'}
     if not card.deck.sortable:
-        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+        return {'success': False, 'error': 'Card order can only be changed in sorted decks'}
 
     if direction not in ('up', 'down'):
         return {'success': False, 'error': 'Invalid direction'}
@@ -1680,7 +1680,7 @@ def swap_cards_in_deck(card_id, target_card_id):
     if first_card.deck_id != second_card.deck_id:
         return {'success': False, 'error': 'Cards must be in the same deck'}
     if not first_card.deck.sortable:
-        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+        return {'success': False, 'error': 'Card order can only be changed in sorted decks'}
     if first_card.card_id == second_card.card_id:
         return {'success': True, 'swapped': False, 'deck_id': first_card.deck_id}
 
@@ -2049,30 +2049,8 @@ def score_quiz_attempt(attempt_token, user_id, submitted_answers):
     return result
 
 
-# Quiz generation helpers.
-def _build_multiple_choice_options(correct_answers, distractors, max_options=4, filler_prefix='Distractor'):
-    chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
-    if len(chosen_correct) > max_options:
-        chosen_correct = random.sample(chosen_correct, max_options)
-
-    wrong_needed = max(0, max_options - len(chosen_correct))
-    safe_distractors = [distractor for distractor in distractors if distractor not in correct_answers]
-    chosen_wrong = safe_distractors[:]
-    if len(chosen_wrong) > wrong_needed:
-        chosen_wrong = random.sample(chosen_wrong, wrong_needed)
-    elif len(chosen_wrong) < wrong_needed:
-        filler_count = wrong_needed - len(chosen_wrong)
-        chosen_wrong.extend([f'{filler_prefix} {index}' for index in range(filler_count)])
-
-    options = (
-        [{'text': answer, 'is_correct': True} for answer in chosen_correct]
-        + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
-    )
-    random.shuffle(options)
-    return options
-
-
 def _generate_deck_quiz_questions(deck_id):
+    """Build multiple-choice questions from one deck's cards and answers."""
     from models import CardAnswer
 
     deck = Deck.query.get(deck_id)
@@ -2084,20 +2062,33 @@ def _generate_deck_quiz_questions(deck_id):
     quiz_questions = []
     for card in cards:
         correct_answers = [answer.answer for answer in card.answers]
+        chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
+        wrong_needed = max(0, 4 - len(chosen_correct))
+        if wrong_needed < 0:
+            chosen_correct = random.sample(chosen_correct, 4)
+            wrong_needed = 0
+
+        safe_distractors = [answer for answer in deck_answers if answer not in correct_answers]
+        if len(safe_distractors) >= wrong_needed:
+            chosen_wrong = random.sample(safe_distractors, wrong_needed)
+        else:
+            chosen_wrong = safe_distractors + [f'Generic Distractor {index}' for index in range(wrong_needed - len(safe_distractors))]
+
+        options = (
+            [{'text': answer, 'is_correct': True} for answer in chosen_correct]
+            + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
+        )
+        random.shuffle(options)
         quiz_questions.append({
             'id': card.card_id,
             'question': card.question,
-            'options': _build_multiple_choice_options(
-                correct_answers,
-                deck_answers,
-                max_options=4,
-                filler_prefix='Generic Distractor',
-            ),
+            'options': options,
         })
     return quiz_questions
 
 
 def _generate_custom_quiz_questions(custom_quiz_id):
+    """Build either static or dynamic multiple-choice questions from a saved custom quiz."""
     quiz = Quiz.query.get(custom_quiz_id)
     if not quiz:
         return []
@@ -2114,11 +2105,18 @@ def _generate_custom_quiz_questions(custom_quiz_id):
             for other_question_id, options_for_question in all_quiz_options.items():
                 if other_question_id != question.question_id:
                     distractor_pool.extend(options_for_question)
-            options = _build_multiple_choice_options(
-                [random.choice(correct_answers)] if correct_answers else [],
-                list(set(distractor_pool)),
-                max_options=4,
+            chosen_correct = [random.choice(correct_answers)] if correct_answers else []
+            safe_distractors = list(set(answer for answer in distractor_pool if answer not in correct_answers))
+            if len(safe_distractors) >= 3:
+                chosen_wrong = random.sample(safe_distractors, 3)
+            else:
+                chosen_wrong = safe_distractors + [f'Distractor {index}' for index in range(3 - len(safe_distractors))]
+
+            options = (
+                [{'text': answer, 'is_correct': True} for answer in chosen_correct]
+                + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
             )
+            random.shuffle(options)
 
         quiz_questions.append({
             'id': f'q_{question.question_id}',

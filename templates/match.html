@@ -15,7 +15,7 @@
         <form method="get" action="{{ url_for('match') }}" class="section-stack">
             <div><label class="form-label" for="deck_id">Deck</label><select class="form-select" id="deck_id" name="deck_id" required><option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>{% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}</select></div>
             <div><label class="form-label" for="matchStrategy">Strategy <span id="matchStrategyHelp" class="status-chip info" title="" aria-label="">?</span></label><select class="form-select" id="matchStrategy" name="strategy">{% for strategy in match_strategy_catalog %}<option value="{{ strategy.value }}" data-description="{{ strategy.description }}" {% if selected_strategy == strategy.value %}selected{% endif %}>{{ strategy.label }}</option>{% endfor %}</select></div>
-            <div class="deck-actions"><button class="btn-primary-surface" type="submit">Start Match</button>{% if selected_deck_id %}<a class="btn-surface" href="{{ url_for('view', deck_id=selected_deck_id) }}">Study Cards</a><a class="btn-surface" href="{{ url_for('reorder', deck_id=selected_deck_id) }}">Memorize Order</a>{% endif %}</div>
+            <div class="deck-actions"><button class="btn-primary-surface" type="submit">Start Match</button></div>
         </form>
         {% elif not current_user %}
         <div class="section-stack">
@@ -311,61 +311,29 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             const stackWidth = stack.clientWidth;
             const gap = parseFloat(window.getComputedStyle(stack).gap || '0') || 0;
-            const baseFontSize = window.innerWidth <= 640 ? 0.94 : 1.03;
-            const minFontSize = window.innerWidth <= 640 ? 0.82 : 0.9;
-            const minTileSize = window.innerWidth <= 640 ? 88 : (window.innerWidth <= 960 ? 96 : 108);
-            const maxTileSize = window.innerWidth <= 640 ? 132 : 180;
-            const minimumColumns = tiles.length >= 5 ? 5 : tiles.length;
-            const maxColumns = Math.max(minimumColumns, Math.min(tiles.length, Math.floor((stackWidth + gap) / (minTileSize + gap))));
+            const desiredMaxColumns = Math.min(5, tiles.length);
+            let chosenColumns = 1;
 
-            let chosenColumns = minimumColumns;
-            let chosenFontSize = minFontSize;
-            let foundLayout = false;
-
-            for (let columns = maxColumns; columns >= minimumColumns; columns--) {
-                const computedTileSize = Math.min(maxTileSize, (stackWidth - gap * (columns - 1)) / columns);
-                stack.style.gridTemplateColumns = `repeat(${columns}, minmax(0, ${computedTileSize}px))`;
-
-                for (let fontSize = baseFontSize; fontSize >= minFontSize; fontSize -= 0.04) {
-                    tiles.forEach((tile) => {
-                        tile.classList.remove('allow-text-scroll');
-                        tile.style.setProperty('--match-tile-font-size', `${fontSize.toFixed(2)}rem`);
-                    });
-
-                    let fits = true;
-                    for (const tile of tiles) {
-                        const content = tile.querySelector('.tile-content');
-                        const text = tile.querySelector('.tile-text');
-                        if (!content || !text) {
-                            continue;
-                        }
-                        if (content.scrollHeight > tile.clientHeight + 1 || text.scrollHeight > text.clientHeight + 1) {
-                            fits = false;
-                            break;
-                        }
-                    }
-
-                    if (fits) {
+            if (window.innerWidth <= 640) {
+                chosenColumns = 1;
+            } else if (window.innerWidth <= 960) {
+                chosenColumns = Math.min(2, desiredMaxColumns);
+            } else {
+                const minimumTileWidth = 150;
+                for (let columns = desiredMaxColumns; columns >= 1; columns--) {
+                    const tileWidth = (stackWidth - gap * (columns - 1)) / columns;
+                    if (tileWidth >= minimumTileWidth || columns === 1) {
                         chosenColumns = columns;
-                        chosenFontSize = fontSize;
-                        foundLayout = true;
                         break;
                     }
                 }
-
-                if (foundLayout) {
-                    break;
-                }
             }
 
-            if (!foundLayout) {
-                const fallbackTileSize = Math.min(maxTileSize, (stackWidth - gap * (chosenColumns - 1)) / Math.max(chosenColumns, 1));
-                stack.style.gridTemplateColumns = `repeat(${chosenColumns}, minmax(0, ${fallbackTileSize}px))`;
-            }
+            stack.style.gridTemplateColumns = `repeat(${chosenColumns}, minmax(0, 1fr))`;
 
+            const fontSize = window.innerWidth <= 640 ? 0.9 : (window.innerWidth <= 960 ? 0.92 : 0.95);
             tiles.forEach((tile) => {
-                tile.style.setProperty('--match-tile-font-size', `${chosenFontSize.toFixed(2)}rem`);
-                tile.classList.toggle('allow-text-scroll', !foundLayout);
+                tile.style.setProperty('--match-tile-font-size', `${fontSize}rem`);
             });
         });
     }
@@ -462,12 +430,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function setupTimedRecoveryRound() {
         const questionId = getFocusedQuestionId();
         if (!questionId) {
-            return;
+            updateTimedRecoveryTimerDisplay();
+            return false;
         }
+        stopTimedRecoveryTimer();
         timedRecoveryAnswerIds = buildTimedRecoveryAnswerIds(questionId);
         timedRecoveryCountdown = TIMED_RECOVERY_SECONDS;
-        stopTimedRecoveryTimer();
         timedRecoveryDeadline = Date.now() + (TIMED_RECOVERY_SECONDS * 1000);
+        renderMatchBoard();
         updateTimedRecoveryTimerDisplay();
         timedRecoveryIntervalId = setInterval(() => {
             timedRecoveryCountdown = Math.max(0, (timedRecoveryDeadline - Date.now()) / 1000);
@@ -487,6 +457,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 advanceTimedRecoveryQuestion();
             }
         }, 100);
+        return true;
     }
 
     function beginTimedRecoveryMode() {
@@ -528,7 +499,6 @@ document.addEventListener('DOMContentLoaded', function() {
             timedRecoveryIndex = 0;
         }
         setupTimedRecoveryRound();
-        renderMatchBoard();
     }
 
     function showCompletionState() {
@@ -707,7 +677,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (!timedRecoveryMode && remainingAnswers === 0 && remainingQuestions === 0 && beginTimedRecoveryMode()) {
-            renderMatchBoard();
             return;
         }
 

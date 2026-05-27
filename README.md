@@ -12,7 +12,7 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Study cards one at a time with answer reveal and keyboard shortcuts
 - Play a matching game with clickable question and answer tiles
 - Use multiple matching strategies, including progress-aware modes for signed-in users
-- Reorder sortable decks against the saved card order
+- Reorder sorted decks against the saved card order
 - Mark decks and quizzes public or private
 - Search public decks and custom quizzes
 - Build custom quizzes with static or dynamic questions

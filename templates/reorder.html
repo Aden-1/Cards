@@ -6,15 +6,15 @@
 <section class="page-intro">
     <span class="page-kicker">Order Game</span>
     <h1 class="page-title">Rebuild the original sequence.</h1>
-    <p class="page-description">Shuffle a sortable deck, then drag cards or use arrows to place them back in the saved order.</p>
+    <p class="page-description">Shuffle a sorted deck, then drag cards or use arrows to place them back in the saved order.</p>
 </section>
 <section class="selection-grid fade-in">
     <aside class="selection-panel">
-        <div class="panel-header"><div><h2 class="h4 mb-1">Choose Deck</h2><p class="muted-copy mb-0">{% if current_user %}Sortable decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p></div>{% if selected_deck_id and selected_deck_is_owned %}<a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>{% endif %}</div>
+        <div class="panel-header"><div><h2 class="h4 mb-1">Choose Deck</h2><p class="muted-copy mb-0">{% if current_user %}Sorted decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p></div>{% if selected_deck_id and selected_deck_is_owned %}<a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>{% endif %}</div>
         {% if current_user and decks %}
         <form method="get" action="{{ url_for('reorder') }}" class="section-stack">
             <div><label class="form-label" for="deck_id">Deck</label><select class="form-select" id="deck_id" name="deck_id" required><option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>{% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}</select></div>
-            <div class="deck-actions"><button class="btn-primary-surface" type="submit">Memorize Order</button>{% if selected_deck_id %}<a class="btn-surface" href="{{ url_for('view', deck_id=selected_deck_id) }}">Study Cards</a><a class="btn-surface" href="{{ url_for('match', deck_id=selected_deck_id) }}">Match Game</a>{% endif %}</div>
+            <div class="deck-actions"><button class="btn-primary-surface" type="submit">Memorize Order</button></div>
         </form>
         {% elif not current_user %}
         <div class="section-stack">
@@ -22,7 +22,7 @@
             <div class="deck-actions"><a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Decks</a><a class="btn-surface" href="{{ url_for('login', next=url_for('reorder')) }}">Log In</a></div>
         </div>
         {% else %}
-        <div class="empty-card">No sortable decks are available yet.</div>
+        <div class="empty-card">No sorted decks are available yet.</div>
         {% endif %}
     </aside>
     <section class="flash-stage" id="reorderSection">
@@ -36,7 +36,7 @@
         <div class="reorder-list" id="reorderList" aria-live="polite"></div>
         {% endif %}
         {% else %}
-        <div class="empty-card">Choose a sortable deck to open the reorder game.</div>
+        <div class="empty-card">Choose a sorted deck to open the reorder game.</div>
         {% endif %}
     </section>
 </section>
