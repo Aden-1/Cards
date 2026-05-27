@@ -100,13 +100,10 @@ python -m flask db upgrade
 - Health endpoints are available at `/healthz` and `/readyz`
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
-- Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
 - Set `TRUSTED_HOSTS` to the comma-separated public hostnames accepted in production
 - Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
 - Quiz scoring uses one-time server-side attempt records; the browser never supplies answer correctness
-- Production and Heroku sessions automatically use secure cookies over HTTPS
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
-- The web dyno defaults to one worker while rate limiting is process-local; only raise `WEB_CONCURRENCY` after moving rate limits to a shared store or edge control
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
 - Responses include a nonce-based Content Security Policy and standard browser security headers
 - Login, registration, account updates, and administrative changes are rate limited per web process
@@ -115,32 +112,16 @@ python -m flask db upgrade
 - Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
 - Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
 
-## Master Mode Notes
+## Heroku Deployment Notes
 
-- Master mode is a separate page from standard study mode (`/master`).
-- It requires a logged-in account so progress can be saved per user.
-- Each card is rated as:
-  - `I Know This` (marks card as mastered)
-  - `Still Learning` (keeps card in rotation)
-  - `I Missed This` (keeps card in rotation)
-- The app persists progress in `card_mastery_progress` (new migration required).
-- After one pass through all currently unmastered cards, the app starts a new pass automatically using only cards that are still unmastered.
-- When all cards are mastered, the deck is marked complete until the user chooses `Reset Progress`.
-- Strategy options currently include `spaced`, `weakest_first`, `mastery_mix`, and `random`, plus `linear` for sortable decks.
-
-## Matching Mode Notes
-
-- Matching mode supports multiple strategy presets.
-- Signed-in users get persistent match weighting through saved per-answer progress.
-- Available strategies currently include `standard_shuffle`, `retry_misses`, `progressive_build`, `reverse_pressure`, `timed_recovery`, `weakest_first`, and `mastery_mix`.
+- Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
+- Production and Heroku sessions automatically use secure cookies over HTTPS
+- The web dyno defaults to one worker while rate limiting is process-local; only raise `WEB_CONCURRENCY` after moving rate limits to a shared store or edge control
 
 ## Related Docs
 
 - API reference: `docs/API.md`
 - Database reference: `docs/DATABASE.md`
-- Development setup and validation: `docs/DEVELOPMENT.md`
 - Deployment and Heroku runtime notes: `docs/DEPLOYMENT.md`
-- Operations and launch procedures: `docs/OPERATIONS.md`
-- Public repository inclusion and secret-handling policy: `docs/PUBLIC_REPOSITORY.md`
 
 ### Website coming soon™!
