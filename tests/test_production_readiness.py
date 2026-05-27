@@ -1,0 +1,131 @@
+import os
+import unittest
+
+
+os.environ['APP_ENV'] = 'testing'
+os.environ['SECRET_KEY'] = 'test-only-secret-key'
+os.environ['DATABASE_URL'] = 'sqlite://'
+
+import app as cards_app
+import routes
+from models import Card, CardAnswer, Deck, MatchPairProgress, QuizAttempt, User, db
+
+
+class ProductionReadinessTests(unittest.TestCase):
+    def setUp(self):
+        cards_app.app.config.update(TESTING=True, PUBLIC_REGISTRATION_ENABLED=True)
+        routes._rate_limit_buckets.clear()
+        self.client = cards_app.app.test_client()
+        with cards_app.app.app_context():
+            db.drop_all()
+            db.create_all()
+
+    def tearDown(self):
+        with cards_app.app.app_context():
+            db.session.remove()
+            db.drop_all()
+
+    def _csrf(self):
+        with self.client.session_transaction() as current_session:
+            current_session['csrf_token'] = 'csrf-test-token'
+
+    def _login_session(self, user_id):
+        with self.client.session_transaction() as current_session:
+            current_session['user_id'] = user_id
+            current_session['csrf_token'] = 'csrf-test-token'
+
+    def test_health_and_browser_security_headers_are_enabled(self):
+        response = self.client.get('/healthz')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {'status': 'ok'})
+        self.assertIn('Content-Security-Policy', response.headers)
+        self.assertEqual(response.headers['X-Frame-Options'], 'DENY')
+
+    def test_public_registration_creates_only_standard_users(self):
+        self._csrf()
+        response = self.client.post(
+            '/register',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'username': 'member',
+                'password': 'password12345',
+                'confirm_password': 'password12345',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with cards_app.app.app_context():
+            self.assertEqual(User.query.filter_by(username='member').one().role, 'standard')
+
+    def test_quiz_scoring_ignores_client_claimed_correctness(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('quiz_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Public quiz deck', is_public=True)
+            card = Card(deck_id=deck.deck_id, question='Capital of France?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer='Paris'))
+            db.session.commit()
+            deck_id = deck.deck_id
+            card_id = card.card_id
+
+        page = self.client.get(f'/quiz?deck_id={deck_id}')
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn('"is_correct":', page.get_data(as_text=True))
+        with self.client.session_transaction() as current_session:
+            attempt_token = current_session['quiz_attempt_tokens'][-1]
+            current_session['csrf_token'] = 'csrf-test-token'
+
+        response = self.client.post(
+            '/score_quiz',
+            json={
+                'attempt_token': attempt_token,
+                'answers': {str(card_id): ['Forged']},
+                'quiz_data': [{'id': card_id, 'options': [{'text': 'Forged', 'is_correct': True}]}],
+            },
+            headers={'X-CSRFToken': 'csrf-test-token'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['score'], 0)
+        with cards_app.app.app_context():
+            self.assertIsNone(db.session.get(QuizAttempt, attempt_token))
+
+    def test_match_progress_ignores_client_claimed_correctness(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user('matcher', 'password12345')
+            deck = Deck(owned_by=user.user_id, description='Matching')
+            db.session.add(deck)
+            db.session.flush()
+            first = Card(deck_id=deck.deck_id, question='First?', position=1)
+            second = Card(deck_id=deck.deck_id, question='Second?', position=2)
+            db.session.add_all([first, second])
+            db.session.flush()
+            answer = CardAnswer(card_id=first.card_id, answer='First')
+            db.session.add(answer)
+            db.session.commit()
+            user_id = user.user_id
+            answer_id = answer.answer_id
+            wrong_question_id = second.card_id
+
+        self._login_session(user_id)
+        response = self.client.post(
+            '/match_attempt',
+            json={
+                'answer_id': answer_id,
+                'selected_question_id': wrong_question_id,
+                'is_correct': True,
+            },
+            headers={'X-CSRFToken': 'csrf-test-token'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with cards_app.app.app_context():
+            progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).one()
+            self.assertEqual(progress.correct_count, 0)
+            self.assertEqual(progress.incorrect_count, 1)
+
+
+if __name__ == '__main__':
+    unittest.main()
