@@ -13,6 +13,7 @@ Set these for both staging and production:
 - `PUBLIC_REGISTRATION_ENABLED=false` for the initial production rollout
 - `MAX_CONTENT_LENGTH=2097152` to bound JSON/form/import request bodies
 - `SESSION_LIFETIME_DAYS=7` unless a different authenticated-session policy is chosen
+- `MAIL_SERVER`, `MAIL_PORT`, and `MAIL_DEFAULT_SENDER` so password reset emails can be delivered
 
 Recommended connection/runtime settings:
 
@@ -23,6 +24,8 @@ Recommended connection/runtime settings:
 - `DB_MAX_OVERFLOW=2`
 - `DB_POOL_TIMEOUT=10`
 - `DB_POOL_RECYCLE=300`
+- `MAIL_USE_TLS=true`
+- `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS=3600`
 
 Production startup rejects non-PostgreSQL databases. PostgreSQL URLs are normalized to the Psycopg 3 driver automatically, and startup appends `sslmode=require` when it is missing.
 Production startup also fails when `TRUSTED_HOSTS` is absent so untrusted host headers cannot influence redirects or generated URLs.

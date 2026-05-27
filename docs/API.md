@@ -29,12 +29,13 @@ Response:
 
 Fields:
 - `username`
-- `email` optional
+- `email`
 - `password`
 - `confirm_password`
 
 Notes:
 - Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores.
+- Email is required so the account can be recovered later.
 - New passwords must be at least 12 characters and contain a letter and a number.
 - Public registration always creates a `standard` account. Administrators are provisioned through the controlled CLI workflow.
 
@@ -54,6 +55,28 @@ Response:
 - `GET`: rendered HTML login page.
 - `POST`: redirect to the safe `next` URL or `/` on success, or rendered HTML with an error message on failure.
 
+### Forgot Password
+**GET, POST** `/forgot-password`
+
+Fields:
+- `email`
+
+Response:
+- `GET`: rendered HTML reset-request page.
+- `POST`: rendered HTML page with a generic success message, or an error if email delivery is unavailable.
+
+### Reset Password
+**GET, POST** `/reset-password`
+
+Fields:
+- `token`
+- `password`
+- `confirm_password`
+
+Response:
+- `GET`: rendered HTML page for a signed reset token.
+- `POST`: redirect to `/login` on success, or rendered HTML with validation errors on failure.
+
 ### Logout
 **POST** `/logout`
 
@@ -65,7 +88,7 @@ Response:
 
 Fields:
 - `username`
-- `email` optional
+- `email`
 - `current_password`
 - `new_password` optional
 - `confirm_password` optional
@@ -73,6 +96,16 @@ Fields:
 Response:
 - `GET`: rendered HTML account page.
 - `POST`: rendered HTML account page with `success` or `error` state.
+
+### Delete Account
+**POST** `/account/delete`
+
+Fields:
+- `current_password`
+- `confirmation` must equal `DELETE`
+
+Response:
+- Redirect to `/` after deleting the signed-in user's account and owned content.
 
 ### Update Theme
 **POST** `/theme`

@@ -13,7 +13,7 @@
         <div>
             <span class="page-kicker">Account</span>
             <h2 class="h3 mb-2">{{ user.username }}</h2>
-            <p class="muted-copy mb-0">Manage your login details and password from here.</p>
+            <p class="muted-copy mb-0">Manage your login details, recovery email, password, and deletion controls from here.</p>
         </div>
     </article>
     <article class="auth-card">
@@ -25,8 +25,8 @@
                 <input class="form-control" type="text" id="username" name="username" value="{{ user.username }}" minlength="3" maxlength="40" autocomplete="username" required>
             </div>
             <div>
-                <label class="form-label" for="email">Email Optional</label>
-                <input class="form-control" type="email" id="email" name="email" value="{{ user.email or '' }}" autocomplete="email">
+                <label class="form-label" for="email">Recovery Email</label>
+                <input class="form-control" type="email" id="email" name="email" value="{{ user.email or '' }}" autocomplete="email" required>
             </div>
             <div>
                 <label class="form-label" for="current_password">Current Password</label>
@@ -43,6 +43,27 @@
             <div class="auth-actions">
                 <button class="btn-primary-surface" type="submit">Save Account</button>
                 <a class="btn-surface" href="{{ url_for('edit') }}">Manage Decks</a>
+            </div>
+        </form>
+    </article>
+    <article class="auth-card">
+        <div>
+            <span class="page-kicker">Danger Zone</span>
+            <h2 class="h3 mb-2">Delete account</h2>
+            <p class="muted-copy mb-0">This permanently deletes your account, decks, quizzes, and saved progress.</p>
+        </div>
+        {% if delete_error %}<div class="alert alert-danger mb-0">{{ delete_error }}</div>{% endif %}
+        <form method="post" action="{{ url_for('delete_account') }}" class="section-stack">
+            <div>
+                <label class="form-label" for="delete_current_password">Current Password</label>
+                <input class="form-control" type="password" id="delete_current_password" name="current_password" autocomplete="current-password" required>
+            </div>
+            <div>
+                <label class="form-label" for="confirmation">Type DELETE to confirm</label>
+                <input class="form-control" type="text" id="confirmation" name="confirmation" required placeholder="DELETE">
+            </div>
+            <div class="auth-actions">
+                <button class="btn-danger-surface" type="submit">Delete Account Permanently</button>
             </div>
         </form>
     </article>

@@ -7,13 +7,16 @@ import io
 import json
 import logging
 import secrets
+import smtplib
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
 import click
 from flask import Flask
 from flask_migrate import Migrate
+from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -42,6 +45,14 @@ def _env_int(name, default):
         return int(raw_value)
     except ValueError as exc:
         raise RuntimeError(f'{name} must be an integer.') from exc
+
+
+def _env_str(name, default=None):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip()
+    return value or default
 
 
 def _env_list(name):
@@ -116,9 +127,21 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=_env_int('SESSION_LIFE
 app.config['IS_PRODUCTION'] = is_production
 app.config['PREFERRED_URL_SCHEME'] = 'https' if is_production else 'http'
 app.config['MAX_CONTENT_LENGTH'] = _env_int('MAX_CONTENT_LENGTH', 2 * 1024 * 1024)
+app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] = _env_int('PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS', 3600)
 app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
     'PUBLIC_REGISTRATION_ENABLED',
     default=not is_production,
+)
+app.config['MAIL_SERVER'] = _env_str('MAIL_SERVER')
+app.config['MAIL_PORT'] = _env_int('MAIL_PORT', 587)
+app.config['MAIL_USERNAME'] = _env_str('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = _env_str('MAIL_PASSWORD')
+app.config['MAIL_USE_TLS'] = _env_bool('MAIL_USE_TLS', default=True)
+app.config['MAIL_USE_SSL'] = _env_bool('MAIL_USE_SSL', default=False)
+app.config['MAIL_DEFAULT_SENDER'] = _env_str('MAIL_DEFAULT_SENDER')
+app.config['PASSWORD_RESET_URL_BASE'] = _env_str('PASSWORD_RESET_URL_BASE')
+app.config['PASSWORD_RESET_EMAILS_ENABLED'] = bool(
+    app.config['MAIL_SERVER'] and app.config['MAIL_DEFAULT_SENDER']
 )
 trusted_hosts = _env_list('TRUSTED_HOSTS')
 if is_production and not trusted_hosts:
@@ -662,7 +685,7 @@ def get_user_by_email(email):
 
 
 def update_user_account(user_id, username, email=None, password=None):
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         return None
     user.username = username
@@ -671,6 +694,90 @@ def update_user_account(user_id, username, email=None, password=None):
         user.set_password(password)
     db.session.commit()
     return user
+
+
+def _account_token_serializer():
+    return URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='cards-account-lifecycle')
+
+
+def generate_password_reset_token(user):
+    serializer = _account_token_serializer()
+    return serializer.dumps({'user_id': user.user_id, 'email': user.email, 'purpose': 'password_reset'})
+
+
+def get_user_by_password_reset_token(token, max_age_seconds=None):
+    serializer = _account_token_serializer()
+    max_age_seconds = max_age_seconds or app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS']
+    try:
+        payload = serializer.loads(token, max_age=max_age_seconds)
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        return None
+
+    if payload.get('purpose') != 'password_reset':
+        return None
+    user_id = payload.get('user_id')
+    email = payload.get('email')
+    if not user_id or not email:
+        return None
+    user = db.session.get(User, user_id)
+    if not user or not user.is_active or user.email != email:
+        return None
+    return user
+
+
+def build_password_reset_url(token):
+    configured_base = app.config.get('PASSWORD_RESET_URL_BASE')
+    if configured_base:
+        return f"{configured_base.rstrip('/')}?token={token}"
+    return None
+
+
+def send_password_reset_email(user, reset_url):
+    message = EmailMessage()
+    message['Subject'] = 'Reset your Cards password'
+    message['From'] = app.config['MAIL_DEFAULT_SENDER']
+    message['To'] = user.email
+    message.set_content(
+        (
+            f"Hello {user.username},\n\n"
+            "We received a request to reset your Cards password.\n"
+            f"Use this link within {app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] // 60} minutes:\n\n"
+            f"{reset_url}\n\n"
+            "If you did not request this, you can ignore this email."
+        )
+    )
+
+    smtp_host = app.config['MAIL_SERVER']
+    smtp_port = app.config['MAIL_PORT']
+    smtp_username = app.config.get('MAIL_USERNAME')
+    smtp_password = app.config.get('MAIL_PASSWORD')
+    use_ssl = app.config.get('MAIL_USE_SSL')
+    use_tls = app.config.get('MAIL_USE_TLS')
+
+    smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    with smtp_class(smtp_host, smtp_port, timeout=10) as smtp:
+        if not use_ssl and use_tls:
+            smtp.starttls()
+        if smtp_username:
+            smtp.login(smtp_username, smtp_password or '')
+        smtp.send_message(message)
+
+
+def delete_user_account(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        return False
+
+    owned_deck_ids = [deck_id for (deck_id,) in db.session.query(Deck.deck_id).filter_by(owned_by=user.user_id).all()]
+    owned_quiz_ids = [quiz_id for (quiz_id,) in db.session.query(Quiz.quiz_id).filter_by(owned_by=user.user_id).all()]
+    for deck_id in owned_deck_ids:
+        _delete_content_fts_index_row('deck', deck_id)
+    for quiz_id in owned_quiz_ids:
+        _delete_content_fts_index_row('quiz', quiz_id)
+
+    db.session.delete(user)
+    db.session.commit()
+    return True
 
 
 # Deck helpers.

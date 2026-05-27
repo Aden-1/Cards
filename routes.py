@@ -111,7 +111,10 @@ _rate_limit_lock = Lock()
 _RATE_LIMITS = {
     'login': (10, 15 * 60),
     'register': (5, 60 * 60),
+    'forgot_password': (5, 60 * 60),
+    'reset_password': (10, 60 * 60),
     'account': (10, 60 * 60),
+    'delete_account': (3, 60 * 60),
     'admin_users': (30, 60 * 60),
 }
 
@@ -260,6 +263,10 @@ def _valid_password(password):
     )
 
 
+def _valid_email(email):
+    return bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email or ''))
+
+
 def _password_requirements_message(prefix='Passwords'):
     return f'{prefix} must be at least 12 characters and contain a letter and a number.'
 
@@ -307,6 +314,8 @@ def register():
 
     if not _valid_username(username):
         return render_template('register.html', error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
+    if not _valid_email(email):
+        return render_template('register.html', error='Enter a valid email address so your account can be recovered.'), 400
     if not _valid_password(password):
         return render_template('register.html', error=_password_requirements_message()), 400
     if password != confirm_password:
@@ -348,6 +357,91 @@ def login():
     return redirect(_safe_next_url(data.get('next')))
 
 
+def forgot_password():
+    from app import (
+        build_password_reset_url,
+        generate_password_reset_token,
+        get_user_by_email,
+        send_password_reset_email,
+    )
+
+    success_message = 'If that email matches an active account, a password reset link has been sent.'
+    email_delivery_available = current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED', False)
+    if request.method == 'GET':
+        return render_template(
+            'forgot_password.html',
+            success=None,
+            email_delivery_available=email_delivery_available,
+        )
+
+    data = _request_data()
+    email = (data.get('email') or '').strip().lower()
+    if not _valid_email(email):
+        return render_template(
+            'forgot_password.html',
+            error='Enter a valid email address.',
+            email_delivery_available=email_delivery_available,
+        ), 400
+
+    user = get_user_by_email(email)
+    if user and user.is_active and email_delivery_available:
+        token = generate_password_reset_token(user)
+        reset_url = build_password_reset_url(token) or url_for('reset_password', token=token, _external=True)
+        try:
+            send_password_reset_email(user, reset_url)
+        except Exception:
+            current_app.logger.exception('password_reset_email_failed user_id=%s', user.user_id)
+            return render_template(
+                'forgot_password.html',
+                error='Password reset email delivery is temporarily unavailable. Please try again later.',
+                email_delivery_available=email_delivery_available,
+            ), 503
+        current_app.logger.info('password_reset_requested user_id=%s', user.user_id)
+
+    return render_template(
+        'forgot_password.html',
+        success=success_message,
+        email_delivery_available=email_delivery_available,
+    )
+
+
+def reset_password():
+    from app import get_user_by_password_reset_token, update_user_account
+
+    token = (request.args.get('token') if request.method == 'GET' else _request_data().get('token') or '').strip()
+    user = get_user_by_password_reset_token(token)
+    if request.method == 'GET':
+        return render_template('reset_password.html', token=token, token_valid=bool(user))
+
+    password = _request_data().get('password') or ''
+    confirm_password = _request_data().get('confirm_password') or ''
+    if not user:
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=False,
+            error='This password reset link is invalid or has expired.',
+        ), 400
+    if not _valid_password(password):
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=True,
+            error=_password_requirements_message('Passwords'),
+        ), 400
+    if password != confirm_password:
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=True,
+            error='Passwords do not match.',
+        ), 400
+
+    update_user_account(user.user_id, username=user.username, email=user.email, password=password)
+    current_app.logger.info('password_reset_completed user_id=%s', user.user_id)
+    return redirect(url_for('login', notice='Password updated. You can log in now.', level='success'))
+
+
 def logout():
     session.clear()
     return redirect(url_for('index', notice='Logged out', level='success'))
@@ -373,6 +467,8 @@ def account():
         return render_template('account.html', user=user, error='Enter your current password to save account changes.'), 400
     if not _valid_username(username):
         return render_template('account.html', user=user, error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
+    if not _valid_email(email):
+        return render_template('account.html', user=user, error='Enter a valid email address so your account stays recoverable.'), 400
     existing_user = get_user(username)
     if existing_user and existing_user.user_id != user.user_id:
         return render_template('account.html', user=user, error='That username is already taken.'), 400
@@ -398,6 +494,35 @@ def account():
     return render_template('account.html', user=updated_user, success='Account updated.')
 
 
+@login_required
+def delete_account():
+    from app import delete_user_account
+
+    user = _current_user()
+    data = _request_data()
+    current_password = data.get('current_password') or ''
+    confirmation = (data.get('confirmation') or '').strip()
+
+    if confirmation != 'DELETE':
+        return render_template(
+            'account.html',
+            user=user,
+            delete_error='Type DELETE to confirm account deletion.',
+        ), 400
+    if not user.check_password(current_password):
+        return render_template(
+            'account.html',
+            user=user,
+            delete_error='Enter your current password to delete your account.',
+        ), 400
+
+    deleted_user_id = user.user_id
+    delete_user_account(deleted_user_id)
+    session.clear()
+    current_app.logger.info('self_service_account_deleted user_id=%s', deleted_user_id)
+    return redirect(url_for('index', notice='Your account and owned content were deleted.', level='success'))
+
+
 def update_theme_route():
     user = _current_user()
     if not user:
@@ -416,8 +541,8 @@ def update_theme_route():
 
 @admin_required
 def admin_users():
-    from app import _delete_content_fts_index_row
-    from models import Deck, Quiz, User, db
+    from app import delete_user_account
+    from models import User, db
 
     if request.method == 'GET':
         users = User.query.order_by(User.user_id).all()
@@ -437,17 +562,7 @@ def admin_users():
     if action == 'delete':
         if current_user and current_user.user_id == target_user.user_id:
             return redirect(url_for('admin_users', notice='You cannot delete your own account.', level='error'))
-
-        # Keep search index clean before cascading deletes.
-        owned_deck_ids = [deck_id for (deck_id,) in db.session.query(Deck.deck_id).filter_by(owned_by=target_user.user_id).all()]
-        owned_quiz_ids = [quiz_id for (quiz_id,) in db.session.query(Quiz.quiz_id).filter_by(owned_by=target_user.user_id).all()]
-        for deck_id in owned_deck_ids:
-            _delete_content_fts_index_row('deck', deck_id)
-        for quiz_id in owned_quiz_ids:
-            _delete_content_fts_index_row('quiz', quiz_id)
-
-        db.session.delete(target_user)
-        db.session.commit()
+        delete_user_account(target_user.user_id)
         current_app.logger.info('admin_action=delete_user actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User and all owned data deleted.', level='success'))
 
@@ -1617,8 +1732,11 @@ def register_routes(app):
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=register, methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
+    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=forgot_password, methods=['GET', 'POST'])
+    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=reset_password, methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=account, methods=['GET', 'POST'])
+    app.add_url_rule('/account/delete', endpoint='delete_account', view_func=delete_account, methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=update_theme_route, methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)

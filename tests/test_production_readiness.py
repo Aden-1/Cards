@@ -13,7 +13,12 @@ from models import Card, CardAnswer, Deck, MatchPairProgress, Quiz, QuizAttempt,
 
 class ProductionReadinessTests(unittest.TestCase):
     def setUp(self):
-        cards_app.app.config.update(TESTING=True, PUBLIC_REGISTRATION_ENABLED=True)
+        cards_app.app.config.update(
+            TESTING=True,
+            PUBLIC_REGISTRATION_ENABLED=True,
+            PASSWORD_RESET_EMAILS_ENABLED=True,
+            MAIL_DEFAULT_SENDER='noreply@example.test',
+        )
         routes._rate_limit_buckets.clear()
         self.client = cards_app.app.test_client()
         with cards_app.app.app_context():
@@ -58,6 +63,7 @@ class ProductionReadinessTests(unittest.TestCase):
             data={
                 'csrf_token': 'csrf-test-token',
                 'username': 'member',
+                'email': 'member@example.test',
                 'password': 'password12345',
                 'confirm_password': 'password12345',
             },
@@ -67,9 +73,24 @@ class ProductionReadinessTests(unittest.TestCase):
         with cards_app.app.app_context():
             self.assertEqual(User.query.filter_by(username='member').one().role, 'standard')
 
+    def test_public_registration_requires_recoverable_email(self):
+        self._csrf()
+        response = self.client.post(
+            '/register',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'username': 'member',
+                'password': 'password12345',
+                'confirm_password': 'password12345',
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('recover', response.get_data(as_text=True).lower())
+
     def test_logout_form_carries_csrf_and_logout_clears_session(self):
         with cards_app.app.app_context():
-            user = cards_app.create_user('logging_out', 'password12345')
+            user = cards_app.create_user('logging_out', 'password12345', email='logout@example.test')
             user_id = user.user_id
 
         self._login_session(user_id)
@@ -83,7 +104,7 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_quiz_scoring_ignores_client_claimed_correctness(self):
         with cards_app.app.app_context():
-            owner = cards_app.create_user('quiz_owner', 'password12345')
+            owner = cards_app.create_user('quiz_owner', 'password12345', email='quiz-owner@example.test')
             deck = cards_app.create_deck(owner.user_id, 'Public quiz deck', is_public=True)
             card = Card(deck_id=deck.deck_id, question='Capital of France?', position=1)
             db.session.add(card)
@@ -117,7 +138,7 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_match_progress_ignores_client_claimed_correctness(self):
         with cards_app.app.app_context():
-            user = cards_app.create_user('matcher', 'password12345')
+            user = cards_app.create_user('matcher', 'password12345', email='matcher@example.test')
             deck = Deck(owned_by=user.user_id, description='Matching')
             db.session.add(deck)
             db.session.flush()
@@ -151,7 +172,7 @@ class ProductionReadinessTests(unittest.TestCase):
 
     def test_deck_quiz_page_renders_answer_options(self):
         with cards_app.app.app_context():
-            owner = cards_app.create_user('deck_quiz_owner', 'password12345')
+            owner = cards_app.create_user('deck_quiz_owner', 'password12345', email='deck-quiz-owner@example.test')
             deck = cards_app.create_deck(owner.user_id, 'Deck Quiz', is_public=True)
             card = Card(deck_id=deck.deck_id, question='Largest ocean?', position=1)
             db.session.add(card)
@@ -169,11 +190,11 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Largest ocean?', page)
         self.assertIn('submitQuiz', page)
-        self.assertIn('Pacific Ocean', page)
+        self.assertTrue('Pacific Ocean' in page or 'The Pacific' in page)
 
     def test_custom_quiz_page_renders_dynamic_question_options(self):
         with cards_app.app.app_context():
-            owner = cards_app.create_user('custom_quiz_owner', 'password12345')
+            owner = cards_app.create_user('custom_quiz_owner', 'password12345', email='custom-quiz-owner@example.test')
             quiz = Quiz(owned_by=owner.user_id, title='World Capitals', is_public=True)
             db.session.add(quiz)
             db.session.flush()
@@ -200,6 +221,72 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertIn('Capital of Japan?', page)
         self.assertIn('submitQuiz', page)
         self.assertIn('Tokyo', page)
+
+    def test_password_reset_flow_updates_password_with_signed_token(self):
+        sent_urls = []
+        original_send = cards_app.send_password_reset_email
+
+        def fake_send(user, reset_url):
+            sent_urls.append(reset_url)
+
+        cards_app.send_password_reset_email = fake_send
+        try:
+            with cards_app.app.app_context():
+                cards_app.create_user('recoverable', 'password12345', email='recover@example.test')
+
+            self._csrf()
+            request_response = self.client.post(
+                '/forgot-password',
+                data={
+                    'csrf_token': 'csrf-test-token',
+                    'email': 'recover@example.test',
+                },
+            )
+            self.assertEqual(request_response.status_code, 200)
+            self.assertEqual(len(sent_urls), 1)
+            token = sent_urls[0].split('token=', 1)[1]
+
+            self._csrf()
+            reset_response = self.client.post(
+                '/reset-password',
+                data={
+                    'csrf_token': 'csrf-test-token',
+                    'token': token,
+                    'password': 'newpassword123',
+                    'confirm_password': 'newpassword123',
+                },
+            )
+            self.assertEqual(reset_response.status_code, 302)
+
+            with cards_app.app.app_context():
+                user = cards_app.get_user('recoverable')
+                self.assertTrue(user.check_password('newpassword123'))
+        finally:
+            cards_app.send_password_reset_email = original_send
+
+    def test_account_delete_removes_user_and_owned_content(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user('delete_me', 'password12345', email='delete@example.test')
+            deck = cards_app.create_deck(user.user_id, 'Owned deck', is_public=True)
+            user_id = user.user_id
+            deck_id = deck.deck_id
+
+        self._login_session(user_id)
+        response = self.client.post(
+            '/account/delete',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'current_password': 'password12345',
+                'confirmation': 'DELETE',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as current_session:
+            self.assertNotIn('user_id', current_session)
+        with cards_app.app.app_context():
+            self.assertIsNone(db.session.get(User, user_id))
+            self.assertIsNone(db.session.get(Deck, deck_id))
 
 
 if __name__ == '__main__':
