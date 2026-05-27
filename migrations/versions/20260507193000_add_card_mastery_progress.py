@@ -5,7 +5,7 @@ Revises: 20260502173000
 Create Date: 2026-05-07 19:30:00.000000
 
 """
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 
 
@@ -17,6 +17,9 @@ depends_on = None
 
 
 def upgrade():
+    if not context.is_offline_mode() and sa.inspect(op.get_bind()).has_table('card_mastery_progress'):
+        return
+
     op.create_table(
         'card_mastery_progress',
         sa.Column('progress_id', sa.Integer(), autoincrement=True, nullable=False),
@@ -40,6 +43,9 @@ def upgrade():
 
 
 def downgrade():
+    if not context.is_offline_mode() and not sa.inspect(op.get_bind()).has_table('card_mastery_progress'):
+        return
+
     op.drop_index(op.f('ix_card_mastery_progress_card_id'), table_name='card_mastery_progress')
     op.drop_index(op.f('ix_card_mastery_progress_user_id'), table_name='card_mastery_progress')
     op.drop_table('card_mastery_progress')
