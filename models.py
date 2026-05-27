@@ -6,7 +6,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 db = SQLAlchemy()
 
 
-# User owns decks and quizzes.
+# Account and ownership models.
 class User(db.Model):
     user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     username = db.Column(db.String(100), nullable=False, unique=True)
@@ -35,7 +35,7 @@ class User(db.Model):
         return self.role == 'admin'
 
 
-# Flashcard deck metadata.
+# Flashcard models.
 class Deck(db.Model):
     deck_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
@@ -61,7 +61,6 @@ class Card(db.Model):
     )
 
 
-# Single accepted answer for a card.
 class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False, index=True)
@@ -69,7 +68,7 @@ class CardAnswer(db.Model):
     match_progress = db.relationship('MatchPairProgress', backref='answer', lazy=True, cascade='all, delete-orphan')
 
 
-# Per-user learning state for one card.
+# Progress-tracking models.
 class CardMasteryProgress(db.Model):
     progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
@@ -102,7 +101,7 @@ class MatchPairProgress(db.Model):
         db.UniqueConstraint('user_id', 'answer_id', name='uq_match_pair_user_answer'),
     )
 
-# Custom quiz tables.
+# Quiz authoring models.
 class Quiz(db.Model):
     quiz_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
@@ -127,7 +126,7 @@ class QuizOption(db.Model):
     is_correct = db.Column(db.Boolean, default=False)
 
 
-# One-time server-side truth for a rendered quiz run.
+# Runtime quiz-session storage.
 class QuizAttempt(db.Model):
     attempt_token = db.Column(db.String(64), primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)

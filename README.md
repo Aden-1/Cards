@@ -112,16 +112,16 @@ python -m flask db upgrade
 - Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
 - Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
 
-## Heroku Deployment Notes
+## Production Deployment Notes
 
-- Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
-- Production and Heroku sessions automatically use secure cookies over HTTPS
-- The web dyno defaults to one worker while rate limiting is process-local; only raise `WEB_CONCURRENCY` after moving rate limits to a shared store or edge control
+- Set `APP_ENV=production` and `SECRET_KEY` in production
+- Production sessions automatically use secure cookies over HTTPS
+- Keep `WEB_CONCURRENCY=1` while rate limiting is still process-local; only raise it after moving limits to a shared store or edge control
 
 ## Related Docs
 
 - API reference: `docs/API.md`
 - Database reference: `docs/DATABASE.md`
-- Deployment and Heroku runtime notes: `docs/DEPLOYMENT.md`
+- Deployment notes: `docs/DEPLOYMENT.md`
 
 ### Website coming soon™!

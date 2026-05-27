@@ -22,9 +22,9 @@ from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
-# Treat Heroku dynos as production even if an environment label was omitted.
+# Application environment and runtime configuration.
 environment_name = os.environ.get('APP_ENV', os.environ.get('FLASK_ENV', 'development')).lower()
-is_production = environment_name == 'production' or bool(os.environ.get('DYNO'))
+is_production = environment_name == 'production'
 
 
 def _env_bool(name, default=False):
@@ -103,10 +103,11 @@ def _configure_logging():
 
 _configure_logging()
 
-# Session and cookie security. Deployed applications must never use a known key.
+# Session and cookie security.
+# Deployed applications must never use a known key.
 secret_key = os.environ.get('SECRET_KEY')
 if is_production and not secret_key:
-    raise RuntimeError('SECRET_KEY must be set in production or on Heroku')
+    raise RuntimeError('SECRET_KEY must be set in production.')
 app.config['SECRET_KEY'] = secret_key or 'dev-only-change-me'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -121,19 +122,20 @@ app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
 )
 trusted_hosts = _env_list('TRUSTED_HOSTS')
 if is_production and not trusted_hosts:
-    raise RuntimeError('TRUSTED_HOSTS must be set in production or on Heroku')
+    raise RuntimeError('TRUSTED_HOSTS must be set in production.')
 app.config['TRUSTED_HOSTS'] = trusted_hosts
 if is_production:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# Database config. Use DATABASE_URL in deployed environments with local SQLite fallback.
+# Database configuration.
+# Use DATABASE_URL in deployed environments with local SQLite fallback.
 database_url = os.environ.get('DATABASE_URL')
 if is_production and not database_url:
-    raise RuntimeError('DATABASE_URL must be set in production or on Heroku')
+    raise RuntimeError('DATABASE_URL must be set in production.')
 database_url = database_url or 'sqlite:///cards.db'
 database_url = _normalize_database_url(database_url, require_ssl=is_production)
 if is_production and not database_url.startswith('postgresql+psycopg://'):
-    raise RuntimeError('DATABASE_URL must use PostgreSQL in production or on Heroku')
+    raise RuntimeError('DATABASE_URL must use PostgreSQL in production.')
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _build_engine_options(database_url)
@@ -155,6 +157,7 @@ MAX_IMPORT_ANSWERS_PER_CARD = 10
 MAX_QUIZ_OPTIONS_PER_QUESTION = 5
 
 
+# Text validation helpers.
 def _clean_text(value):
     if value is None:
         return None
@@ -212,6 +215,7 @@ def _log_search_index_failure(action, exc, item_type=None, item_id=None):
     )
 
 
+# Lightweight startup migrations for older local SQLite databases.
 def _ensure_user_theme_preference_column():
     """Add User.theme_preference for existing SQLite databases if missing."""
     if not _is_sqlite_backend():
@@ -270,7 +274,7 @@ def _ensure_match_pair_progress_table():
     MatchPairProgress.__table__.create(bind=db.engine, checkfirst=True)
 
 
-# Normalize answer input into a clean list.
+# Serialization and import helpers.
 def _normalize_answers(answers):
     if answers is None:
         return []
@@ -279,7 +283,6 @@ def _normalize_answers(answers):
     return [answer.strip() for answer in answers if str(answer).strip()]
 
 
-# Serialize one card for JSON responses.
 def _serialize_card(card, detailed=False):
     answer_objects = [{'answer_id': answer.answer_id, 'answer': answer.answer} for answer in card.answers]
     payload = {
@@ -293,7 +296,6 @@ def _serialize_card(card, detailed=False):
     return payload
 
 
-# Serialize a deck and its cards.
 def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_answers=False):
     cards = list(deck.cards)
     cards.sort(key=lambda card: card.position)
@@ -400,18 +402,14 @@ def export_deck_as_text(deck):
 
 
 # Custom quiz helpers.
-
-# Return public and owned custom quizzes.
 def get_accessible_custom_quizzes(user_id=None):
     if user_id is None:
         return Quiz.query.filter(Quiz.is_public == True).all()
     return Quiz.query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
 
-# Return quizzes owned by one user.
 def get_user_custom_quizzes(user_id):
     return Quiz.query.filter_by(owned_by=user_id).all()
 
-# Create and index a custom quiz.
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
     title, description, tags = _validate_quiz_metadata(title, description, tags)
     quiz = Quiz(
@@ -426,7 +424,6 @@ def create_custom_quiz(user_id, title, is_public=False, description=None, tags=N
     _sync_content_fts_index_for_quiz(quiz)
     return quiz
 
-# Update a custom quiz and refresh search.
 def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=None):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
@@ -440,7 +437,6 @@ def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=Non
         return quiz
     return None
 
-# Delete a custom quiz and its index row.
 def delete_custom_quiz(quiz_id):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
@@ -451,7 +447,6 @@ def delete_custom_quiz(quiz_id):
     return False
 
 
-# Duplicate a public quiz into one user's account.
 def copy_public_quiz_to_user(source_quiz_id, user_id):
     source_quiz = Quiz.query.get(source_quiz_id)
     if not source_quiz or not source_quiz.is_public:
@@ -488,7 +483,6 @@ def copy_public_quiz_to_user(source_quiz_id, user_id):
     return copied_quiz
 
 
-# Duplicate a public deck into one user's account.
 def copy_public_deck_to_user(source_deck_id, user_id):
     source_deck = Deck.query.get(source_deck_id)
     if not source_deck or not source_deck.is_public:
@@ -526,7 +520,6 @@ def copy_public_deck_to_user(source_deck_id, user_id):
     _sync_content_fts_index_for_deck(copied_deck)
     return copied_deck
 
-# Insert a quiz question and its options.
 def add_quiz_question(quiz_id, question_text, q_type, options_data):
     if q_type not in ('dynamic', 'static'):
         raise ValueError('Quiz question type must be dynamic or static.')
@@ -586,7 +579,6 @@ def delete_quiz_question(question_id):
 
 
 # User helpers.
-# Create a user record.
 def create_user(username, password, email=None, role='standard'):
     user = User(username=username, email=email or None, role=role)
     user.set_password(password)
@@ -655,7 +647,6 @@ def rebuild_public_search_index_command():
     app.logger.info('public_search_index_rebuilt backend=%s', _search_backend_name())
     click.echo(f"Rebuilt public search index for {_search_backend_name()}.")
 
-# Look up a user by username.
 def get_user(username):
     return User.query.filter_by(username=username).first()
 
@@ -683,7 +674,6 @@ def update_user_account(user_id, username, email=None, password=None):
 
 
 # Deck helpers.
-# Create a deck and mirror it into search.
 def create_deck(user_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
     description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     deck = Deck(
@@ -734,13 +724,10 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
         'line_count': parsed['line_count'],
     }
 
-# Return decks owned by one user.
 def get_user_decks(user_id):
     return Deck.query.filter_by(owned_by=user_id).all()
 
 
-# Owned or public decks.
-# Return owned and public decks.
 def get_accessible_decks(user_id=None):
     if user_id is None:
         return Deck.query.filter(Deck.is_public == True).all()
@@ -786,12 +773,10 @@ def get_homepage_public_data(featured_limit=3, tag_limit=5):
     }
 
 
-# Fetch a deck by id.
 def get_deck(deck_id):
     return Deck.query.get(deck_id)
 
 
-# Delete a deck and its search row.
 def delete_deck(deck_id):
     deck = Deck.query.get(deck_id)
     if deck:
@@ -801,7 +786,6 @@ def delete_deck(deck_id):
         return True
     return False
 
-# Update deck metadata and search.
 def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
     deck = Deck.query.get(deck_id)
     if deck:
@@ -816,7 +800,7 @@ def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_de
         return deck
     return None
 
-# Simple fallback search for public decks.
+# Search helpers.
 def search_public_decks(query_text):
     if not query_text:
         return []
@@ -834,7 +818,6 @@ def search_public_decks(query_text):
     return decks
 
 
-# Simple fallback search for public quizzes.
 def search_public_quizzes(query_text):
     if not query_text:
         return []
@@ -851,7 +834,6 @@ def search_public_quizzes(query_text):
     return quizzes
 
 
-# Normalize text for search matching.
 def _normalize_search_text(text):
     text = (text or '').lower()
     text = unicodedata.normalize('NFKD', text)
@@ -861,7 +843,6 @@ def _normalize_search_text(text):
     return text
 
 
-# Split normalized search text into tokens.
 def _tokenize_search_text(text):
     normalized = _normalize_search_text(text)
     if not normalized:
@@ -869,7 +850,6 @@ def _tokenize_search_text(text):
     return [token for token in normalized.split() if token]
 
 
-# Build a loose FTS query from user input.
 def _build_fts_query(query_text):
     tokens = _tokenize_search_text(query_text)
     if not tokens:
@@ -900,7 +880,6 @@ def _is_postgres_backend():
     return _search_backend_name().startswith('postgresql')
 
 
-# Public search index helpers.
 def _ensure_content_fts_index():
     # Create backend-specific full-text structures only when needed.
     if _is_sqlite_backend():
@@ -926,7 +905,6 @@ def _postgres_search_vector_expression():
     )
 
 
-# Remove one row from the public search index.
 def _delete_content_fts_index_row(item_type, item_id):
     try:
         _ensure_content_fts_index()
@@ -946,7 +924,6 @@ def _delete_content_fts_index_row(item_type, item_id):
         _log_search_index_failure('delete', exc, item_type=item_type, item_id=item_id)
 
 
-# Write one row into the public search index.
 def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is_public):
     try:
         _ensure_content_fts_index()
@@ -999,7 +976,6 @@ def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is
         _log_search_index_failure('sync', exc, item_type=item_type, item_id=item_id)
 
 
-# Sync one deck into the search index.
 def _sync_content_fts_index_for_deck(deck):
     _sync_content_fts_index_row(
         item_type='deck',
@@ -1011,7 +987,6 @@ def _sync_content_fts_index_for_deck(deck):
     )
 
 
-# Sync one quiz into the search index.
 def _sync_content_fts_index_for_quiz(quiz):
     _sync_content_fts_index_row(
         item_type='quiz',
@@ -1023,7 +998,6 @@ def _sync_content_fts_index_for_quiz(quiz):
     )
 
 
-# Rebuild the full public search index.
 def _rebuild_content_fts_index():
     _ensure_content_fts_index()
     if _is_sqlite_backend():
@@ -1100,7 +1074,6 @@ def _rebuild_content_fts_index():
     db.session.commit()
 
 
-# Fallback search when FTS is unavailable.
 def _fallback_search_public_content(query_text):
     search_term = f"%{query_text}%"
     decks = Deck.query.filter(
@@ -1122,7 +1095,6 @@ def _fallback_search_public_content(query_text):
     return decks, quizzes
 
 
-# Search public decks and quizzes.
 def search_public_content(query_text, limit=50, user_id=None):
     query_text = (query_text or '').strip()
     if not query_text:
@@ -1368,8 +1340,6 @@ def search_public_content(query_text, limit=50, user_id=None):
     }
 
 # Card and answer helpers.
-
-# Add a card with one or more answers.
 def add_card(deck_id, question, answers):
     # Positions are 1-based within each deck.
     max_position = db.session.query(db.func.max(Card.position)).filter_by(deck_id=deck_id).scalar() or 0
@@ -1388,7 +1358,6 @@ def add_card(deck_id, question, answers):
     return card
 
 
-# Add one answer to an existing card.
 def add_answer_to_card(card_id, answer):
     card = Card.query.get(card_id)
     if card:
@@ -1399,7 +1368,6 @@ def add_answer_to_card(card_id, answer):
     return None
 
 
-# Delete an answer and maybe its card.
 def delete_answer(answer_id):
     # Remove the card if its last answer disappears.
     answer = CardAnswer.query.get(answer_id)
@@ -1423,7 +1391,6 @@ def delete_answer(answer_id):
     return {'answer_deleted': True, 'card_deleted': card_deleted, 'card_id': card_id, 'deck_id': deck_id}
 
 
-# Delete one card and its answers.
 def delete_card(card_id):
     card = Card.query.get(card_id)
     if card:
@@ -1433,7 +1400,6 @@ def delete_card(card_id):
     return False
 
 
-# Replace a card question and answers.
 def edit_card(card_id, question, answers):
     card = Card.query.get(card_id)
     if card:
@@ -1457,8 +1423,6 @@ def edit_card(card_id, question, answers):
     return None
 
 
-# Card fetch helper.
-# Fetch one card in API-friendly form.
 def get_card_from_deck(card_id, detailed=False):
     card = Card.query.get(card_id)
     if card:
@@ -1474,7 +1438,6 @@ def get_card_from_deck(card_id, detailed=False):
     return None
 
 
-# Build deck data for study and games.
 def get_deck_study_data(deck_id, shuffle=True):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1645,7 +1608,6 @@ def record_match_attempt(user_id, answer_id, is_correct):
     app.logger.warning('match_progress_update_skipped user_id=%s answer_id=%s', user_id, answer_id)
 
 
-# Compare submitted order against saved positions.
 def check_deck_order(deck_id, ordered_card_ids):
     """Validate a user-submitted card order against stored card positions."""
     deck = Deck.query.get(deck_id)
@@ -1681,7 +1643,6 @@ def check_deck_order(deck_id, ordered_card_ids):
     }
 
 
-# Move one card up or down.
 def move_card_in_deck(card_id, direction):
     """Move a card up or down within its deck by swapping position with a neighbor."""
     card = Card.query.get(card_id)
@@ -1709,7 +1670,6 @@ def move_card_in_deck(card_id, direction):
     return {'success': True, 'moved': True, 'deck_id': card.deck_id}
 
 
-# Swap two cards inside one deck.
 def swap_cards_in_deck(card_id, target_card_id):
     """Swap two cards in the same sortable deck."""
     first_card = Card.query.get(card_id)
@@ -1729,9 +1689,7 @@ def swap_cards_in_deck(card_id, target_card_id):
 
     return {'success': True, 'swapped': True, 'deck_id': first_card.deck_id}
 
-
-# Get all cards from a deck ordered by position
-# Return cards from one deck.
+# Read-only deck access helpers.
 def list_cards_from_deck(deck_id, detailed=False, shuffle=False):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1739,7 +1697,6 @@ def list_cards_from_deck(deck_id, detailed=False, shuffle=False):
     return _serialize_deck(deck, detailed_cards=detailed, shuffle_cards=shuffle, shuffle_answers=False)['cards']
 
 
-# Return full deck details for the UI.
 def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1747,6 +1704,7 @@ def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle_cards, shuffle_answers=shuffle_answers)
 
 
+# Mastery mode helpers.
 def _mastery_status_for_rating(rating):
     if rating == 'understood':
         return 'mastered'
@@ -2091,102 +2049,92 @@ def score_quiz_attempt(attempt_token, user_id, submitted_answers):
     return result
 
 
-# Generate quiz questions from a deck or custom quiz.
-def generate_quiz_data(deck_id=None, custom_quiz_id=None):
-    from models import Quiz, Card, CardAnswer
+# Quiz generation helpers.
+def _build_multiple_choice_options(correct_answers, distractors, max_options=4, filler_prefix='Distractor'):
+    chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
+    if len(chosen_correct) > max_options:
+        chosen_correct = random.sample(chosen_correct, max_options)
+
+    wrong_needed = max(0, max_options - len(chosen_correct))
+    safe_distractors = [distractor for distractor in distractors if distractor not in correct_answers]
+    chosen_wrong = safe_distractors[:]
+    if len(chosen_wrong) > wrong_needed:
+        chosen_wrong = random.sample(chosen_wrong, wrong_needed)
+    elif len(chosen_wrong) < wrong_needed:
+        filler_count = wrong_needed - len(chosen_wrong)
+        chosen_wrong.extend([f'{filler_prefix} {index}' for index in range(filler_count)])
+
+    options = (
+        [{'text': answer, 'is_correct': True} for answer in chosen_correct]
+        + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
+    )
+    random.shuffle(options)
+    return options
+
+
+def _generate_deck_quiz_questions(deck_id):
+    from models import CardAnswer
+
+    deck = Deck.query.get(deck_id)
+    cards = list(deck.cards) if deck else []
+    deck_answers = [answer.answer for answer in CardAnswer.query.join(Card).filter(Card.deck_id == deck_id).all()]
+    if not deck_answers:
+        deck_answers = ['Option A', 'Option B', 'Option C', 'Option D', 'No other answers available']
+
     quiz_questions = []
-    
-    if deck_id:
-        deck = Deck.query.get(deck_id)
-        cards = list(deck.cards) if deck else []
-
-        # Build distractors from the selected deck only.
-        all_distractors = []
-        other_answers = CardAnswer.query.join(Card).filter(Card.deck_id == deck_id).all()
-        all_distractors = [a.answer for a in other_answers]
-        
-        if not all_distractors:
-            all_distractors = ["Option A", "Option B", "Option C", "Option D", "No other answers available"]
-
-        for i, c in enumerate(cards):
-            is_obj = hasattr(c, 'question')
-            question_text = c.question if is_obj else c.get('question')
-            
-            if is_obj:
-                correct_pool = [a.answer for a in c.answers]
-            else:
-                correct_pool = c.get('correct_answers', [])
-                
-            num_correct = random.randint(1, len(correct_pool)) if correct_pool else 0
-            chosen_correct = random.sample(correct_pool, num_correct) if correct_pool else []
-            
-            num_wrong = 4 - len(chosen_correct)
-            if num_wrong < 0:
-                chosen_correct = random.sample(chosen_correct, 4)
-                num_wrong = 0
-                
-            chosen_wrong = []
-            if num_wrong > 0:
-                safe_distractors = [d for d in all_distractors if d not in correct_pool]
-                if len(safe_distractors) >= num_wrong:
-                    chosen_wrong = random.sample(safe_distractors, num_wrong)
-                else:
-                    chosen_wrong = safe_distractors + [f"Generic Distractor {x}" for x in range(num_wrong - len(safe_distractors))]
-                    
-            options = [{'text': ans, 'is_correct': True} for ans in chosen_correct] + \
-                      [{'text': ans, 'is_correct': False} for ans in chosen_wrong]
-            random.shuffle(options)
-            
-            quiz_questions.append({
-                'id': c.card_id if is_obj else f"custom_{i}",
-                'question': question_text,
-                'options': options
-            })
-            
-    elif custom_quiz_id:
-        quiz = Quiz.query.get(custom_quiz_id)
-        if not quiz: return []
-        
-        all_quiz_options_by_q = {q.question_id: [opt.text for opt in q.options] for q in quiz.questions}
-        
-        for q in quiz.questions:
-            if q.type == 'static':
-                options = [{'text': opt.text, 'is_correct': opt.is_correct} for opt in q.options]
-                random.shuffle(options)
-                quiz_questions.append({
-                    'id': f"q_{q.question_id}",
-                    'question': q.question,
-                    'options': options
-                })
-            elif q.type == 'dynamic':
-                # Dynamic quiz questions draw one correct option plus distractors.
-                correct_pool = [opt.text for opt in q.options]
-                chosen_correct = [random.choice(correct_pool)] if correct_pool else []
-                
-                distractor_pool = []
-                for other_q_id, opts in all_quiz_options_by_q.items():
-                    if other_q_id != q.question_id:
-                        distractor_pool.extend(opts)
-                
-                chosen_wrong = []
-                # Ensure distractors are not accidentally correct for this question
-                safe_distractors = list(set([d for d in distractor_pool if d not in correct_pool]))
-                if len(safe_distractors) >= 3:
-                    chosen_wrong = random.sample(safe_distractors, 3)
-                else:
-                    chosen_wrong = safe_distractors + [f"Distractor {x}" for x in range(3 - len(safe_distractors))]
-                    
-                options = [{'text': ans, 'is_correct': True} for ans in chosen_correct] + \
-                          [{'text': ans, 'is_correct': False} for ans in chosen_wrong]
-                random.shuffle(options)
-                
-                quiz_questions.append({
-                    'id': f"q_{q.question_id}",
-                    'question': q.question,
-                    'options': options
-                })
-        
+    for card in cards:
+        correct_answers = [answer.answer for answer in card.answers]
+        quiz_questions.append({
+            'id': card.card_id,
+            'question': card.question,
+            'options': _build_multiple_choice_options(
+                correct_answers,
+                deck_answers,
+                max_options=4,
+                filler_prefix='Generic Distractor',
+            ),
+        })
     return quiz_questions
+
+
+def _generate_custom_quiz_questions(custom_quiz_id):
+    quiz = Quiz.query.get(custom_quiz_id)
+    if not quiz:
+        return []
+
+    all_quiz_options = {question.question_id: [option.text for option in question.options] for question in quiz.questions}
+    quiz_questions = []
+    for question in quiz.questions:
+        if question.type == 'static':
+            options = [{'text': option.text, 'is_correct': option.is_correct} for option in question.options]
+            random.shuffle(options)
+        else:
+            correct_answers = [option.text for option in question.options]
+            distractor_pool = []
+            for other_question_id, options_for_question in all_quiz_options.items():
+                if other_question_id != question.question_id:
+                    distractor_pool.extend(options_for_question)
+            options = _build_multiple_choice_options(
+                [random.choice(correct_answers)] if correct_answers else [],
+                list(set(distractor_pool)),
+                max_options=4,
+            )
+
+        quiz_questions.append({
+            'id': f'q_{question.question_id}',
+            'question': question.question,
+            'options': options,
+        })
+    return quiz_questions
+
+
+def generate_quiz_data(deck_id=None, custom_quiz_id=None):
+    """Generate a browser-safe quiz payload from a deck or custom quiz."""
+    if deck_id:
+        return _generate_deck_quiz_questions(deck_id)
+    if custom_quiz_id:
+        return _generate_custom_quiz_questions(custom_quiz_id)
+    return []
 
 
 with app.app_context():
@@ -2195,7 +2143,7 @@ with app.app_context():
     _ensure_user_match_strategy_preference_column()
     _ensure_match_pair_progress_table()
 
-# Register all application routes
+# Route registration lives in routes.py so view handlers stay in one place.
 register_routes(app)
 
 

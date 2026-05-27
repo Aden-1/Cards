@@ -10,13 +10,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 
 
-# Shared request helpers.
-# Read request payload from JSON or form data.
+# Request parsing helpers.
 def _request_data():
     return request.get_json(silent=True) or request.values.to_dict(flat=True)
 
 
-# Parse an integer safely.
 def _int_value(value):
     try:
         return int(value)
@@ -24,7 +22,6 @@ def _int_value(value):
         return None
 
 
-# Redirect to a route with an optional fragment.
 def _redirect_with_fragment(endpoint, fragment=None, **values):
     target = url_for(endpoint, **values)
     if fragment:
@@ -32,6 +29,83 @@ def _redirect_with_fragment(endpoint, fragment=None, **values):
     return redirect(target)
 
 
+def _as_bool(value):
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _deck_summary_payload(deck, user_id):
+    """Build the common deck summary payload used across deck-oriented pages."""
+    return {
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
+        'sortable': deck.sortable,
+        'is_public': deck.is_public,
+        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
+        'card_count': len(deck.cards),
+    }
+
+
+def _quiz_launcher_deck_payload(deck, user_id):
+    """Keep the quiz picker payload minimal because it needs less metadata."""
+    return {
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
+        'card_count': len(deck.cards),
+    }
+
+
+def _parse_quiz_question_options(data, q_type):
+    """Read the repeated quiz option fields from create/edit forms."""
+    options_data = []
+    correct_count = 0
+
+    for index in range(1, 6):
+        option_text = data.get(f'option_{index}', '').strip()
+        if not option_text:
+            continue
+
+        is_correct = q_type == 'dynamic' or data.get(f'is_correct_{index}') is not None
+        if is_correct:
+            correct_count += 1
+        options_data.append({'text': option_text, 'is_correct': is_correct})
+
+    return options_data, correct_count
+
+
+def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count):
+    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
+        return _redirect_with_fragment(
+            'edit_quiz_route',
+            fragment='quiz-editor',
+            quiz_id=quiz_id,
+            notice='Dynamic questions must have 1-2 correct answers.',
+            level='error',
+        )
+
+    if q_type == 'static':
+        if not (1 <= correct_count <= 2):
+            return _redirect_with_fragment(
+                'edit_quiz_route',
+                fragment='quiz-editor',
+                quiz_id=quiz_id,
+                notice='Static questions must have 1-2 correct answers.',
+                level='error',
+            )
+        if len(options_data) < 2:
+            return _redirect_with_fragment(
+                'edit_quiz_route',
+                fragment='quiz-editor',
+                quiz_id=quiz_id,
+                notice='Static questions must have at least 2 options.',
+                level='error',
+            )
+    return None
+
+
+# Request-throttling helpers.
 _rate_limit_buckets = defaultdict(deque)
 _rate_limit_lock = Lock()
 _RATE_LIMITS = {
@@ -454,16 +528,7 @@ def edit():
     from app import get_user_decks, get_deck_details
 
     decks = get_user_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck = None
@@ -497,16 +562,7 @@ def view():
     from app import get_accessible_decks, get_deck_details
 
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -526,16 +582,7 @@ def match():
     from app import get_accessible_decks, get_match_game_data, get_match_strategy_catalog, normalize_match_strategy
 
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_question_id = _int_value(request.args.get('selected_question'))
@@ -573,16 +620,7 @@ def reorder():
     decks = get_accessible_decks(user_id)
     # Only sortable decks can enter this game.
     sortable_decks = [deck for deck in decks if deck.sortable]
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in sortable_decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in sortable_decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     sortable_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -611,16 +649,7 @@ def master():
     user = _current_user()
     user_id = user.user_id if user else None
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -748,8 +777,8 @@ def create_deck_route():
     description = data.get('description')
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
 
     if not description:
         return jsonify({'error': 'User ID and description are required'}), 400
@@ -823,8 +852,8 @@ def edit_deck_route():
     description = data.get('description')
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
 
     if not deck_id or not description:
         return jsonify({'error': 'Deck ID and description are required'}), 400
@@ -973,8 +1002,8 @@ def import_deck_route():
     description = (data.get('description') or '').strip()
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
     import_text = data.get('import_text')
 
     if not description:
@@ -1350,12 +1379,7 @@ def quiz_route():
     from app import create_quiz_attempt, get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
     user_id = _current_user_id()
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_quiz_launcher_deck_payload(deck, user_id) for deck in decks]
     
     custom_quizzes = get_accessible_custom_quizzes(user_id)
     accessible_custom_quiz_ids = {quiz.quiz_id for quiz in custom_quizzes}
@@ -1460,7 +1484,7 @@ def create_custom_quiz_route():
     title = data.get('title')
     description = data.get('description')
     tags = data.get('tags')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = _as_bool(data.get('is_public', False))
     if not title:
         return jsonify({'error': 'Title is required'}), 400
     try:
@@ -1479,7 +1503,7 @@ def edit_custom_quiz_metadata_route():
     title = data.get('title')
     description = data.get('description')
     tags = data.get('tags')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = _as_bool(data.get('is_public', False))
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
     try:
@@ -1512,28 +1536,10 @@ def add_quiz_question_route():
     question_text = data.get('question')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data = []
-    correct_count = 0
-    for i in range(1, 6):
-        text = data.get(f'option_{i}', '').strip()
-        if text:
-            if q_type == 'dynamic':
-                is_correct = True
-                correct_count += 1
-            else:
-                is_correct = (data.get(f'is_correct_{i}') is not None)
-                if is_correct:
-                    correct_count += 1
-            options_data.append({'text': text, 'is_correct': is_correct})
-            
-    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
-        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
-        
-    if q_type == 'static':
-        if not (1 <= correct_count <= 2):
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
-        if len(options_data) < 2:
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+    options_data, correct_count = _parse_quiz_question_options(data, q_type)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    if validation_error:
+        return validation_error
 
     try:
         add_quiz_question(quiz_id, question_text, q_type, options_data)
@@ -1575,28 +1581,10 @@ def edit_quiz_question_route():
     question_text = data.get('question')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data = []
-    correct_count = 0
-    for i in range(1, 6):
-        text = data.get(f'option_{i}', '').strip()
-        if text:
-            if q_type == 'dynamic':
-                is_correct = True
-                correct_count += 1
-            else:
-                is_correct = (data.get(f'is_correct_{i}') is not None)
-                if is_correct:
-                    correct_count += 1
-            options_data.append({'text': text, 'is_correct': is_correct})
-            
-    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
-        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
-        
-    if q_type == 'static':
-        if not (1 <= correct_count <= 2):
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
-        if len(options_data) < 2:
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+    options_data, correct_count = _parse_quiz_question_options(data, q_type)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    if validation_error:
+        return validation_error
 
     try:
         edit_quiz_question(question_id, question_text, q_type, options_data)
