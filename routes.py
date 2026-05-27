@@ -7,6 +7,7 @@ from threading import Lock
 
 from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
 
 # Shared request helpers.
@@ -195,9 +196,31 @@ def _safe_next_url(next_url):
     return url_for('index')
 
 
+def healthz():
+    return jsonify({'status': 'ok'}), 200
+
+
+def readyz():
+    from models import db
+
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({'status': 'ready', 'database': 'ok'}), 200
+    except Exception:
+        current_app.logger.exception('database_readiness_check_failed')
+        db.session.rollback()
+        return jsonify({'status': 'not_ready', 'database': 'error'}), 503
+
+
 def register():
     from app import create_user, get_user, get_user_by_email
     from models import db
+
+    if not current_app.config.get('PUBLIC_REGISTRATION_ENABLED', True):
+        message = 'Public registration is currently disabled.'
+        if _wants_json():
+            return jsonify({'error': message}), 403
+        return render_template('register.html', registration_disabled=True, error=message), 403
 
     if request.method == 'GET':
         return render_template('register.html')
@@ -1602,6 +1625,8 @@ def register_routes(app):
 
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
+    app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
+    app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=register, methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])

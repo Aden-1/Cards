@@ -97,15 +97,20 @@ python -m flask db upgrade
 - Set `DATABASE_URL=postgresql://user:password@host/database` for PostgreSQL; the app uses the bundled Psycopg 3 driver.
 - Run `python -m flask db upgrade` after pulling schema changes
 - Run `python -m flask rebuild-public-search-index` when you need to rebuild public search content explicitly
+- Health endpoints are available at `/healthz` and `/readyz`
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
 - Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
+- Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
 - Production and Heroku sessions automatically use secure cookies over HTTPS
+- Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
+- The web dyno is tuned through `WEB_CONCURRENCY`, `GUNICORN_TIMEOUT`, and `GUNICORN_GRACEFUL_TIMEOUT`
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
 - Responses include a nonce-based Content Security Policy and standard browser security headers
 - Login, registration, account updates, and administrative changes are rate limited per web process
 - New passwords must be at least 12 characters and contain a letter and a number
 - Public registration always creates standard accounts; provision the initial administrator with `flask provision-admin --username <name> --email <email>`
+- Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
 - Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
 
 ## Master Mode Notes
@@ -132,5 +137,7 @@ python -m flask db upgrade
 - API reference: `docs/API.md`
 - Database reference: `docs/DATABASE.md`
 - Development setup and validation: `docs/DEVELOPMENT.md`
+- Deployment and Heroku runtime notes: `docs/DEPLOYMENT.md`
+- Operations and launch procedures: `docs/OPERATIONS.md`
 
 ### Website coming soon™!

@@ -4,6 +4,9 @@ import unicodedata
 import os
 import csv
 import io
+import json
+import logging
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +25,75 @@ app = Flask(__name__, instance_relative_config=True)
 environment_name = os.environ.get('APP_ENV', os.environ.get('FLASK_ENV', 'development')).lower()
 is_production = environment_name == 'production' or bool(os.environ.get('DYNO'))
 
+
+def _env_bool(name, default=False):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _env_int(name, default):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f'{name} must be an integer.') from exc
+
+
+def _normalize_database_url(url, require_ssl=False):
+    if url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql://'):
+        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
+
+    if require_ssl and url.startswith('postgresql+psycopg://') and 'sslmode=' not in url:
+        separator = '&' if '?' in url else '?'
+        url = f'{url}{separator}sslmode=require'
+    return url
+
+
+def _build_engine_options(database_url):
+    if database_url.startswith('sqlite'):
+        return {}
+
+    return {
+        'pool_pre_ping': True,
+        'pool_recycle': _env_int('DB_POOL_RECYCLE', 300),
+        'pool_size': _env_int('DB_POOL_SIZE', 5),
+        'max_overflow': _env_int('DB_MAX_OVERFLOW', 2),
+        'pool_timeout': _env_int('DB_POOL_TIMEOUT', 10),
+    }
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record):
+        payload = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+        }
+        if record.exc_info:
+            payload['exception'] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=True)
+
+
+def _configure_logging():
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonLogFormatter())
+
+    root_logger = logging.getLogger()
+    root_logger.handlers = [handler]
+    root_logger.setLevel(logging.INFO if is_production else logging.WARNING)
+    app.logger.handlers = []
+    app.logger.propagate = True
+
+
+_configure_logging()
+
 # Session and cookie security. Deployed applications must never use a known key.
 secret_key = os.environ.get('SECRET_KEY')
 if is_production and not secret_key:
@@ -29,9 +101,14 @@ if is_production and not secret_key:
 app.config['SECRET_KEY'] = secret_key or 'dev-only-change-me'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = is_production or os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+app.config['SESSION_COOKIE_SECURE'] = is_production or _env_bool('SESSION_COOKIE_SECURE', default=False)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=_env_int('SESSION_LIFETIME_DAYS', 7))
 app.config['IS_PRODUCTION'] = is_production
+app.config['PREFERRED_URL_SCHEME'] = 'https' if is_production else 'http'
+app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
+    'PUBLIC_REGISTRATION_ENABLED',
+    default=not is_production,
+)
 if is_production:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -40,12 +117,11 @@ database_url = os.environ.get('DATABASE_URL')
 if is_production and not database_url:
     raise RuntimeError('DATABASE_URL must be set in production or on Heroku')
 database_url = database_url or 'sqlite:///cards.db'
-if database_url.startswith('postgres://'):
-    database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
-elif database_url.startswith('postgresql://'):
-    database_url = database_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+database_url = _normalize_database_url(database_url, require_ssl=is_production)
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _build_engine_options(database_url)
+app.config['DATABASE_SSL_REQUIRED'] = is_production and database_url.startswith('postgresql+psycopg://')
 
 db.init_app(app)
 migrate = Migrate(app, db)
@@ -477,6 +553,14 @@ def create_user(username, password, email=None, role='standard'):
     return user
 
 
+def set_user_role(user, role):
+    if role not in ('standard', 'moderator', 'admin'):
+        raise ValueError('Role must be standard, moderator, or admin.')
+    user.role = role
+    db.session.commit()
+    return user
+
+
 @app.cli.command('provision-admin')
 @click.option('--username', required=True, help='Username for the new administrator.')
 @click.option('--email', default=None, help='Optional email address for the administrator.')
@@ -499,6 +583,27 @@ def provision_admin(username, email, password):
         raise click.ClickException('An account already exists with that username or email.') from exc
     app.logger.info('administrator_provisioned username=%s user_id=%s', user.username, user.user_id)
     click.echo(f'Created administrator account: {user.username}')
+
+
+@app.cli.command('set-user-role')
+@click.option('--username', default=None, help='Username of the existing account.')
+@click.option('--email', default=None, help='Email of the existing account.')
+@click.option('--role', required=True, type=click.Choice(['standard', 'moderator', 'admin'], case_sensitive=False))
+def set_user_role_command(username, email, role):
+    """Change an existing user's role through a controlled CLI workflow."""
+    username = username.strip() if username else None
+    email = email.strip().lower() if email else None
+    if not username and not email:
+        raise click.ClickException('Provide --username or --email.')
+
+    user = get_user(username) if username else get_user_by_email(email)
+    if not user:
+        raise click.ClickException('User not found.')
+
+    role = role.lower()
+    set_user_role(user, role)
+    app.logger.info('user_role_changed username=%s user_id=%s role=%s', user.username, user.user_id, role)
+    click.echo(f'Updated {user.username} to role {role}.')
 
 
 @app.cli.command('rebuild-public-search-index')
