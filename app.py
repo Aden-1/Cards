@@ -5,30 +5,41 @@ import os
 import csv
 import io
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+import click
 from flask import Flask
 from flask_migrate import Migrate
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from werkzeug.middleware.proxy_fix import ProxyFix
 from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
-# Environment mode for deploy-safe defaults.
-is_production = os.environ.get('FLASK_ENV', '').lower() == 'production'
+# Treat Heroku dynos as production even if an environment label was omitted.
+environment_name = os.environ.get('APP_ENV', os.environ.get('FLASK_ENV', 'development')).lower()
+is_production = environment_name == 'production' or bool(os.environ.get('DYNO'))
 
-# Session and cookie security. SECRET_KEY is required in production.
+# Session and cookie security. Deployed applications must never use a known key.
 secret_key = os.environ.get('SECRET_KEY')
 if is_production and not secret_key:
-    raise RuntimeError('SECRET_KEY must be set in production')
+    raise RuntimeError('SECRET_KEY must be set in production or on Heroku')
 app.config['SECRET_KEY'] = secret_key or 'dev-only-change-me'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
+app.config['SESSION_COOKIE_SECURE'] = is_production or os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+app.config['IS_PRODUCTION'] = is_production
+if is_production:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Database config. Use DATABASE_URL in deployed environments with local SQLite fallback.
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///cards.db')
+database_url = os.environ.get('DATABASE_URL')
+if is_production and not database_url:
+    raise RuntimeError('DATABASE_URL must be set in production or on Heroku')
+database_url = database_url or 'sqlite:///cards.db'
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
 elif database_url.startswith('postgresql://'):
@@ -377,6 +388,30 @@ def create_user(username, password, email=None, role='standard'):
     db.session.add(user)
     db.session.commit()
     return user
+
+
+@app.cli.command('provision-admin')
+@click.option('--username', required=True, help='Username for the new administrator.')
+@click.option('--email', default=None, help='Optional email address for the administrator.')
+@click.password_option(confirmation_prompt=True)
+def provision_admin(username, email, password):
+    """Create the initial administrator outside the public registration flow."""
+    username = username.strip()
+    email = email.strip().lower() if email else None
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{3,40}', username):
+        raise click.ClickException('Username must be 3-40 letters, numbers, dots, dashes, or underscores.')
+    if len(password) < 12 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+        raise click.ClickException('Password must be at least 12 characters and contain a letter and a number.')
+    if get_user(username) or (email and get_user_by_email(email)):
+        raise click.ClickException('An account already exists with that username or email.')
+
+    try:
+        user = create_user(username=username, password=password, email=email, role='admin')
+    except IntegrityError as exc:
+        db.session.rollback()
+        raise click.ClickException('An account already exists with that username or email.') from exc
+    app.logger.info('administrator_provisioned username=%s user_id=%s', user.username, user.user_id)
+    click.echo(f'Created administrator account: {user.username}')
 
 # Look up a user by username.
 def get_user(username):

@@ -43,7 +43,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('DOMContentLoaded', function() {
     const reorder_deck = {{ (reorder_deck if reorder_deck else {}) | tojson }};
     const reorderSection = document.getElementById('reorderSection');

@@ -1,8 +1,12 @@
 import re
 import secrets
+import time
+from collections import defaultdict, deque
 from functools import wraps
+from threading import Lock
 
-from flask import abort, jsonify, redirect, render_template, request, session, url_for
+from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
+from sqlalchemy.exc import IntegrityError
 
 
 # Shared request helpers.
@@ -25,6 +29,78 @@ def _redirect_with_fragment(endpoint, fragment=None, **values):
     if fragment:
         target = f'{target}#{fragment}'
     return redirect(target)
+
+
+_rate_limit_buckets = defaultdict(deque)
+_rate_limit_lock = Lock()
+_RATE_LIMITS = {
+    'login': (10, 15 * 60),
+    'register': (5, 60 * 60),
+    'account': (10, 60 * 60),
+    'admin_users': (30, 60 * 60),
+}
+
+
+def _rate_limit_key(endpoint):
+    client = request.remote_addr or 'unknown'
+    if endpoint in ('login', 'register'):
+        return f'{endpoint}:{client}'
+    user_id = session.get('user_id')
+    return f'{endpoint}:{user_id or client}'
+
+
+def _apply_rate_limits():
+    if request.method != 'POST' or request.endpoint not in _RATE_LIMITS:
+        return None
+
+    limit, window_seconds = _RATE_LIMITS[request.endpoint]
+    now = time.monotonic()
+    key = _rate_limit_key(request.endpoint)
+    with _rate_limit_lock:
+        attempts = _rate_limit_buckets[key]
+        while attempts and now - attempts[0] >= window_seconds:
+            attempts.popleft()
+        if len(attempts) >= limit:
+            retry_after = max(1, int(window_seconds - (now - attempts[0])))
+            if _wants_json():
+                response = jsonify({'error': 'Too many requests. Please try again later.'})
+            else:
+                response = current_app.response_class('Too many requests. Please try again later.', status=429)
+            response.status_code = 429
+            response.headers['Retry-After'] = str(retry_after)
+            return response
+        attempts.append(now)
+    return None
+
+
+def _prepare_security_request():
+    g.csp_nonce = secrets.token_urlsafe(24)
+    if current_app.config.get('IS_PRODUCTION') and not request.is_secure:
+        return redirect(request.url.replace('http://', 'https://', 1), code=308)
+    return None
+
+
+def _set_security_headers(response):
+    nonce = getattr(g, 'csp_nonce', '')
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "font-src 'self' https://cdn.jsdelivr.net data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Permissions-Policy'] = 'camera=(), geolocation=(), microphone=()'
+    if current_app.config.get('IS_PRODUCTION'):
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
 
 
 def _current_user():
@@ -86,7 +162,7 @@ def _csrf_token():
 
 
 def _validate_csrf():
-    if request.method != 'POST':
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
         return None
     sent_token = request.headers.get('X-CSRFToken') or request.form.get('csrf_token')
     if not sent_token or not secrets.compare_digest(sent_token, session.get('csrf_token', '')):
@@ -101,7 +177,16 @@ def _valid_username(username):
 
 
 def _valid_password(password):
-    return bool(password) and len(password) >= 8
+    return (
+        bool(password)
+        and len(password) >= 12
+        and bool(re.search(r'[A-Za-z]', password))
+        and bool(re.search(r'\d', password))
+    )
+
+
+def _password_requirements_message(prefix='Passwords'):
+    return f'{prefix} must be at least 12 characters and contain a letter and a number.'
 
 
 def _safe_next_url(next_url):
@@ -110,13 +195,9 @@ def _safe_next_url(next_url):
     return url_for('index')
 
 
-def _first_account_role():
-    from models import User
-    return 'admin' if User.query.count() == 0 else 'standard'
-
-
 def register():
     from app import create_user, get_user, get_user_by_email
+    from models import db
 
     if request.method == 'GET':
         return render_template('register.html')
@@ -130,7 +211,7 @@ def register():
     if not _valid_username(username):
         return render_template('register.html', error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
     if not _valid_password(password):
-        return render_template('register.html', error='Passwords must be at least 8 characters.'), 400
+        return render_template('register.html', error=_password_requirements_message()), 400
     if password != confirm_password:
         return render_template('register.html', error='Passwords do not match.'), 400
     if get_user(username):
@@ -138,8 +219,13 @@ def register():
     if email and get_user_by_email(email):
         return render_template('register.html', error='That email is already in use.'), 400
 
-    user = create_user(username=username, password=password, email=email, role=_first_account_role())
+    try:
+        user = create_user(username=username, password=password, email=email, role='standard')
+    except IntegrityError:
+        db.session.rollback()
+        return render_template('register.html', error='That username or email is already in use.'), 400
     session.clear()
+    session.permanent = True
     session['user_id'] = user.user_id
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(url_for('edit', notice='Account created', level='success'))
@@ -159,6 +245,7 @@ def login():
         return render_template('login.html', error='Invalid username or password.', next=data.get('next', '')), 401
 
     session.clear()
+    session.permanent = True
     session['user_id'] = user.user_id
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(_safe_next_url(data.get('next')))
@@ -172,6 +259,7 @@ def logout():
 @login_required
 def account():
     from app import get_user, get_user_by_email, update_user_account
+    from models import db
 
     user = _current_user()
     if request.method == 'GET':
@@ -196,11 +284,20 @@ def account():
         return render_template('account.html', user=user, error='That email is already in use.'), 400
     if new_password:
         if not _valid_password(new_password):
-            return render_template('account.html', user=user, error='New passwords must be at least 8 characters.'), 400
+            return render_template('account.html', user=user, error=_password_requirements_message('New passwords')), 400
         if new_password != confirm_password:
             return render_template('account.html', user=user, error='New passwords do not match.'), 400
 
-    updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
+    try:
+        updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
+    except IntegrityError:
+        db.session.rollback()
+        return render_template('account.html', user=user, error='That username or email is already in use.'), 400
+    if new_password:
+        session.clear()
+        session.permanent = True
+        session['user_id'] = updated_user.user_id
+        session['csrf_token'] = secrets.token_urlsafe(32)
     return render_template('account.html', user=updated_user, success='Account updated.')
 
 
@@ -254,6 +351,7 @@ def admin_users():
 
         db.session.delete(target_user)
         db.session.commit()
+        current_app.logger.info('admin_action=delete_user actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User and all owned data deleted.', level='success'))
 
     if action == 'promote_admin':
@@ -261,6 +359,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='User is already an admin.', level='success'))
         target_user.role = 'admin'
         db.session.commit()
+        current_app.logger.info('admin_action=promote_admin actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to admin.', level='success'))
 
     if action == 'promote_moderator':
@@ -270,6 +369,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Admins cannot be changed to moderator here.', level='error'))
         target_user.role = 'moderator'
         db.session.commit()
+        current_app.logger.info('admin_action=promote_moderator actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to moderator.', level='success'))
 
     if action == 'demote_standard':
@@ -281,6 +381,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Use a dedicated admin-role workflow to demote admins.', level='error'))
         target_user.role = 'standard'
         db.session.commit()
+        current_app.logger.info('admin_action=demote_standard actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User demoted to standard.', level='success'))
 
     return redirect(url_for('admin_users', notice='Unknown admin action.', level='error'))
@@ -298,6 +399,14 @@ def _owned_quiz(quiz_id, user_id):
     if not quiz_id:
         return None
     return Quiz.query.filter_by(quiz_id=quiz_id, owned_by=user_id).first()
+
+
+def _accessible_answer(answer_id, user_id):
+    from models import CardAnswer
+    answer = CardAnswer.query.get(answer_id) if answer_id else None
+    if not answer or (not answer.card.deck.is_public and answer.card.deck.owned_by != user_id):
+        return None
+    return answer
 
 
 # Page routes.
@@ -416,10 +525,6 @@ def match():
         request.args.get('strategy') or (user.match_strategy_preference if user else None),
         include_account_only=bool(user),
     )
-    if user and selected_strategy != (user.match_strategy_preference or 'standard_shuffle'):
-        from models import db
-        user.match_strategy_preference = selected_strategy
-        db.session.commit()
     match_deck = get_match_game_data(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
 
@@ -506,11 +611,6 @@ def master():
         deck_sortable=bool(selected_deck_meta and selected_deck_meta['sortable'])
     )
 
-    if user and selected_strategy != (user.mastery_strategy_preference or 'spaced'):
-        user.mastery_strategy_preference = selected_strategy
-        from models import db
-        db.session.commit()
-
     mastery_snapshot = get_mastery_snapshot(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     round_restarted = False
     selected_master_card = mastery_snapshot['current_card'] if mastery_snapshot else None
@@ -568,6 +668,7 @@ def master_rate_route():
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+    user.mastery_strategy_preference = strategy
 
     result = record_mastery_rating(user_id=user_id, deck_id=deck_id, card_id=card_id, rating=rating)
     if not result.get('success'):
@@ -602,6 +703,7 @@ def master_reset_route():
         return _redirect_with_fragment('master', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+    user.mastery_strategy_preference = strategy
 
     reset_mastery_progress(user_id=user_id, deck_id=deck_id)
     seen_map = session.get('master_seen_cards', {})
@@ -913,7 +1015,7 @@ def match_answer_route():
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answer_id)
+    answer = _accessible_answer(answer_id, user_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
 
@@ -939,16 +1041,25 @@ def match_answer_route():
 
 
 def match_attempt_route():
-    from app import record_match_attempt
+    from app import normalize_match_strategy, record_match_attempt
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))
     is_correct = str(data.get('is_correct', '')).lower() in ('1', 'true', 'yes', 'on')
+    user = _current_user()
+    user_id = user.user_id if user else None
 
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
+    if not _accessible_answer(answer_id, user_id):
+        return jsonify({'error': 'Answer not found'}), 404
 
-    record_match_attempt(_current_user_id(), answer_id, is_correct=is_correct)
+    if user and data.get('strategy'):
+        user.match_strategy_preference = normalize_match_strategy(
+            data.get('strategy'),
+            include_account_only=True,
+        )
+    record_match_attempt(user_id, answer_id, is_correct=is_correct)
     return jsonify({'success': True})
 
 
@@ -969,7 +1080,7 @@ def delete_answer_route():
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answer_id)
+    answer = _accessible_answer(answer_id, user_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
     user_id = _current_user_id()
@@ -1455,7 +1566,10 @@ def edit_quiz_question_route():
 # Route registration.
 # Register every route on the Flask app.
 def register_routes(app):
+    app.before_request(_prepare_security_request)
+    app.before_request(_apply_rate_limits)
     app.before_request(_validate_csrf)
+    app.after_request(_set_security_headers)
 
     @app.context_processor
     def inject_security_context():
@@ -1464,6 +1578,7 @@ def register_routes(app):
             'current_user': user,
             'active_theme': (user.theme_preference if user else None),
             'csrf_token': _csrf_token,
+            'csp_nonce': g.csp_nonce,
         }
 
     # Main pages

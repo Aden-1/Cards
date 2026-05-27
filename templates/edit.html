@@ -222,7 +222,7 @@
 
 {% block scripts %}
 {% if selected_deck %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('DOMContentLoaded', function() {
     const editor = document.getElementById('deck-editor');
     if (editor) {
@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('DOMContentLoaded', function() {
     let hasUnsavedChanges = false;
     let isSubmittingTrackedForm = false;

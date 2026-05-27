@@ -81,7 +81,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('DOMContentLoaded', function() {
     const MAX_BATCH_SIZE = 10;
     const PROGRESSIVE_START_SIZE = 4;
@@ -407,7 +407,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetch('{{ url_for("match_attempt") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
-            body: JSON.stringify({ answer_id: answerId, is_correct: isCorrect })
+            body: JSON.stringify({ answer_id: answerId, is_correct: isCorrect, strategy: selectedStrategy })
         }).catch(() => {});
     }
 

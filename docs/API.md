@@ -8,7 +8,7 @@
 - `POST` routes accept either form data or JSON.
 - Field names use `snake_case` in the current codebase.
 - Session-based authentication is now used for account-aware routes.
-- Most browser form posts require CSRF protection via `csrf_token` form data or an `X-CSRFToken` header.
+- All state-changing requests require CSRF protection via `csrf_token` form data or an `X-CSRFToken` header.
 - Success redirects may include `notice` and `level` query parameters for the global toast handler.
 - Some routes are HTML-first and redirect on success even when they are not classic JSON APIs.
 
@@ -35,8 +35,8 @@ Fields:
 
 Notes:
 - Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores.
-- Passwords must be at least 8 characters.
-- The first registered account becomes `admin`.
+- New passwords must be at least 12 characters and contain a letter and a number.
+- Public registration always creates a `standard` account. Administrators are provisioned through the controlled CLI workflow.
 
 Response:
 - `GET`: rendered HTML registration page.

@@ -162,7 +162,7 @@ class QuizOption(db.Model):
 - Public decks and quizzes are mirrored into the backend-specific full-text index for search.
 - The search index stores title, description, and tags only.
 - Passwords are stored as Werkzeug password hashes, not plaintext.
-- The first registered user is assigned the `admin` role.
+- Public registration creates `standard` users; the initial administrator is created through the `flask provision-admin` CLI command.
 - `CardMasteryProgress` is unique per `(user_id, card_id)`.
 - `MatchPairProgress` is unique per `(user_id, answer_id)`.
 - User records persist theme, match strategy, and mastery strategy preferences.

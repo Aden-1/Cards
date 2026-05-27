@@ -86,16 +86,16 @@
                     <span class="page-kicker">Prompt</span>
                     <div id="cardQuestion" class="h4 mt-2 mb-0">Loading...</div>
                 </article>
-                <article class="flash-pane" id="answerInteractiveCard" role="button" tabindex="0" aria-live="polite" onclick="toggleAnswer()" onkeydown="handleAnswerCardKeydown(event)">
+                <article class="flash-pane" id="answerInteractiveCard" role="button" tabindex="0" aria-live="polite">
                     <span class="page-kicker">Accepted Answers</span>
                     <div id="answerCardContent" class="mt-3"><p class="muted-copy mb-0">Click to reveal answers</p></div>
                 </article>
             </div>
             <div class="toolbar-row">
-                <button type="button" class="btn-surface" id="prevBtn" onclick="previousCard()" disabled>Previous</button>
+                <button type="button" class="btn-surface" id="prevBtn" disabled>Previous</button>
                 <span class="score-chip" id="card_counter">Card 0/0</span>
-                <button type="button" class="btn-primary-surface" onclick="toggleAnswer()">Reveal / Hide</button>
-                <button type="button" class="btn-surface" id="nextBtn" onclick="nextCard()">Next</button>
+                <button type="button" class="btn-primary-surface" id="revealAnswerBtn">Reveal / Hide</button>
+                <button type="button" class="btn-surface" id="nextBtn">Next</button>
             </div>
             <div class="small-muted">Shortcuts: Left or A for previous, Right or D for next, Space to reveal or hide.</div>
             {% endif %}
@@ -108,7 +108,7 @@
 
 {% block scripts %}
 {% if study_deck %}
-<script>
+<script nonce="{{ csp_nonce }}">
 const currentCards = {{ (study_deck.cards if study_deck else []) | tojson }};
 let currentCardIndex = 0;
 let isAnswerVisible = false;
@@ -192,6 +192,12 @@ function nextCard() {
     }
     displayCurrentCard();
 }
+
+document.getElementById('answerInteractiveCard')?.addEventListener('click', toggleAnswer);
+document.getElementById('answerInteractiveCard')?.addEventListener('keydown', handleAnswerCardKeydown);
+document.getElementById('prevBtn')?.addEventListener('click', previousCard);
+document.getElementById('revealAnswerBtn')?.addEventListener('click', toggleAnswer);
+document.getElementById('nextBtn')?.addEventListener('click', nextCard);
 
 document.addEventListener('keydown', function(event) {
     if (!document.getElementById('studySection')) {

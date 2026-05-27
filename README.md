@@ -83,10 +83,13 @@ Visit `http://localhost:5000`
 - Run `python -m flask db upgrade` after pulling schema changes
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
-- Set `SECRET_KEY` in production
-- Set `SESSION_COOKIE_SECURE=1` behind HTTPS so secure cookies are enforced
-- Most `POST` requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
-- The first registered account is created with the `admin` role automatically
+- Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
+- Production and Heroku sessions automatically use secure cookies over HTTPS
+- All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
+- Responses include a nonce-based Content Security Policy and standard browser security headers
+- Login, registration, account updates, and administrative changes are rate limited per web process
+- New passwords must be at least 12 characters and contain a letter and a number
+- Public registration always creates standard accounts; provision the initial administrator with `flask provision-admin --username <name> --email <email>`
 - Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
 
 ## Master Mode Notes

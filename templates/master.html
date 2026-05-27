@@ -75,7 +75,7 @@
                         <span class="page-kicker">Prompt</span>
                         <div class="h4 mt-2 mb-0">{{ selected_master_card.question }}</div>
                     </article>
-                    <article class="flash-pane" id="masteryAnswerCard" data-answers='{{ selected_master_card.answers | tojson | forceescape }}' data-answer-visible="false" role="button" tabindex="0" onclick="toggleMasterAnswer()" onkeydown="handleMasterAnswerKeydown(event)">
+                    <article class="flash-pane" id="masteryAnswerCard" data-answers='{{ selected_master_card.answers | tojson | forceescape }}' data-answer-visible="false" role="button" tabindex="0">
                         <span class="page-kicker">Accepted Answers</span>
                         <div id="masteryAnswerContent" class="mt-3"><p class="muted-copy mb-0">Click to reveal answers</p></div>
                     </article>
@@ -102,7 +102,7 @@
                         <input type="hidden" name="rating" value="understood">
                         <button class="btn-primary-surface" type="submit">Understood</button>
                     </form>
-                    <button class="btn-surface ms-auto" type="button" onclick="toggleMasterAnswer()">Reveal / Hide Answers</button>
+                    <button class="btn-surface ms-auto" id="masteryAnswerToggle" type="button">Reveal / Hide Answers</button>
                 </div>
             </article>
             {% else %}
@@ -141,7 +141,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 function renderMasterAnswerState() {
     const answerCard = document.getElementById('masteryAnswerCard');
     const answerContent = document.getElementById('masteryAnswerContent');
@@ -193,6 +193,20 @@ function handleMasterAnswerKeydown(event) {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
+    function bindAnswerRevealActions() {
+        const answerCard = document.getElementById('masteryAnswerCard');
+        if (answerCard && answerCard.dataset.revealBound !== 'true') {
+            answerCard.dataset.revealBound = 'true';
+            answerCard.addEventListener('click', toggleMasterAnswer);
+            answerCard.addEventListener('keydown', handleMasterAnswerKeydown);
+        }
+        const answerToggle = document.getElementById('masteryAnswerToggle');
+        if (answerToggle && answerToggle.dataset.revealBound !== 'true') {
+            answerToggle.dataset.revealBound = 'true';
+            answerToggle.addEventListener('click', toggleMasterAnswer);
+        }
+    }
+
     function syncMasteryStrategyOptions() {
         const deckSelect = document.getElementById('deck_id');
         const strategySelect = document.getElementById('masteryStrategy');
@@ -304,6 +318,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         window.history.replaceState({}, document.title, response.url);
                     }
                     bindMasterActions();
+                    bindAnswerRevealActions();
                     renderMasterAnswerState();
                 } catch (error) {
                     console.error('Unable to refresh mastery state', error);
@@ -326,6 +341,7 @@ document.addEventListener('DOMContentLoaded', function () {
         submitMasterySelection();
     });
     bindMasterActions();
+    bindAnswerRevealActions();
     syncMasteryStrategyOptions();
     renderMasterAnswerState();
 });
