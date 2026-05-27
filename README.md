@@ -101,11 +101,12 @@ python -m flask db upgrade
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
 - Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
+- Set `TRUSTED_HOSTS` to the comma-separated public hostnames accepted in production
 - Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
 - Quiz scoring uses one-time server-side attempt records; the browser never supplies answer correctness
 - Production and Heroku sessions automatically use secure cookies over HTTPS
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
-- The web dyno is tuned through `WEB_CONCURRENCY`, `GUNICORN_TIMEOUT`, and `GUNICORN_GRACEFUL_TIMEOUT`
+- The web dyno defaults to one worker while rate limiting is process-local; only raise `WEB_CONCURRENCY` after moving rate limits to a shared store or edge control
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
 - Responses include a nonce-based Content Security Policy and standard browser security headers
 - Login, registration, account updates, and administrative changes are rate limited per web process

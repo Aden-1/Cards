@@ -9,13 +9,14 @@ Set these for both staging and production:
 - `APP_ENV=production`
 - `SECRET_KEY` as a long random secret
 - `DATABASE_URL` pointing at Heroku Postgres or another PostgreSQL database
+- `TRUSTED_HOSTS` as a comma-separated list of the app's Heroku and custom hostnames
 - `PUBLIC_REGISTRATION_ENABLED=false` for the initial production rollout
 - `MAX_CONTENT_LENGTH=2097152` to bound JSON/form/import request bodies
 - `SESSION_LIFETIME_DAYS=7` unless a different authenticated-session policy is chosen
 
 Recommended connection/runtime settings:
 
-- `WEB_CONCURRENCY=2`
+- `WEB_CONCURRENCY=1` until rate limiting is backed by Redis or equivalent edge controls
 - `GUNICORN_TIMEOUT=25`
 - `GUNICORN_GRACEFUL_TIMEOUT=25`
 - `DB_POOL_SIZE=5`
@@ -23,7 +24,8 @@ Recommended connection/runtime settings:
 - `DB_POOL_TIMEOUT=10`
 - `DB_POOL_RECYCLE=300`
 
-Production PostgreSQL URLs are normalized to the Psycopg 3 driver automatically, and production startup appends `sslmode=require` when it is missing.
+Production startup rejects non-PostgreSQL databases. PostgreSQL URLs are normalized to the Psycopg 3 driver automatically, and startup appends `sslmode=require` when it is missing.
+Production startup also fails when `TRUSTED_HOSTS` is absent so untrusted host headers cannot influence redirects or generated URLs.
 
 ## Release Flow
 
@@ -76,4 +78,4 @@ These steps still need to be performed in Heroku itself:
 
 ## Platform Limitations To Resolve Before Scale-Out
 
-The current login and mutation rate limiter is stored in each web process. It is useful for an initial single-dyno rollout, but it is not a distributed control. Before scaling to multiple web dynos or treating it as abuse protection, replace it with a shared Redis-backed rate limiter or edge/WAF rule set.
+The current login and mutation rate limiter is stored in each web process. The default `WEB_CONCURRENCY=1` preserves consistent limits for an initial single-process rollout, but it is not a distributed control. Before raising worker count, scaling to multiple web dynos, or treating it as abuse protection, replace it with a shared Redis-backed rate limiter or edge/WAF rule set.

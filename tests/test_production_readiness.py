@@ -42,6 +42,15 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertIn('Content-Security-Policy', response.headers)
         self.assertEqual(response.headers['X-Frame-Options'], 'DENY')
 
+    def test_trusted_hosts_reject_unexpected_hostname(self):
+        previous_hosts = cards_app.app.config.get('TRUSTED_HOSTS')
+        cards_app.app.config['TRUSTED_HOSTS'] = ['cards.example.test']
+        try:
+            response = self.client.get('/healthz', headers={'Host': 'spoofed.example.test'})
+            self.assertEqual(response.status_code, 400)
+        finally:
+            cards_app.app.config['TRUSTED_HOSTS'] = previous_hosts
+
     def test_public_registration_creates_only_standard_users(self):
         self._csrf()
         response = self.client.post(
@@ -57,6 +66,20 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with cards_app.app.app_context():
             self.assertEqual(User.query.filter_by(username='member').one().role, 'standard')
+
+    def test_logout_form_carries_csrf_and_logout_clears_session(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user('logging_out', 'password12345')
+            user_id = user.user_id
+
+        self._login_session(user_id)
+        page = self.client.get('/account')
+        self.assertIn('name="csrf_token" value="csrf-test-token"', page.get_data(as_text=True))
+
+        response = self.client.post('/logout', data={'csrf_token': 'csrf-test-token'})
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as current_session:
+            self.assertNotIn('user_id', current_session)
 
     def test_quiz_scoring_ignores_client_claimed_correctness(self):
         with cards_app.app.app_context():

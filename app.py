@@ -44,6 +44,14 @@ def _env_int(name, default):
         raise RuntimeError(f'{name} must be an integer.') from exc
 
 
+def _env_list(name):
+    raw_value = os.environ.get(name)
+    if not raw_value:
+        return None
+    values = [value.strip() for value in raw_value.split(',') if value.strip()]
+    return values or None
+
+
 def _normalize_database_url(url, require_ssl=False):
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql+psycopg://', 1)
@@ -111,6 +119,10 @@ app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
     'PUBLIC_REGISTRATION_ENABLED',
     default=not is_production,
 )
+trusted_hosts = _env_list('TRUSTED_HOSTS')
+if is_production and not trusted_hosts:
+    raise RuntimeError('TRUSTED_HOSTS must be set in production or on Heroku')
+app.config['TRUSTED_HOSTS'] = trusted_hosts
 if is_production:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -120,6 +132,8 @@ if is_production and not database_url:
     raise RuntimeError('DATABASE_URL must be set in production or on Heroku')
 database_url = database_url or 'sqlite:///cards.db'
 database_url = _normalize_database_url(database_url, require_ssl=is_production)
+if is_production and not database_url.startswith('postgresql+psycopg://'):
+    raise RuntimeError('DATABASE_URL must use PostgreSQL in production or on Heroku')
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _build_engine_options(database_url)
