@@ -24,9 +24,16 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 
 ## Quick Start
 
+This project targets Python `3.13`.
+
 ```bash
+# Create and activate a virtual environment
+py -3.13 -m venv .venv
+.\.venv\Scripts\activate
+
 # Install dependencies
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
 
 # Initialize database
 python -m flask db upgrade
@@ -36,6 +43,14 @@ python -m flask run
 ```
 
 Visit `http://localhost:5000`
+
+## Local Validation
+
+```bash
+python -m ruff check .
+python -m unittest
+python -m flask db upgrade
+```
 
 ## Usage
 
@@ -81,6 +96,7 @@ Visit `http://localhost:5000`
 - SQLite data lives in `instance/cards.db`
 - Set `DATABASE_URL=postgresql://user:password@host/database` for PostgreSQL; the app uses the bundled Psycopg 3 driver.
 - Run `python -m flask db upgrade` after pulling schema changes
+- Run `python -m flask rebuild-public-search-index` when you need to rebuild public search content explicitly
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
 - Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
@@ -115,5 +131,6 @@ Visit `http://localhost:5000`
 
 - API reference: `docs/API.md`
 - Database reference: `docs/DATABASE.md`
+- Development setup and validation: `docs/DEVELOPMENT.md`
 
 ### Website coming soon™!

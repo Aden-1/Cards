@@ -8,7 +8,7 @@ The app supports SQLite and PostgreSQL with SQLAlchemy ORM and Flask-Migrate.
 - PostgreSQL configuration: set `DATABASE_URL=postgresql://user:password@host/database`
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
-- Search index: SQLite uses the `public_content_fts` FTS5 virtual table; PostgreSQL uses `public_content_search` with a weighted `tsvector` index
+- Search index: SQLite uses the `public_content_fts` FTS5 virtual table at runtime; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index
 - Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
@@ -18,6 +18,7 @@ flask db init
 flask db migrate
 flask db upgrade
 flask db downgrade
+flask rebuild-public-search-index
 ```
 
 ## Models
@@ -161,12 +162,14 @@ class QuizOption(db.Model):
 - Editing a card replaces its full answer set.
 - Public decks and quizzes are mirrored into the backend-specific full-text index for search.
 - The search index stores title, description, and tags only.
+- PostgreSQL search schema and lookup indexes are owned by Alembic migrations rather than web-request startup code.
 - Passwords are stored as Werkzeug password hashes, not plaintext.
 - Public registration creates `standard` users; the initial administrator is created through the `flask provision-admin` CLI command.
 - `CardMasteryProgress` is unique per `(user_id, card_id)`.
 - `MatchPairProgress` is unique per `(user_id, answer_id)`.
 - User records persist theme, match strategy, and mastery strategy preferences.
 - The app includes lightweight startup self-healing for newer SQLite columns and the match progress table; migrations provide the same schema on PostgreSQL.
+- Imported decks and user-authored search content are bounded to keep oversized rows and batches out of the production database.
 
 ## Usage
 

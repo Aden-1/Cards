@@ -50,6 +50,75 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 migrate = Migrate(app, db)
 
+MAX_DECK_DESCRIPTION_LENGTH = 255
+MAX_DECK_DETAILED_DESCRIPTION_LENGTH = 5000
+MAX_DECK_TAGS_LENGTH = 255
+MAX_QUIZ_TITLE_LENGTH = 255
+MAX_QUIZ_DESCRIPTION_LENGTH = 5000
+MAX_QUIZ_TAGS_LENGTH = 255
+MAX_CARD_QUESTION_LENGTH = 5000
+MAX_CARD_ANSWER_LENGTH = 2000
+MAX_IMPORT_CARD_COUNT = 500
+MAX_IMPORT_ANSWERS_PER_CARD = 10
+MAX_QUIZ_OPTIONS_PER_QUESTION = 5
+
+
+def _clean_text(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _validate_text_length(label, value, max_length, required=False):
+    value = _clean_text(value)
+    if required and not value:
+        raise ValueError(f'{label} is required.')
+    if value and len(value) > max_length:
+        raise ValueError(f'{label} must be {max_length} characters or fewer.')
+    return value
+
+
+def _validate_deck_metadata(description, detailed_description=None, tags=None):
+    return (
+        _validate_text_length('Deck name', description, MAX_DECK_DESCRIPTION_LENGTH, required=True),
+        _validate_text_length('Detailed description', detailed_description, MAX_DECK_DETAILED_DESCRIPTION_LENGTH),
+        _validate_text_length('Tags', tags, MAX_DECK_TAGS_LENGTH),
+    )
+
+
+def _validate_quiz_metadata(title, description=None, tags=None):
+    return (
+        _validate_text_length('Quiz title', title, MAX_QUIZ_TITLE_LENGTH, required=True),
+        _validate_text_length('Quiz description', description, MAX_QUIZ_DESCRIPTION_LENGTH),
+        _validate_text_length('Quiz tags', tags, MAX_QUIZ_TAGS_LENGTH),
+    )
+
+
+def _validate_card_payload(question, answers):
+    question = _validate_text_length('Question', question, MAX_CARD_QUESTION_LENGTH, required=True)
+    normalized_answers = _normalize_answers(answers)
+    if not normalized_answers:
+        raise ValueError('At least one answer is required.')
+    if len(normalized_answers) > MAX_IMPORT_ANSWERS_PER_CARD:
+        raise ValueError(f'Cards may have at most {MAX_IMPORT_ANSWERS_PER_CARD} answers.')
+
+    cleaned_answers = []
+    for answer_text in normalized_answers:
+        cleaned_answers.append(
+            _validate_text_length('Answer', answer_text, MAX_CARD_ANSWER_LENGTH, required=True)
+        )
+    return question, cleaned_answers
+
+
+def _log_search_index_failure(action, exc, item_type=None, item_id=None):
+    app.logger.exception(
+        'public_search_index_failure action=%s item_type=%s item_id=%s',
+        action,
+        item_type,
+        item_id,
+    )
+
 
 def _ensure_user_theme_preference_column():
     """Add User.theme_preference for existing SQLite databases if missing."""
@@ -204,15 +273,21 @@ def parse_imported_deck_text(raw_text):
     card_map = {}
     card_order = []
     for question, answer in parsed_rows:
-        if question not in card_map:
-            card_map[question] = []
-            card_order.append(question)
-        if answer not in card_map[question]:
-            card_map[question].append(answer)
+        cleaned_question = _validate_text_length('Question', question, MAX_CARD_QUESTION_LENGTH, required=True)
+        cleaned_answer = _validate_text_length('Answer', answer, MAX_CARD_ANSWER_LENGTH, required=True)
+        if cleaned_question not in card_map:
+            card_map[cleaned_question] = []
+            card_order.append(cleaned_question)
+        if cleaned_answer not in card_map[cleaned_question]:
+            if len(card_map[cleaned_question]) >= MAX_IMPORT_ANSWERS_PER_CARD:
+                raise ValueError(f'Cards may have at most {MAX_IMPORT_ANSWERS_PER_CARD} answers.')
+            card_map[cleaned_question].append(cleaned_answer)
 
     cards = [{'question': question, 'answers': card_map[question]} for question in card_order if card_map[question]]
     if not cards:
         raise ValueError('No valid cards found after parsing.')
+    if len(cards) > MAX_IMPORT_CARD_COUNT:
+        raise ValueError(f'Imported decks may contain at most {MAX_IMPORT_CARD_COUNT} cards.')
 
     return {
         'cards': cards,
@@ -246,6 +321,7 @@ def get_user_custom_quizzes(user_id):
 
 # Create and index a custom quiz.
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
+    title, description, tags = _validate_quiz_metadata(title, description, tags)
     quiz = Quiz(
         owned_by=user_id,
         title=title,
@@ -262,6 +338,7 @@ def create_custom_quiz(user_id, title, is_public=False, description=None, tags=N
 def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=None):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
+        title, description, tags = _validate_quiz_metadata(title, description, tags)
         quiz.title = title
         quiz.is_public = is_public
         quiz.description = description
@@ -359,14 +436,24 @@ def copy_public_deck_to_user(source_deck_id, user_id):
 
 # Insert a quiz question and its options.
 def add_quiz_question(quiz_id, question_text, q_type, options_data):
+    if q_type not in ('dynamic', 'static'):
+        raise ValueError('Quiz question type must be dynamic or static.')
+    if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
+        raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
+
+    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
+    cleaned_options = []
+    for opt in options_data:
+        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
+        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+
     q = QuizQuestion(quiz_id=quiz_id, question=question_text, type=q_type)
     db.session.add(q)
     db.session.flush()
     
-    for opt in options_data:
-        if opt['text'].strip():
-            qo = QuizOption(question_id=q.question_id, text=opt['text'].strip(), is_correct=opt.get('is_correct', False))
-            db.session.add(qo)
+    for opt in cleaned_options:
+        qo = QuizOption(question_id=q.question_id, text=opt['text'], is_correct=opt['is_correct'])
+        db.session.add(qo)
     db.session.commit()
     return q
 
@@ -413,6 +500,14 @@ def provision_admin(username, email, password):
     app.logger.info('administrator_provisioned username=%s user_id=%s', user.username, user.user_id)
     click.echo(f'Created administrator account: {user.username}')
 
+
+@app.cli.command('rebuild-public-search-index')
+def rebuild_public_search_index_command():
+    """Rebuild the public full-text search index."""
+    _rebuild_content_fts_index()
+    app.logger.info('public_search_index_rebuilt backend=%s', _search_backend_name())
+    click.echo(f"Rebuilt public search index for {_search_backend_name()}.")
+
 # Look up a user by username.
 def get_user(username):
     return User.query.filter_by(username=username).first()
@@ -443,6 +538,7 @@ def update_user_account(user_id, username, email=None, password=None):
 # Deck helpers.
 # Create a deck and mirror it into search.
 def create_deck(user_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
+    description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     deck = Deck(
         owned_by=user_id,
         description=description,
@@ -458,6 +554,7 @@ def create_deck(user_id, description, sortable=False, is_public=False, detailed_
 
 
 def import_deck(user_id, description, raw_text, sortable=False, is_public=False, detailed_description=None, tags=None):
+    description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     parsed = parse_imported_deck_text(raw_text)
     cards = parsed['cards']
 
@@ -561,6 +658,7 @@ def delete_deck(deck_id):
 def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
     deck = Deck.query.get(deck_id)
     if deck:
+        description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
         deck.description = description
         deck.sortable = sortable
         deck.is_public = is_public
@@ -669,26 +767,6 @@ def _ensure_content_fts_index():
                 tokenize = 'porter unicode61 remove_diacritics 2'
             )
         """))
-    elif _is_postgres_backend():
-        db.session.execute(text("""
-            CREATE TABLE IF NOT EXISTS public_content_search (
-                item_type VARCHAR(20) NOT NULL,
-                item_id INTEGER NOT NULL,
-                title TEXT NOT NULL DEFAULT '',
-                description TEXT NOT NULL DEFAULT '',
-                tags TEXT NOT NULL DEFAULT '',
-                search_vector tsvector,
-                PRIMARY KEY (item_type, item_id)
-            )
-        """))
-        db.session.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_public_content_search_vector
-            ON public_content_search USING GIN (search_vector)
-        """))
-        db.session.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_public_content_search_item_type
-            ON public_content_search (item_type)
-        """))
     db.session.commit()
 
 
@@ -716,8 +794,9 @@ def _delete_content_fts_index_row(item_type, item_id):
                 {'item_type': item_type, 'item_id': int(item_id)}
             )
         db.session.commit()
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        _log_search_index_failure('delete', exc, item_type=item_type, item_id=item_id)
 
 
 # Write one row into the public search index.
@@ -768,8 +847,9 @@ def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is
                     }
                 )
         db.session.commit()
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        _log_search_index_failure('sync', exc, item_type=item_type, item_id=item_id)
 
 
 # Sync one deck into the search index.
@@ -992,6 +1072,63 @@ def search_public_content(query_text, limit=50, user_id=None):
                     {'query_text': query_text, 'limit': int(limit)}
                 ).fetchall()
 
+        deck_ids = [int(row[1]) for row in results if row[0] == 'deck']
+        quiz_ids = [int(row[1]) for row in results if row[0] == 'quiz']
+
+        deck_rows = {}
+        if deck_ids:
+            deck_rows = {
+                row.deck_id: row
+                for row in db.session.query(
+                    Deck.deck_id,
+                    Deck.owned_by,
+                    Deck.description,
+                    Deck.detailed_description,
+                    Deck.tags,
+                    Deck.sortable,
+                    Deck.is_public,
+                    db.func.count(Card.card_id).label('card_count'),
+                )
+                .outerjoin(Card, Card.deck_id == Deck.deck_id)
+                .filter(Deck.deck_id.in_(deck_ids))
+                .group_by(
+                    Deck.deck_id,
+                    Deck.owned_by,
+                    Deck.description,
+                    Deck.detailed_description,
+                    Deck.tags,
+                    Deck.sortable,
+                    Deck.is_public,
+                )
+                .all()
+            }
+
+        quiz_rows = {}
+        if quiz_ids:
+            quiz_rows = {
+                row.quiz_id: row
+                for row in db.session.query(
+                    Quiz.quiz_id,
+                    Quiz.owned_by,
+                    Quiz.title,
+                    Quiz.description,
+                    Quiz.tags,
+                    Quiz.is_public,
+                    db.func.count(QuizQuestion.question_id).label('question_count'),
+                )
+                .outerjoin(QuizQuestion, QuizQuestion.quiz_id == Quiz.quiz_id)
+                .filter(Quiz.quiz_id.in_(quiz_ids))
+                .group_by(
+                    Quiz.quiz_id,
+                    Quiz.owned_by,
+                    Quiz.title,
+                    Quiz.description,
+                    Quiz.tags,
+                    Quiz.is_public,
+                )
+                .all()
+            }
+
         for row in results:
             item_type = row[0]
             item_id = int(row[1])
@@ -1006,7 +1143,7 @@ def search_public_content(query_text, limit=50, user_id=None):
                 reasons.append(f"tags: {row[5]}")
 
             if item_type == 'deck':
-                deck = Deck.query.get(item_id)
+                deck = deck_rows.get(item_id)
                 if not deck or not deck.is_public:
                     continue
                 if _normalize_search_text(query_text) in _normalize_search_text(deck.description or ''):
@@ -1020,12 +1157,12 @@ def search_public_content(query_text, limit=50, user_id=None):
                     'tags': deck.tags,
                     'sortable': deck.sortable,
                     'is_public': deck.is_public,
-                    'card_count': len(deck.cards),
+                    'card_count': int(deck.card_count or 0),
                     'score': score,
                     'match_reasons': reasons,
                 })
             elif item_type == 'quiz':
-                quiz = Quiz.query.get(item_id)
+                quiz = quiz_rows.get(item_id)
                 if not quiz or not quiz.is_public:
                     continue
                 if _normalize_search_text(query_text) in _normalize_search_text(quiz.title or ''):
@@ -1038,13 +1175,14 @@ def search_public_content(query_text, limit=50, user_id=None):
                     'description': quiz.description,
                     'tags': quiz.tags,
                     'is_public': quiz.is_public,
-                    'question_count': len(quiz.questions),
+                    'question_count': int(quiz.question_count or 0),
                     'score': score,
                     'match_reasons': reasons,
                 })
 
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        app.logger.exception('public_search_query_failed query=%s', query_text, exc_info=exc)
         # Fall back to simple LIKE search if FTS fails.
         decks, quizzes = _fallback_search_public_content(query_text)
         deck_results = [{
@@ -1089,14 +1227,11 @@ def add_card(deck_id, question, answers):
     # Positions are 1-based within each deck.
     max_position = db.session.query(db.func.max(Card.position)).filter_by(deck_id=deck_id).scalar() or 0
     next_position = max_position + 1
+    question, answers = _validate_card_payload(question, answers)
 
     card = Card(deck_id=deck_id, question=question, position=next_position)
     db.session.add(card)
     db.session.flush()
-    
-    answers = _normalize_answers(answers)
-    if not answers:
-        raise ValueError('At least one answer is required')
 
     for answer_text in answers:
         card_answer = CardAnswer(card_id=card.card_id, answer=answer_text)
@@ -1155,13 +1290,15 @@ def delete_card(card_id):
 def edit_card(card_id, question, answers):
     card = Card.query.get(card_id)
     if card:
-        card.question = question
         answers = _normalize_answers(answers)
         if not answers:
             deck_id = card.deck_id
             db.session.delete(card)
             db.session.commit()
             return {'deleted': True, 'card_id': card_id, 'deck_id': deck_id}
+
+        question, answers = _validate_card_payload(question, answers)
+        card.question = question
 
         # Replace the answer set in one pass.
         CardAnswer.query.filter_by(card_id=card_id).delete()
@@ -1327,17 +1464,38 @@ def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
 def record_match_attempt(user_id, answer_id, is_correct):
     if not user_id or not answer_id:
         return
-    progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).first()
-    if not progress:
-        progress = MatchPairProgress(user_id=user_id, answer_id=answer_id, correct_count=0, incorrect_count=0)
-        db.session.add(progress)
-    if is_correct:
-        progress.correct_count = (progress.correct_count or 0) + 1
-        progress.last_outcome = 'correct'
-    else:
-        progress.incorrect_count = (progress.incorrect_count or 0) + 1
-        progress.last_outcome = 'incorrect'
-    db.session.commit()
+    for _ in range(2):
+        progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).first()
+        if not progress:
+            try:
+                progress = MatchPairProgress(user_id=user_id, answer_id=answer_id, correct_count=0, incorrect_count=0)
+                db.session.add(progress)
+                db.session.flush()
+            except IntegrityError:
+                db.session.rollback()
+                continue
+        if is_correct:
+            updated = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).update(
+                {
+                    MatchPairProgress.correct_count: MatchPairProgress.correct_count + 1,
+                    MatchPairProgress.last_outcome: 'correct',
+                },
+                synchronize_session=False,
+            )
+        else:
+            updated = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).update(
+                {
+                    MatchPairProgress.incorrect_count: MatchPairProgress.incorrect_count + 1,
+                    MatchPairProgress.last_outcome: 'incorrect',
+                },
+                synchronize_session=False,
+            )
+        if updated:
+            db.session.commit()
+            return
+        db.session.rollback()
+
+    app.logger.warning('match_progress_update_skipped user_id=%s answer_id=%s', user_id, answer_id)
 
 
 # Compare submitted order against saved positions.
@@ -1669,31 +1827,48 @@ def record_mastery_rating(user_id, deck_id, card_id, rating):
     if rating not in ('understood', 'still_learning', 'dont_know'):
         return {'success': False, 'error': 'Invalid rating'}
 
-    progress = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).first()
-    if not progress:
-        progress = CardMasteryProgress(
-            user_id=user_id,
-            card_id=card_id,
-            status='new',
-            understood_count=0,
-            learning_count=0,
-            dont_know_count=0,
-            reviewed_count=0,
+    for _ in range(2):
+        progress = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).first()
+        if not progress:
+            try:
+                progress = CardMasteryProgress(
+                    user_id=user_id,
+                    card_id=card_id,
+                    status='new',
+                    understood_count=0,
+                    learning_count=0,
+                    dont_know_count=0,
+                    reviewed_count=0,
+                )
+                db.session.add(progress)
+                db.session.flush()
+            except IntegrityError:
+                db.session.rollback()
+                continue
+
+        updates = {
+            CardMasteryProgress.reviewed_count: CardMasteryProgress.reviewed_count + 1,
+            CardMasteryProgress.last_rating: rating,
+            CardMasteryProgress.status: _mastery_status_for_rating(rating),
+        }
+        if rating == 'understood':
+            updates[CardMasteryProgress.understood_count] = CardMasteryProgress.understood_count + 1
+        elif rating == 'still_learning':
+            updates[CardMasteryProgress.learning_count] = CardMasteryProgress.learning_count + 1
+        else:
+            updates[CardMasteryProgress.dont_know_count] = CardMasteryProgress.dont_know_count + 1
+
+        updated = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).update(
+            updates,
+            synchronize_session=False,
         )
-        db.session.add(progress)
+        if updated:
+            db.session.commit()
+            return {'success': True}
+        db.session.rollback()
 
-    progress.reviewed_count = (progress.reviewed_count or 0) + 1
-    progress.last_rating = rating
-    if rating == 'understood':
-        progress.understood_count = (progress.understood_count or 0) + 1
-    elif rating == 'still_learning':
-        progress.learning_count = (progress.learning_count or 0) + 1
-    elif rating == 'dont_know':
-        progress.dont_know_count = (progress.dont_know_count or 0) + 1
-
-    progress.status = _mastery_status_for_rating(rating)
-    db.session.commit()
-    return {'success': True}
+    app.logger.warning('mastery_progress_update_skipped user_id=%s card_id=%s', user_id, card_id)
+    return {'success': False, 'error': 'Could not save progress right now.'}
 
 
 def reset_mastery_progress(user_id, deck_id):

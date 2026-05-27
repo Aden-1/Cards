@@ -730,8 +730,10 @@ def create_deck_route():
 
     if not description:
         return jsonify({'error': 'User ID and description are required'}), 400
-    
-    deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
+    try:
+        deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if request.is_json:
         return jsonify({'success': True, 'deck_id': deck.deck_id, 'description': deck.description})
     return _redirect_with_fragment(
@@ -805,8 +807,10 @@ def edit_deck_route():
         return jsonify({'error': 'Deck ID and description are required'}), 400
     if not _owned_deck(deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
-    
-    deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
+    try:
+        deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if deck:
         if request.is_json:
             return jsonify({'success': True, 'deck_id': deck.deck_id})
@@ -896,7 +900,10 @@ def edit_card_route():
     if not card_record or not _owned_deck(card_record.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
     
-    card = edit_card(card_id, question, answers)
+    try:
+        card = edit_card(card_id, question, answers)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if card:
         if isinstance(card, dict) and card.get('deleted'):
             if request.is_json:
@@ -1432,7 +1439,10 @@ def create_custom_quiz_route():
     is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
     if not title:
         return jsonify({'error': 'Title is required'}), 400
-    quiz = create_custom_quiz(_current_user_id(), title, is_public, description, tags)
+    try:
+        quiz = create_custom_quiz(_current_user_id(), title, is_public, description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     return redirect(url_for('edit_quiz_route', quiz_id=quiz.quiz_id))
 
 # Update custom quiz metadata.
@@ -1448,7 +1458,10 @@ def edit_custom_quiz_metadata_route():
     is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
-    edit_custom_quiz(quiz_id, title, is_public, description, tags)
+    try:
+        edit_custom_quiz(quiz_id, title, is_public, description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     return redirect(url_for('edit_quiz_route', quiz_id=quiz_id))
 
 # Delete a custom quiz.
@@ -1498,7 +1511,10 @@ def add_quiz_question_route():
         if len(options_data) < 2:
             return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
 
-    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    try:
+        add_quiz_question(quiz_id, question_text, q_type, options_data)
+    except ValueError as exc:
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question added successfully', level='success')
 
 # Delete a quiz question.
@@ -1558,8 +1574,11 @@ def edit_quiz_question_route():
         if len(options_data) < 2:
             return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
 
-    delete_quiz_question(question_id)
-    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    try:
+        delete_quiz_question(question_id)
+        add_quiz_question(quiz_id, question_text, q_type, options_data)
+    except ValueError as exc:
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question updated', level='success')
 
