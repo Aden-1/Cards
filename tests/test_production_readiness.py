@@ -63,7 +63,6 @@ class ProductionReadinessTests(unittest.TestCase):
             data={
                 'csrf_token': 'csrf-test-token',
                 'username': 'member',
-                'email': 'member@example.test',
                 'password': 'password12345',
                 'confirm_password': 'password12345',
             },
@@ -73,20 +72,21 @@ class ProductionReadinessTests(unittest.TestCase):
         with cards_app.app.app_context():
             self.assertEqual(User.query.filter_by(username='member').one().role, 'standard')
 
-    def test_public_registration_requires_recoverable_email(self):
+    def test_public_registration_rejects_invalid_email_when_provided(self):
         self._csrf()
         response = self.client.post(
             '/register',
             data={
                 'csrf_token': 'csrf-test-token',
                 'username': 'member',
+                'email': 'not-an-email',
                 'password': 'password12345',
                 'confirm_password': 'password12345',
             },
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('recover', response.get_data(as_text=True).lower())
+        self.assertIn('valid email', response.get_data(as_text=True).lower())
 
     def test_logout_form_carries_csrf_and_logout_clears_session(self):
         with cards_app.app.app_context():

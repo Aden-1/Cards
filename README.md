@@ -17,7 +17,7 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Search public decks and custom quizzes
 - Build custom quizzes with static or dynamic questions
 - Master a deck with per-card confidence ratings and persistent progress
-- Register accounts, recover passwords by email, manage account settings, and save theme/study preferences
+- Register accounts, optionally add recovery emails, manage account settings, and save theme/study preferences
 - Browse featured public decks and popular tags from the home page
 - Copy public decks and public quizzes into your own account
 - Admin users can review accounts and manage roles
@@ -102,7 +102,7 @@ python -m flask db upgrade
 - The app now uses session-based authentication instead of a hard-coded demo user
 - Set `TRUSTED_HOSTS` to the comma-separated public hostnames accepted in production
 - Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
-- Accounts require a recoverable email address, and password resets use signed email links
+- Accounts can optionally store a recovery email, and password resets use signed email links when an email is present
 - Quiz scoring uses one-time server-side attempt records; the browser never supplies answer correctness
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header

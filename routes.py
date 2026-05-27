@@ -314,8 +314,8 @@ def register():
 
     if not _valid_username(username):
         return render_template('register.html', error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
-    if not _valid_email(email):
-        return render_template('register.html', error='Enter a valid email address so your account can be recovered.'), 400
+    if email and not _valid_email(email):
+        return render_template('register.html', error='Enter a valid email address.'), 400
     if not _valid_password(password):
         return render_template('register.html', error=_password_requirements_message()), 400
     if password != confirm_password:
@@ -467,8 +467,8 @@ def account():
         return render_template('account.html', user=user, error='Enter your current password to save account changes.'), 400
     if not _valid_username(username):
         return render_template('account.html', user=user, error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
-    if not _valid_email(email):
-        return render_template('account.html', user=user, error='Enter a valid email address so your account stays recoverable.'), 400
+    if email and not _valid_email(email):
+        return render_template('account.html', user=user, error='Enter a valid email address.'), 400
     existing_user = get_user(username)
     if existing_user and existing_user.user_id != user.user_id:
         return render_template('account.html', user=user, error='That username is already taken.'), 400

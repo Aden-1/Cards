@@ -13,7 +13,7 @@
         <div>
             <span class="page-kicker">Account</span>
             <h2 class="h3 mb-2">{{ user.username }}</h2>
-            <p class="muted-copy mb-0">Manage your login details, recovery email, password, and deletion controls from here.</p>
+            <p class="muted-copy mb-0">Manage your login details, optional recovery email, password, and deletion controls from here.</p>
         </div>
     </article>
     <article class="auth-card">
@@ -25,8 +25,8 @@
                 <input class="form-control" type="text" id="username" name="username" value="{{ user.username }}" minlength="3" maxlength="40" autocomplete="username" required>
             </div>
             <div>
-                <label class="form-label" for="email">Recovery Email</label>
-                <input class="form-control" type="email" id="email" name="email" value="{{ user.email or '' }}" autocomplete="email" required>
+                <label class="form-label" for="email">Recovery Email Optional</label>
+                <input class="form-control" type="email" id="email" name="email" value="{{ user.email or '' }}" autocomplete="email">
             </div>
             <div>
                 <label class="form-label" for="current_password">Current Password</label>

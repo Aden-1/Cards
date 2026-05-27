@@ -29,13 +29,13 @@ Response:
 
 Fields:
 - `username`
-- `email`
+- `email` optional
 - `password`
 - `confirm_password`
 
 Notes:
 - Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores.
-- Email is required so the account can be recovered later.
+- Email is optional during alpha, but accounts with an email can use password recovery later.
 - New passwords must be at least 12 characters and contain a letter and a number.
 - Public registration always creates a `standard` account. Administrators are provisioned through the controlled CLI workflow.
 
@@ -88,7 +88,7 @@ Response:
 
 Fields:
 - `username`
-- `email`
+- `email` optional
 - `current_password`
 - `new_password` optional
 - `confirm_password` optional

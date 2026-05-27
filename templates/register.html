@@ -18,7 +18,7 @@
         <div>
             <span class="page-kicker">Join</span>
             <h2 class="h3 mb-2">Create Account</h2>
-            <p class="muted-copy mb-0">Use a recoverable email so you can reset your password later.</p>
+            <p class="muted-copy mb-0">Create an account now, and add a recovery email whenever you are ready.</p>
         </div>
         {% if error %}
         <div class="alert alert-danger mb-0">{{ error }}</div>
@@ -32,8 +32,8 @@
                 <input class="form-control" type="text" id="username" name="username" autocomplete="username" minlength="3" maxlength="40" required placeholder="Choose a username" {% if registration_disabled %}disabled{% endif %}>
             </div>
             <div>
-                <label class="form-label" for="email">Email</label>
-                <input class="form-control" type="email" id="email" name="email" autocomplete="email" required placeholder="name@example.com" {% if registration_disabled %}disabled{% endif %}>
+                <label class="form-label" for="email">Email Optional</label>
+                <input class="form-control" type="email" id="email" name="email" autocomplete="email" placeholder="name@example.com" {% if registration_disabled %}disabled{% endif %}>
             </div>
             <div>
                 <label class="form-label" for="password">Password</label>
