@@ -428,10 +428,12 @@ Response:
 
 Fields:
 - `answer_id`
-- `is_correct`
+- `selected_question_id`
+- `timed_out` optional, used when a timed-recovery round expires
 
 Notes:
 - Persists per-answer match performance when a user is signed in.
+- The server computes correctness from the selected question and answer pair; it does not accept a client-claimed success.
 
 Response:
 ```json
@@ -613,7 +615,7 @@ Response:
 
 Fields:
 - `answers`
-- `quiz_data`
+- `attempt_token`, generated when the quiz page is rendered
 
 Response:
 ```json
@@ -627,6 +629,8 @@ Response:
 
 Notes:
 - This route expects JSON in the current UI flow.
+- Correct answers remain server-side in a one-time `QuizAttempt`; browser-supplied scoring metadata is ignored.
+- An attempt can be scored once and expires from use after scoring.
 - A question is marked correct only when the submitted option set exactly matches the correct option set.
 
 ---

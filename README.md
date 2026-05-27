@@ -102,6 +102,7 @@ python -m flask db upgrade
 - The app now uses session-based authentication instead of a hard-coded demo user
 - Set `APP_ENV=production` and `SECRET_KEY` in production; Heroku dynos enforce these checks automatically
 - Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
+- Quiz scoring uses one-time server-side attempt records; the browser never supplies answer correctness
 - Production and Heroku sessions automatically use secure cookies over HTTPS
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
 - The web dyno is tuned through `WEB_CONCURRENCY`, `GUNICORN_TIMEOUT`, and `GUNICORN_GRACEFUL_TIMEOUT`
@@ -139,5 +140,6 @@ python -m flask db upgrade
 - Development setup and validation: `docs/DEVELOPMENT.md`
 - Deployment and Heroku runtime notes: `docs/DEPLOYMENT.md`
 - Operations and launch procedures: `docs/OPERATIONS.md`
+- Public repository inclusion and secret-handling policy: `docs/PUBLIC_REPOSITORY.md`
 
 ### Website coming soon™!

@@ -400,14 +400,14 @@ document.addEventListener('DOMContentLoaded', function() {
         if (window.cardsApp) { window.cardsApp.showToast(message, isSuccess ? 'success' : 'error'); }
     }
 
-    function recordMatchAttempt(answerId, isCorrect) {
+    function recordMatchAttempt(answerId, questionId, timedOut = false) {
         if (!window.cardsCsrfToken) {
             return;
         }
         fetch('{{ url_for("match_attempt") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
-            body: JSON.stringify({ answer_id: answerId, is_correct: isCorrect, strategy: selectedStrategy })
+            body: JSON.stringify({ answer_id: answerId, selected_question_id: questionId, timed_out: timedOut, strategy: selectedStrategy })
         }).catch(() => {});
     }
 
@@ -481,7 +481,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     boostWeakness(timedOutQuestionId);
                 }
                 if (trackedAnswerId) {
-                    recordMatchAttempt(trackedAnswerId, false);
+                    recordMatchAttempt(trackedAnswerId, timedOutQuestionId, true);
                 }
                 showFeedback('Time ran out. Moving to the next recovery question.', false);
                 advanceTimedRecoveryQuestion();
@@ -598,7 +598,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function handleWrongMatch(questionId, attemptedAnswerId) {
         queueRetryForQuestion(questionId);
         boostWeakness(questionId);
-        recordMatchAttempt(attemptedAnswerId, false);
+        recordMatchAttempt(attemptedAnswerId, questionId);
         selectedQuestionId = null;
         selectedAnswerId = null;
 
@@ -669,7 +669,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             activeAnswerIds = activeAnswerIds.filter((currentId) => currentId !== answerId);
         }
-        recordMatchAttempt(answerId, true);
+        recordMatchAttempt(answerId, answer.card_id);
         showFeedback('Correct!', true);
 
         const targetQuestionId = answer.card_id;

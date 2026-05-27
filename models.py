@@ -125,3 +125,12 @@ class QuizOption(db.Model):
     question_id = db.Column(db.Integer, db.ForeignKey('quiz_question.question_id'), nullable=False, index=True)
     text = db.Column(db.Text, nullable=False)
     is_correct = db.Column(db.Boolean, default=False)
+
+
+# One-time server-side truth for a rendered quiz run.
+class QuizAttempt(db.Model):
+    attempt_token = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)
+    correct_answers_json = db.Column(db.Text, nullable=False)
+    question_count = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)

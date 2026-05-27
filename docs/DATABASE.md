@@ -142,6 +142,16 @@ class QuizOption(db.Model):
     is_correct = db.Column(db.Boolean, default=False)
 ```
 
+### QuizAttempt
+```python
+class QuizAttempt(db.Model):
+    attempt_token = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)
+    correct_answers_json = db.Column(db.Text, nullable=False)
+    question_count = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
+```
+
 ## Relationship Summary
 
 - `User` 1:N `Deck`
@@ -154,6 +164,7 @@ class QuizOption(db.Model):
 - `CardAnswer` 1:N `MatchPairProgress`
 - `Quiz` 1:N `QuizQuestion`
 - `QuizQuestion` 1:N `QuizOption`
+- `User` 1:N optional `QuizAttempt`
 
 ## Behavior Notes
 
@@ -170,9 +181,10 @@ class QuizOption(db.Model):
 - User records persist theme, match strategy, and mastery strategy preferences.
 - The app includes lightweight startup self-healing for newer SQLite columns and the match progress table; migrations provide the same schema on PostgreSQL.
 - Imported decks and user-authored search content are bounded to keep oversized rows and batches out of the production database.
+- Quiz correctness is held in a one-time server-side `QuizAttempt` record instead of trusting submitted browser data; abandoned attempts older than one day are cleaned up when new attempts are generated.
 
 ## Usage
 
 ```python
-from models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption
+from models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption, QuizAttempt
 ```

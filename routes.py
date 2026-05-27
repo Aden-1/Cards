@@ -955,6 +955,12 @@ def list_cards_route():
     user_id = _current_user_id()
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return jsonify({'error': 'Deck not found'}), 404
+    if detailed:
+        deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
+        cards = deck['cards'] if deck else None
+    else:
+        cards = list_cards_from_deck(deck_id, detailed=False, shuffle=shuffle)
+    return jsonify({'success': True, 'cards': cards or []})
 
 
 def import_deck_route():
@@ -997,16 +1003,6 @@ def import_deck_route():
         notice=message,
         level='success',
     )
-    
-    if detailed:
-        deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
-        cards = deck['cards'] if deck else None
-    else:
-        cards = list_cards_from_deck(deck_id, detailed=False, shuffle=shuffle)
-    if cards is not None:
-        return jsonify({'success': True, 'cards': cards})
-    else:
-        return jsonify({'success': True, 'cards': []})
 
 
 # Return one card with answers.
@@ -1075,14 +1071,19 @@ def match_attempt_route():
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))
-    is_correct = str(data.get('is_correct', '')).lower() in ('1', 'true', 'yes', 'on')
+    selected_question_id = _int_value(data.get('selected_question_id'))
+    timed_out = str(data.get('timed_out', '')).lower() in ('1', 'true', 'yes', 'on')
     user = _current_user()
     user_id = user.user_id if user else None
 
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
-    if not _accessible_answer(answer_id, user_id):
+    answer = _accessible_answer(answer_id, user_id)
+    if not answer:
         return jsonify({'error': 'Answer not found'}), 404
+    if not selected_question_id:
+        return jsonify({'error': 'Selected question ID is required'}), 400
+    is_correct = not timed_out and answer.card_id == selected_question_id
 
     if user and data.get('strategy'):
         user.match_strategy_preference = normalize_match_strategy(
@@ -1346,7 +1347,7 @@ def copy_public_deck_route():
 
 # Render the quiz launcher and quiz data.
 def quiz_route():
-    from app import get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
+    from app import create_quiz_attempt, get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
     user_id = _current_user_id()
     decks = get_accessible_decks(user_id)
     deck_data = [{
@@ -1386,51 +1387,51 @@ def quiz_route():
         selected_custom_quiz_id = None
     
     quiz_data = None
+    attempt_token = None
     
     if selected_deck_id:
         quiz_data = generate_quiz_data(deck_id=selected_deck_id)
     elif selected_custom_quiz_id:
         quiz_data = generate_quiz_data(custom_quiz_id=selected_custom_quiz_id)
+    if quiz_data:
+        attempt_token, quiz_data = create_quiz_attempt(user_id, quiz_data)
+        active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
+        active_attempt_tokens.append(attempt_token)
+        session['quiz_attempt_tokens'] = active_attempt_tokens[-5:]
         
     return render_template('quiz.html', decks=deck_data, custom_quizzes=custom_quizzes, 
                            selected_deck_id=selected_deck_id, 
                            selected_custom_quiz_id=selected_custom_quiz_id, 
                            selected_source=selected_source,
-                           quiz_data=quiz_data)
+                           quiz_data=quiz_data,
+                           attempt_token=attempt_token)
 
 
 # Score a submitted quiz.
 def score_quiz_route():
-    # Strictly score the submitted options.
-    data = request.json
+    from app import score_quiz_attempt
+    data = request.get_json(silent=True) or {}
     submitted_answers = data.get('answers', {})
-    quiz_questions = data.get('quiz_data', [])
-    
-    score = 0
-    total = len(quiz_questions)
-    results = []
-    
-    for q in quiz_questions:
-        q_id = str(q['id'])
-        user_selected = set(submitted_answers.get(q_id, []))
-        correct_options = set(opt['text'] for opt in q['options'] if opt['is_correct'])
-        
-        # "If multiple answers from a card is chosen all must be recognized as correct"
-        # We assume if the user selected EXACTLY the correct shown options, they get it right.
-        # Or if we just require they select "any" correct option:
-        # For strict check: user_selected == correct_options
-        is_correct = len(user_selected) > 0 and user_selected.issubset(correct_options) and len(user_selected) == len(correct_options)
-        
-        if is_correct:
-            score += 1
-            
-        results.append({
-            'id': q_id,
-            'is_correct': is_correct,
-            'correct_answers': list(correct_options)
-        })
-        
-    return jsonify({'success': True, 'score': score, 'total': total, 'results': results})
+    attempt_token = str(data.get('attempt_token', '')).strip()
+    active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
+    answer_payload_valid = (
+        isinstance(submitted_answers, dict)
+        and all(
+            isinstance(answer_values, list)
+            and all(isinstance(answer, str) for answer in answer_values)
+            for answer_values in submitted_answers.values()
+        )
+    )
+    if not attempt_token or attempt_token not in active_attempt_tokens or not answer_payload_valid:
+        return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
+
+    result = score_quiz_attempt(attempt_token, _current_user_id(), submitted_answers)
+    if not result:
+        return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
+
+    active_attempt_tokens.remove(attempt_token)
+    session['quiz_attempt_tokens'] = active_attempt_tokens
+    return jsonify(result)
 
 # Render the custom quiz editor.
 def edit_quiz_route():
@@ -1561,7 +1562,7 @@ def delete_quiz_question_route():
 def edit_quiz_question_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_quiz_question, add_quiz_question
+    from app import edit_quiz_question
     from models import QuizQuestion
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
@@ -1598,8 +1599,7 @@ def edit_quiz_question_route():
             return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
 
     try:
-        delete_quiz_question(question_id)
-        add_quiz_question(quiz_id, question_text, q_type, options_data)
+        edit_quiz_question(question_id, question_text, q_type, options_data)
     except ValueError as exc:
         return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     

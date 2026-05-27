@@ -92,7 +92,7 @@
 {% block scripts %}
 {% if quiz_data %}
 <script nonce="{{ csp_nonce }}">
-const quizData = {{ quiz_data|tojson }};
+const quizAttemptToken = {{ attempt_token|tojson }};
 document.getElementById('submitQuiz')?.addEventListener('click', () => {
     const answers = {};
     document.querySelectorAll('.quiz-question').forEach((el) => {
@@ -104,7 +104,7 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
     fetch('{{ url_for("score_quiz") }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
-        body: JSON.stringify({ answers: answers, quiz_data: quizData })
+        body: JSON.stringify({ answers: answers, attempt_token: quizAttemptToken })
     })
     .then((r) => r.json())
     .then((data) => {

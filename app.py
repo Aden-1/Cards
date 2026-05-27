@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import logging
+import secrets
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ from flask_migrate import Migrate
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.middleware.proxy_fix import ProxyFix
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress, MatchPairProgress
+from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, QuizAttempt, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
@@ -105,6 +106,7 @@ app.config['SESSION_COOKIE_SECURE'] = is_production or _env_bool('SESSION_COOKIE
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=_env_int('SESSION_LIFETIME_DAYS', 7))
 app.config['IS_PRODUCTION'] = is_production
 app.config['PREFERRED_URL_SCHEME'] = 'https' if is_production else 'http'
+app.config['MAX_CONTENT_LENGTH'] = _env_int('MAX_CONTENT_LENGTH', 2 * 1024 * 1024)
 app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
     'PUBLIC_REGISTRATION_ENABLED',
     default=not is_production,
@@ -532,6 +534,32 @@ def add_quiz_question(quiz_id, question_text, q_type, options_data):
         db.session.add(qo)
     db.session.commit()
     return q
+
+
+def edit_quiz_question(question_id, question_text, q_type, options_data):
+    q = QuizQuestion.query.get(question_id)
+    if not q:
+        return None
+    if q_type not in ('dynamic', 'static'):
+        raise ValueError('Quiz question type must be dynamic or static.')
+    if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
+        raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
+
+    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
+    cleaned_options = []
+    for opt in options_data:
+        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
+        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+
+    q.question = question_text
+    q.type = q_type
+    for existing_option in list(q.options):
+        db.session.delete(existing_option)
+    for opt in cleaned_options:
+        db.session.add(QuizOption(question_id=q.question_id, text=opt['text'], is_correct=opt['is_correct']))
+    db.session.commit()
+    return q
+
 
 # Delete a quiz question and child options.
 def delete_quiz_question(question_id):
@@ -1984,6 +2012,69 @@ def reset_mastery_progress(user_id, deck_id):
     ).delete(synchronize_session=False)
     db.session.commit()
     return deleted_rows
+
+
+def create_quiz_attempt(user_id, quiz_questions):
+    """Persist server-held correctness data while sending display-only options to the browser."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    QuizAttempt.query.filter(QuizAttempt.created_at < cutoff).delete(synchronize_session=False)
+
+    correct_answers = {
+        str(question['id']): [
+            option['text'] for option in question['options'] if option.get('is_correct')
+        ]
+        for question in quiz_questions
+    }
+    attempt = QuizAttempt(
+        attempt_token=secrets.token_urlsafe(32),
+        user_id=user_id,
+        correct_answers_json=json.dumps(correct_answers),
+        question_count=len(quiz_questions),
+    )
+    db.session.add(attempt)
+    db.session.commit()
+
+    display_questions = [
+        {
+            'id': question['id'],
+            'question': question['question'],
+            'options': [{'text': option['text']} for option in question['options']],
+        }
+        for question in quiz_questions
+    ]
+    return attempt.attempt_token, display_questions
+
+
+def score_quiz_attempt(attempt_token, user_id, submitted_answers):
+    """Consume one rendered quiz attempt and calculate its result from server-held data."""
+    attempt = db.session.get(QuizAttempt, attempt_token)
+    if not attempt or attempt.user_id != user_id:
+        return None
+
+    correct_answers = json.loads(attempt.correct_answers_json)
+    results = []
+    score = 0
+    for question_id, answers in correct_answers.items():
+        selected = set(submitted_answers.get(question_id, []))
+        correct = set(answers)
+        is_correct = bool(selected) and selected == correct
+        if is_correct:
+            score += 1
+        results.append({
+            'id': question_id,
+            'is_correct': is_correct,
+            'correct_answers': list(correct),
+        })
+
+    result = {
+        'success': True,
+        'score': score,
+        'total': attempt.question_count,
+        'results': results,
+    }
+    db.session.delete(attempt)
+    db.session.commit()
+    return result
 
 
 # Generate quiz questions from a deck or custom quiz.
