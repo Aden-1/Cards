@@ -1,17 +1,20 @@
 import re
 import secrets
+import time
+from collections import defaultdict, deque
 from functools import wraps
+from threading import Lock
 
-from flask import abort, jsonify, redirect, render_template, request, session, url_for
+from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
 
-# Shared request helpers.
-# Read request payload from JSON or form data.
+# Request parsing helpers.
 def _request_data():
     return request.get_json(silent=True) or request.values.to_dict(flat=True)
 
 
-# Parse an integer safely.
 def _int_value(value):
     try:
         return int(value)
@@ -19,12 +22,163 @@ def _int_value(value):
         return None
 
 
-# Redirect to a route with an optional fragment.
 def _redirect_with_fragment(endpoint, fragment=None, **values):
     target = url_for(endpoint, **values)
     if fragment:
         target = f'{target}#{fragment}'
     return redirect(target)
+
+
+def _as_bool(value):
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _deck_summary_payload(deck, user_id):
+    """Build the common deck summary payload used across deck-oriented pages."""
+    return {
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'detailed_description': deck.detailed_description,
+        'tags': deck.tags,
+        'sortable': deck.sortable,
+        'is_public': deck.is_public,
+        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
+        'card_count': len(deck.cards),
+    }
+
+
+def _quiz_launcher_deck_payload(deck, user_id):
+    """Keep the quiz picker payload minimal because it needs less metadata."""
+    return {
+        'deck_id': deck.deck_id,
+        'description': deck.description,
+        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
+        'card_count': len(deck.cards),
+    }
+
+
+def _parse_quiz_question_options(data, q_type):
+    """Read the repeated quiz option fields from create/edit forms."""
+    options_data = []
+    correct_count = 0
+
+    for index in range(1, 6):
+        option_text = data.get(f'option_{index}', '').strip()
+        if not option_text:
+            continue
+
+        is_correct = q_type == 'dynamic' or data.get(f'is_correct_{index}') is not None
+        if is_correct:
+            correct_count += 1
+        options_data.append({'text': option_text, 'is_correct': is_correct})
+
+    return options_data, correct_count
+
+
+def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count):
+    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
+        return _redirect_with_fragment(
+            'edit_quiz_route',
+            fragment='quiz-editor',
+            quiz_id=quiz_id,
+            notice='Dynamic questions must have 1-2 correct answers.',
+            level='error',
+        )
+
+    if q_type == 'static':
+        if not (1 <= correct_count <= 2):
+            return _redirect_with_fragment(
+                'edit_quiz_route',
+                fragment='quiz-editor',
+                quiz_id=quiz_id,
+                notice='Static questions must have 1-2 correct answers.',
+                level='error',
+            )
+        if len(options_data) < 2:
+            return _redirect_with_fragment(
+                'edit_quiz_route',
+                fragment='quiz-editor',
+                quiz_id=quiz_id,
+                notice='Static questions must have at least 2 options.',
+                level='error',
+            )
+    return None
+
+
+# Request-throttling helpers.
+_rate_limit_buckets = defaultdict(deque)
+_rate_limit_lock = Lock()
+_RATE_LIMITS = {
+    'login': (10, 15 * 60),
+    'register': (5, 60 * 60),
+    'forgot_password': (5, 60 * 60),
+    'reset_password': (10, 60 * 60),
+    'account': (10, 60 * 60),
+    'delete_account': (3, 60 * 60),
+    'admin_users': (30, 60 * 60),
+}
+
+
+def _rate_limit_key(endpoint):
+    client = request.remote_addr or 'unknown'
+    if endpoint in ('login', 'register'):
+        return f'{endpoint}:{client}'
+    user_id = session.get('user_id')
+    return f'{endpoint}:{user_id or client}'
+
+
+def _apply_rate_limits():
+    if request.method != 'POST' or request.endpoint not in _RATE_LIMITS:
+        return None
+
+    limit, window_seconds = _RATE_LIMITS[request.endpoint]
+    now = time.monotonic()
+    key = _rate_limit_key(request.endpoint)
+    with _rate_limit_lock:
+        attempts = _rate_limit_buckets[key]
+        while attempts and now - attempts[0] >= window_seconds:
+            attempts.popleft()
+        if len(attempts) >= limit:
+            retry_after = max(1, int(window_seconds - (now - attempts[0])))
+            if _wants_json():
+                response = jsonify({'error': 'Too many requests. Please try again later.'})
+            else:
+                response = current_app.response_class('Too many requests. Please try again later.', status=429)
+            response.status_code = 429
+            response.headers['Retry-After'] = str(retry_after)
+            return response
+        attempts.append(now)
+    return None
+
+
+def _prepare_security_request():
+    g.csp_nonce = secrets.token_urlsafe(24)
+    if current_app.config.get('IS_PRODUCTION') and not request.is_secure:
+        return redirect(request.url.replace('http://', 'https://', 1), code=308)
+    return None
+
+
+def _set_security_headers(response):
+    nonce = getattr(g, 'csp_nonce', '')
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "font-src 'self' https://cdn.jsdelivr.net data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Permissions-Policy'] = 'camera=(), geolocation=(), microphone=()'
+    if current_app.config.get('IS_PRODUCTION'):
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
 
 
 def _current_user():
@@ -86,7 +240,7 @@ def _csrf_token():
 
 
 def _validate_csrf():
-    if request.method != 'POST':
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
         return None
     sent_token = request.headers.get('X-CSRFToken') or request.form.get('csrf_token')
     if not sent_token or not secrets.compare_digest(sent_token, session.get('csrf_token', '')):
@@ -101,7 +255,20 @@ def _valid_username(username):
 
 
 def _valid_password(password):
-    return bool(password) and len(password) >= 8
+    return (
+        bool(password)
+        and len(password) >= 12
+        and bool(re.search(r'[A-Za-z]', password))
+        and bool(re.search(r'\d', password))
+    )
+
+
+def _valid_email(email):
+    return bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email or ''))
+
+
+def _password_requirements_message(prefix='Passwords'):
+    return f'{prefix} must be at least 12 characters and contain a letter and a number.'
 
 
 def _safe_next_url(next_url):
@@ -110,13 +277,31 @@ def _safe_next_url(next_url):
     return url_for('index')
 
 
-def _first_account_role():
-    from models import User
-    return 'admin' if User.query.count() == 0 else 'standard'
+def healthz():
+    return jsonify({'status': 'ok'}), 200
+
+
+def readyz():
+    from models import db
+
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({'status': 'ready', 'database': 'ok'}), 200
+    except Exception:
+        current_app.logger.exception('database_readiness_check_failed')
+        db.session.rollback()
+        return jsonify({'status': 'not_ready', 'database': 'error'}), 503
 
 
 def register():
     from app import create_user, get_user, get_user_by_email
+    from models import db
+
+    if not current_app.config.get('PUBLIC_REGISTRATION_ENABLED', True):
+        message = 'Public registration is currently disabled.'
+        if _wants_json():
+            return jsonify({'error': message}), 403
+        return render_template('register.html', registration_disabled=True, error=message), 403
 
     if request.method == 'GET':
         return render_template('register.html')
@@ -129,8 +314,10 @@ def register():
 
     if not _valid_username(username):
         return render_template('register.html', error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
+    if email and not _valid_email(email):
+        return render_template('register.html', error='Enter a valid email address.'), 400
     if not _valid_password(password):
-        return render_template('register.html', error='Passwords must be at least 8 characters.'), 400
+        return render_template('register.html', error=_password_requirements_message()), 400
     if password != confirm_password:
         return render_template('register.html', error='Passwords do not match.'), 400
     if get_user(username):
@@ -138,8 +325,13 @@ def register():
     if email and get_user_by_email(email):
         return render_template('register.html', error='That email is already in use.'), 400
 
-    user = create_user(username=username, password=password, email=email, role=_first_account_role())
+    try:
+        user = create_user(username=username, password=password, email=email, role='standard')
+    except IntegrityError:
+        db.session.rollback()
+        return render_template('register.html', error='That username or email is already in use.'), 400
     session.clear()
+    session.permanent = True
     session['user_id'] = user.user_id
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(url_for('edit', notice='Account created', level='success'))
@@ -159,9 +351,95 @@ def login():
         return render_template('login.html', error='Invalid username or password.', next=data.get('next', '')), 401
 
     session.clear()
+    session.permanent = True
     session['user_id'] = user.user_id
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(_safe_next_url(data.get('next')))
+
+
+def forgot_password():
+    from app import (
+        build_password_reset_url,
+        generate_password_reset_token,
+        get_user_by_email,
+        send_password_reset_email,
+    )
+
+    success_message = 'If that email matches an active account, a password reset link has been sent.'
+    email_delivery_available = current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED', False)
+    if request.method == 'GET':
+        return render_template(
+            'forgot_password.html',
+            success=None,
+            email_delivery_available=email_delivery_available,
+        )
+
+    data = _request_data()
+    email = (data.get('email') or '').strip().lower()
+    if not _valid_email(email):
+        return render_template(
+            'forgot_password.html',
+            error='Enter a valid email address.',
+            email_delivery_available=email_delivery_available,
+        ), 400
+
+    user = get_user_by_email(email)
+    if user and user.is_active and email_delivery_available:
+        token = generate_password_reset_token(user)
+        reset_url = build_password_reset_url(token) or url_for('reset_password', token=token, _external=True)
+        try:
+            send_password_reset_email(user, reset_url)
+        except Exception:
+            current_app.logger.exception('password_reset_email_failed user_id=%s', user.user_id)
+            return render_template(
+                'forgot_password.html',
+                error='Password reset email delivery is temporarily unavailable. Please try again later.',
+                email_delivery_available=email_delivery_available,
+            ), 503
+        current_app.logger.info('password_reset_requested user_id=%s', user.user_id)
+
+    return render_template(
+        'forgot_password.html',
+        success=success_message,
+        email_delivery_available=email_delivery_available,
+    )
+
+
+def reset_password():
+    from app import get_user_by_password_reset_token, update_user_account
+
+    token = (request.args.get('token') if request.method == 'GET' else _request_data().get('token') or '').strip()
+    user = get_user_by_password_reset_token(token)
+    if request.method == 'GET':
+        return render_template('reset_password.html', token=token, token_valid=bool(user))
+
+    password = _request_data().get('password') or ''
+    confirm_password = _request_data().get('confirm_password') or ''
+    if not user:
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=False,
+            error='This password reset link is invalid or has expired.',
+        ), 400
+    if not _valid_password(password):
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=True,
+            error=_password_requirements_message('Passwords'),
+        ), 400
+    if password != confirm_password:
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=True,
+            error='Passwords do not match.',
+        ), 400
+
+    update_user_account(user.user_id, username=user.username, email=user.email, password=password)
+    current_app.logger.info('password_reset_completed user_id=%s', user.user_id)
+    return redirect(url_for('login', notice='Password updated. You can log in now.', level='success'))
 
 
 def logout():
@@ -172,6 +450,7 @@ def logout():
 @login_required
 def account():
     from app import get_user, get_user_by_email, update_user_account
+    from models import db
 
     user = _current_user()
     if request.method == 'GET':
@@ -188,6 +467,8 @@ def account():
         return render_template('account.html', user=user, error='Enter your current password to save account changes.'), 400
     if not _valid_username(username):
         return render_template('account.html', user=user, error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
+    if email and not _valid_email(email):
+        return render_template('account.html', user=user, error='Enter a valid email address.'), 400
     existing_user = get_user(username)
     if existing_user and existing_user.user_id != user.user_id:
         return render_template('account.html', user=user, error='That username is already taken.'), 400
@@ -196,12 +477,50 @@ def account():
         return render_template('account.html', user=user, error='That email is already in use.'), 400
     if new_password:
         if not _valid_password(new_password):
-            return render_template('account.html', user=user, error='New passwords must be at least 8 characters.'), 400
+            return render_template('account.html', user=user, error=_password_requirements_message('New passwords')), 400
         if new_password != confirm_password:
             return render_template('account.html', user=user, error='New passwords do not match.'), 400
 
-    updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
+    try:
+        updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
+    except IntegrityError:
+        db.session.rollback()
+        return render_template('account.html', user=user, error='That username or email is already in use.'), 400
+    if new_password:
+        session.clear()
+        session.permanent = True
+        session['user_id'] = updated_user.user_id
+        session['csrf_token'] = secrets.token_urlsafe(32)
     return render_template('account.html', user=updated_user, success='Account updated.')
+
+
+@login_required
+def delete_account():
+    from app import delete_user_account
+
+    user = _current_user()
+    data = _request_data()
+    current_password = data.get('current_password') or ''
+    confirmation = (data.get('confirmation') or '').strip()
+
+    if confirmation != 'DELETE':
+        return render_template(
+            'account.html',
+            user=user,
+            delete_error='Type DELETE to confirm account deletion.',
+        ), 400
+    if not user.check_password(current_password):
+        return render_template(
+            'account.html',
+            user=user,
+            delete_error='Enter your current password to delete your account.',
+        ), 400
+
+    deleted_user_id = user.user_id
+    delete_user_account(deleted_user_id)
+    session.clear()
+    current_app.logger.info('self_service_account_deleted user_id=%s', deleted_user_id)
+    return redirect(url_for('index', notice='Your account and owned content were deleted.', level='success'))
 
 
 def update_theme_route():
@@ -222,8 +541,8 @@ def update_theme_route():
 
 @admin_required
 def admin_users():
-    from app import _delete_content_fts_index_row
-    from models import Deck, Quiz, User, db
+    from app import delete_user_account
+    from models import User, db
 
     if request.method == 'GET':
         users = User.query.order_by(User.user_id).all()
@@ -243,17 +562,8 @@ def admin_users():
     if action == 'delete':
         if current_user and current_user.user_id == target_user.user_id:
             return redirect(url_for('admin_users', notice='You cannot delete your own account.', level='error'))
-
-        # Keep search index clean before cascading deletes.
-        owned_deck_ids = [deck_id for (deck_id,) in db.session.query(Deck.deck_id).filter_by(owned_by=target_user.user_id).all()]
-        owned_quiz_ids = [quiz_id for (quiz_id,) in db.session.query(Quiz.quiz_id).filter_by(owned_by=target_user.user_id).all()]
-        for deck_id in owned_deck_ids:
-            _delete_content_fts_index_row('deck', deck_id)
-        for quiz_id in owned_quiz_ids:
-            _delete_content_fts_index_row('quiz', quiz_id)
-
-        db.session.delete(target_user)
-        db.session.commit()
+        delete_user_account(target_user.user_id)
+        current_app.logger.info('admin_action=delete_user actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User and all owned data deleted.', level='success'))
 
     if action == 'promote_admin':
@@ -261,6 +571,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='User is already an admin.', level='success'))
         target_user.role = 'admin'
         db.session.commit()
+        current_app.logger.info('admin_action=promote_admin actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to admin.', level='success'))
 
     if action == 'promote_moderator':
@@ -270,6 +581,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Admins cannot be changed to moderator here.', level='error'))
         target_user.role = 'moderator'
         db.session.commit()
+        current_app.logger.info('admin_action=promote_moderator actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to moderator.', level='success'))
 
     if action == 'demote_standard':
@@ -281,6 +593,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Use a dedicated admin-role workflow to demote admins.', level='error'))
         target_user.role = 'standard'
         db.session.commit()
+        current_app.logger.info('admin_action=demote_standard actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User demoted to standard.', level='success'))
 
     return redirect(url_for('admin_users', notice='Unknown admin action.', level='error'))
@@ -298,6 +611,14 @@ def _owned_quiz(quiz_id, user_id):
     if not quiz_id:
         return None
     return Quiz.query.filter_by(quiz_id=quiz_id, owned_by=user_id).first()
+
+
+def _accessible_answer(answer_id, user_id):
+    from models import CardAnswer
+    answer = CardAnswer.query.get(answer_id) if answer_id else None
+    if not answer or (not answer.card.deck.is_public and answer.card.deck.owned_by != user_id):
+        return None
+    return answer
 
 
 # Page routes.
@@ -322,16 +643,7 @@ def edit():
     from app import get_user_decks, get_deck_details
 
     decks = get_user_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck = None
@@ -365,16 +677,7 @@ def view():
     from app import get_accessible_decks, get_deck_details
 
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -394,16 +697,7 @@ def match():
     from app import get_accessible_decks, get_match_game_data, get_match_strategy_catalog, normalize_match_strategy
 
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_question_id = _int_value(request.args.get('selected_question'))
@@ -416,10 +710,6 @@ def match():
         request.args.get('strategy') or (user.match_strategy_preference if user else None),
         include_account_only=bool(user),
     )
-    if user and selected_strategy != (user.match_strategy_preference or 'standard_shuffle'):
-        from models import db
-        user.match_strategy_preference = selected_strategy
-        db.session.commit()
     match_deck = get_match_game_data(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
 
@@ -445,16 +735,7 @@ def reorder():
     decks = get_accessible_decks(user_id)
     # Only sortable decks can enter this game.
     sortable_decks = [deck for deck in decks if deck.sortable]
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in sortable_decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in sortable_decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     sortable_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -483,16 +764,7 @@ def master():
     user = _current_user()
     user_id = user.user_id if user else None
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'detailed_description': deck.detailed_description,
-        'tags': deck.tags,
-        'sortable': deck.sortable,
-        'is_public': deck.is_public,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
@@ -505,11 +777,6 @@ def master():
         requested_strategy or (user.mastery_strategy_preference if user else None),
         deck_sortable=bool(selected_deck_meta and selected_deck_meta['sortable'])
     )
-
-    if user and selected_strategy != (user.mastery_strategy_preference or 'spaced'):
-        user.mastery_strategy_preference = selected_strategy
-        from models import db
-        db.session.commit()
 
     mastery_snapshot = get_mastery_snapshot(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
     round_restarted = False
@@ -568,6 +835,7 @@ def master_rate_route():
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+    user.mastery_strategy_preference = strategy
 
     result = record_mastery_rating(user_id=user_id, deck_id=deck_id, card_id=card_id, rating=rating)
     if not result.get('success'):
@@ -602,6 +870,7 @@ def master_reset_route():
         return _redirect_with_fragment('master', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
+    user.mastery_strategy_preference = strategy
 
     reset_mastery_progress(user_id=user_id, deck_id=deck_id)
     seen_map = session.get('master_seen_cards', {})
@@ -623,13 +892,15 @@ def create_deck_route():
     description = data.get('description')
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
 
     if not description:
         return jsonify({'error': 'User ID and description are required'}), 400
-    
-    deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
+    try:
+        deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if request.is_json:
         return jsonify({'success': True, 'deck_id': deck.deck_id, 'description': deck.description})
     return _redirect_with_fragment(
@@ -696,15 +967,17 @@ def edit_deck_route():
     description = data.get('description')
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
 
     if not deck_id or not description:
         return jsonify({'error': 'Deck ID and description are required'}), 400
     if not _owned_deck(deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
-    
-    deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
+    try:
+        deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if deck:
         if request.is_json:
             return jsonify({'success': True, 'deck_id': deck.deck_id})
@@ -794,7 +1067,10 @@ def edit_card_route():
     if not card_record or not _owned_deck(card_record.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
     
-    card = edit_card(card_id, question, answers)
+    try:
+        card = edit_card(card_id, question, answers)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if card:
         if isinstance(card, dict) and card.get('deleted'):
             if request.is_json:
@@ -823,6 +1099,12 @@ def list_cards_route():
     user_id = _current_user_id()
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return jsonify({'error': 'Deck not found'}), 404
+    if detailed:
+        deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
+        cards = deck['cards'] if deck else None
+    else:
+        cards = list_cards_from_deck(deck_id, detailed=False, shuffle=shuffle)
+    return jsonify({'success': True, 'cards': cards or []})
 
 
 def import_deck_route():
@@ -835,8 +1117,8 @@ def import_deck_route():
     description = (data.get('description') or '').strip()
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
-    sortable = str(data.get('sortable', False)).lower() in ('1', 'true', 'yes', 'on')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    sortable = _as_bool(data.get('sortable', False))
+    is_public = _as_bool(data.get('is_public', False))
     import_text = data.get('import_text')
 
     if not description:
@@ -865,16 +1147,6 @@ def import_deck_route():
         notice=message,
         level='success',
     )
-    
-    if detailed:
-        deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
-        cards = deck['cards'] if deck else None
-    else:
-        cards = list_cards_from_deck(deck_id, detailed=False, shuffle=shuffle)
-    if cards is not None:
-        return jsonify({'success': True, 'cards': cards})
-    else:
-        return jsonify({'success': True, 'cards': []})
 
 
 # Return one card with answers.
@@ -913,7 +1185,7 @@ def match_answer_route():
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answer_id)
+    answer = _accessible_answer(answer_id, user_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
 
@@ -939,16 +1211,30 @@ def match_answer_route():
 
 
 def match_attempt_route():
-    from app import record_match_attempt
+    from app import normalize_match_strategy, record_match_attempt
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))
-    is_correct = str(data.get('is_correct', '')).lower() in ('1', 'true', 'yes', 'on')
+    selected_question_id = _int_value(data.get('selected_question_id'))
+    timed_out = str(data.get('timed_out', '')).lower() in ('1', 'true', 'yes', 'on')
+    user = _current_user()
+    user_id = user.user_id if user else None
 
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
+    answer = _accessible_answer(answer_id, user_id)
+    if not answer:
+        return jsonify({'error': 'Answer not found'}), 404
+    if not selected_question_id:
+        return jsonify({'error': 'Selected question ID is required'}), 400
+    is_correct = not timed_out and answer.card_id == selected_question_id
 
-    record_match_attempt(_current_user_id(), answer_id, is_correct=is_correct)
+    if user and data.get('strategy'):
+        user.match_strategy_preference = normalize_match_strategy(
+            data.get('strategy'),
+            include_account_only=True,
+        )
+    record_match_attempt(user_id, answer_id, is_correct=is_correct)
     return jsonify({'success': True})
 
 
@@ -969,7 +1255,7 @@ def delete_answer_route():
     if not answer_id:
         return jsonify({'error': 'Answer ID is required'}), 400
 
-    answer = CardAnswer.query.get(answer_id)
+    answer = _accessible_answer(answer_id, user_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
     user_id = _current_user_id()
@@ -1205,15 +1491,10 @@ def copy_public_deck_route():
 
 # Render the quiz launcher and quiz data.
 def quiz_route():
-    from app import get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
+    from app import create_quiz_attempt, get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
     user_id = _current_user_id()
     decks = get_accessible_decks(user_id)
-    deck_data = [{
-        'deck_id': deck.deck_id,
-        'description': deck.description,
-        'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
-    } for deck in decks]
+    deck_data = [_quiz_launcher_deck_payload(deck, user_id) for deck in decks]
     
     custom_quizzes = get_accessible_custom_quizzes(user_id)
     accessible_custom_quiz_ids = {quiz.quiz_id for quiz in custom_quizzes}
@@ -1245,51 +1526,51 @@ def quiz_route():
         selected_custom_quiz_id = None
     
     quiz_data = None
+    attempt_token = None
     
     if selected_deck_id:
         quiz_data = generate_quiz_data(deck_id=selected_deck_id)
     elif selected_custom_quiz_id:
         quiz_data = generate_quiz_data(custom_quiz_id=selected_custom_quiz_id)
+    if quiz_data:
+        attempt_token, quiz_data = create_quiz_attempt(user_id, quiz_data)
+        active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
+        active_attempt_tokens.append(attempt_token)
+        session['quiz_attempt_tokens'] = active_attempt_tokens[-5:]
         
     return render_template('quiz.html', decks=deck_data, custom_quizzes=custom_quizzes, 
                            selected_deck_id=selected_deck_id, 
                            selected_custom_quiz_id=selected_custom_quiz_id, 
                            selected_source=selected_source,
-                           quiz_data=quiz_data)
+                           quiz_data=quiz_data,
+                           attempt_token=attempt_token)
 
 
 # Score a submitted quiz.
 def score_quiz_route():
-    # Strictly score the submitted options.
-    data = request.json
+    from app import score_quiz_attempt
+    data = request.get_json(silent=True) or {}
     submitted_answers = data.get('answers', {})
-    quiz_questions = data.get('quiz_data', [])
-    
-    score = 0
-    total = len(quiz_questions)
-    results = []
-    
-    for q in quiz_questions:
-        q_id = str(q['id'])
-        user_selected = set(submitted_answers.get(q_id, []))
-        correct_options = set(opt['text'] for opt in q['options'] if opt['is_correct'])
-        
-        # "If multiple answers from a card is chosen all must be recognized as correct"
-        # We assume if the user selected EXACTLY the correct shown options, they get it right.
-        # Or if we just require they select "any" correct option:
-        # For strict check: user_selected == correct_options
-        is_correct = len(user_selected) > 0 and user_selected.issubset(correct_options) and len(user_selected) == len(correct_options)
-        
-        if is_correct:
-            score += 1
-            
-        results.append({
-            'id': q_id,
-            'is_correct': is_correct,
-            'correct_answers': list(correct_options)
-        })
-        
-    return jsonify({'success': True, 'score': score, 'total': total, 'results': results})
+    attempt_token = str(data.get('attempt_token', '')).strip()
+    active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
+    answer_payload_valid = (
+        isinstance(submitted_answers, dict)
+        and all(
+            isinstance(answer_values, list)
+            and all(isinstance(answer, str) for answer in answer_values)
+            for answer_values in submitted_answers.values()
+        )
+    )
+    if not attempt_token or attempt_token not in active_attempt_tokens or not answer_payload_valid:
+        return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
+
+    result = score_quiz_attempt(attempt_token, _current_user_id(), submitted_answers)
+    if not result:
+        return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
+
+    active_attempt_tokens.remove(attempt_token)
+    session['quiz_attempt_tokens'] = active_attempt_tokens
+    return jsonify(result)
 
 # Render the custom quiz editor.
 def edit_quiz_route():
@@ -1318,10 +1599,13 @@ def create_custom_quiz_route():
     title = data.get('title')
     description = data.get('description')
     tags = data.get('tags')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = _as_bool(data.get('is_public', False))
     if not title:
         return jsonify({'error': 'Title is required'}), 400
-    quiz = create_custom_quiz(_current_user_id(), title, is_public, description, tags)
+    try:
+        quiz = create_custom_quiz(_current_user_id(), title, is_public, description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     return redirect(url_for('edit_quiz_route', quiz_id=quiz.quiz_id))
 
 # Update custom quiz metadata.
@@ -1334,10 +1618,13 @@ def edit_custom_quiz_metadata_route():
     title = data.get('title')
     description = data.get('description')
     tags = data.get('tags')
-    is_public = str(data.get('is_public', False)).lower() in ('1', 'true', 'yes', 'on')
+    is_public = _as_bool(data.get('is_public', False))
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
-    edit_custom_quiz(quiz_id, title, is_public, description, tags)
+    try:
+        edit_custom_quiz(quiz_id, title, is_public, description, tags)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     return redirect(url_for('edit_quiz_route', quiz_id=quiz_id))
 
 # Delete a custom quiz.
@@ -1364,30 +1651,15 @@ def add_quiz_question_route():
     question_text = data.get('question')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data = []
-    correct_count = 0
-    for i in range(1, 6):
-        text = data.get(f'option_{i}', '').strip()
-        if text:
-            if q_type == 'dynamic':
-                is_correct = True
-                correct_count += 1
-            else:
-                is_correct = (data.get(f'is_correct_{i}') is not None)
-                if is_correct:
-                    correct_count += 1
-            options_data.append({'text': text, 'is_correct': is_correct})
-            
-    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
-        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
-        
-    if q_type == 'static':
-        if not (1 <= correct_count <= 2):
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
-        if len(options_data) < 2:
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+    options_data, correct_count = _parse_quiz_question_options(data, q_type)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    if validation_error:
+        return validation_error
 
-    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    try:
+        add_quiz_question(quiz_id, question_text, q_type, options_data)
+    except ValueError as exc:
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question added successfully', level='success')
 
 # Delete a quiz question.
@@ -1411,7 +1683,7 @@ def delete_quiz_question_route():
 def edit_quiz_question_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_quiz_question, add_quiz_question
+    from app import edit_quiz_question
     from models import QuizQuestion
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
@@ -1424,38 +1696,25 @@ def edit_quiz_question_route():
     question_text = data.get('question')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data = []
-    correct_count = 0
-    for i in range(1, 6):
-        text = data.get(f'option_{i}', '').strip()
-        if text:
-            if q_type == 'dynamic':
-                is_correct = True
-                correct_count += 1
-            else:
-                is_correct = (data.get(f'is_correct_{i}') is not None)
-                if is_correct:
-                    correct_count += 1
-            options_data.append({'text': text, 'is_correct': is_correct})
-            
-    if q_type == 'dynamic' and not (1 <= correct_count <= 2):
-        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Dynamic questions must have 1-2 correct answers.', level='error')
-        
-    if q_type == 'static':
-        if not (1 <= correct_count <= 2):
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have 1-2 correct answers.', level='error')
-        if len(options_data) < 2:
-            return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Static questions must have at least 2 options.', level='error')
+    options_data, correct_count = _parse_quiz_question_options(data, q_type)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    if validation_error:
+        return validation_error
 
-    delete_quiz_question(question_id)
-    add_quiz_question(quiz_id, question_text, q_type, options_data)
+    try:
+        edit_quiz_question(question_id, question_text, q_type, options_data)
+    except ValueError as exc:
+        return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question updated', level='success')
 
 # Route registration.
 # Register every route on the Flask app.
 def register_routes(app):
+    app.before_request(_prepare_security_request)
+    app.before_request(_apply_rate_limits)
     app.before_request(_validate_csrf)
+    app.after_request(_set_security_headers)
 
     @app.context_processor
     def inject_security_context():
@@ -1464,14 +1723,20 @@ def register_routes(app):
             'current_user': user,
             'active_theme': (user.theme_preference if user else None),
             'csrf_token': _csrf_token,
+            'csp_nonce': g.csp_nonce,
         }
 
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
+    app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
+    app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=register, methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
+    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=forgot_password, methods=['GET', 'POST'])
+    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=reset_password, methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=account, methods=['GET', 'POST'])
+    app.add_url_rule('/account/delete', endpoint='delete_account', view_func=delete_account, methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=update_theme_route, methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)

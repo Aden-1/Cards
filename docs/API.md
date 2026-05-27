@@ -8,7 +8,7 @@
 - `POST` routes accept either form data or JSON.
 - Field names use `snake_case` in the current codebase.
 - Session-based authentication is now used for account-aware routes.
-- Most browser form posts require CSRF protection via `csrf_token` form data or an `X-CSRFToken` header.
+- All state-changing requests require CSRF protection via `csrf_token` form data or an `X-CSRFToken` header.
 - Success redirects may include `notice` and `level` query parameters for the global toast handler.
 - Some routes are HTML-first and redirect on success even when they are not classic JSON APIs.
 
@@ -35,8 +35,9 @@ Fields:
 
 Notes:
 - Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores.
-- Passwords must be at least 8 characters.
-- The first registered account becomes `admin`.
+- Email is optional during alpha, but accounts with an email can use password recovery later.
+- New passwords must be at least 12 characters and contain a letter and a number.
+- Public registration always creates a `standard` account. Administrators are provisioned through the controlled CLI workflow.
 
 Response:
 - `GET`: rendered HTML registration page.
@@ -53,6 +54,28 @@ Fields:
 Response:
 - `GET`: rendered HTML login page.
 - `POST`: redirect to the safe `next` URL or `/` on success, or rendered HTML with an error message on failure.
+
+### Forgot Password
+**GET, POST** `/forgot-password`
+
+Fields:
+- `email`
+
+Response:
+- `GET`: rendered HTML reset-request page.
+- `POST`: rendered HTML page with a generic success message, or an error if email delivery is unavailable.
+
+### Reset Password
+**GET, POST** `/reset-password`
+
+Fields:
+- `token`
+- `password`
+- `confirm_password`
+
+Response:
+- `GET`: rendered HTML page for a signed reset token.
+- `POST`: redirect to `/login` on success, or rendered HTML with validation errors on failure.
 
 ### Logout
 **POST** `/logout`
@@ -73,6 +96,16 @@ Fields:
 Response:
 - `GET`: rendered HTML account page.
 - `POST`: rendered HTML account page with `success` or `error` state.
+
+### Delete Account
+**POST** `/account/delete`
+
+Fields:
+- `current_password`
+- `confirmation` must equal `DELETE`
+
+Response:
+- Redirect to `/` after deleting the signed-in user's account and owned content.
 
 ### Update Theme
 **POST** `/theme`
@@ -428,10 +461,12 @@ Response:
 
 Fields:
 - `answer_id`
-- `is_correct`
+- `selected_question_id`
+- `timed_out` optional, used when a timed-recovery round expires
 
 Notes:
 - Persists per-answer match performance when a user is signed in.
+- The server computes correctness from the selected question and answer pair; it does not accept a client-claimed success.
 
 Response:
 ```json
@@ -613,7 +648,7 @@ Response:
 
 Fields:
 - `answers`
-- `quiz_data`
+- `attempt_token`, generated when the quiz page is rendered
 
 Response:
 ```json
@@ -627,6 +662,8 @@ Response:
 
 Notes:
 - This route expects JSON in the current UI flow.
+- Correct answers remain server-side in a one-time `QuizAttempt`; browser-supplied scoring metadata is ignored.
+- An attempt can be scored once and expires from use after scoring.
 - A question is marked correct only when the submitted option set exactly matches the correct option set.
 
 ---

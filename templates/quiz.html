@@ -82,7 +82,7 @@
         <div id="quizScore"></div>
         <div class="quiz-actions mt-2">
             <button id="submitQuiz" class="btn-primary-surface" type="button">Submit Quiz</button>
-            <a id="retakeQuiz" href="javascript:window.location.reload()" class="btn-surface" style="display:none;">Retake Quiz</a>
+            <button id="retakeQuiz" type="button" class="btn-surface" style="display:none;">Retake Quiz</button>
         </div>
     </div>
 </section>
@@ -91,8 +91,8 @@
 
 {% block scripts %}
 {% if quiz_data %}
-<script>
-const quizData = {{ quiz_data|tojson }};
+<script nonce="{{ csp_nonce }}">
+const quizAttemptToken = {{ attempt_token|tojson }};
 document.getElementById('submitQuiz')?.addEventListener('click', () => {
     const answers = {};
     document.querySelectorAll('.quiz-question').forEach((el) => {
@@ -104,31 +104,45 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
     fetch('{{ url_for("score_quiz") }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
-        body: JSON.stringify({ answers: answers, quiz_data: quizData })
+        body: JSON.stringify({ answers: answers, attempt_token: quizAttemptToken })
     })
     .then((r) => r.json())
     .then((data) => {
         if (!data.success) { return; }
-        document.getElementById('quizScore').innerHTML = `<div class="quiz-score-banner">Your Score: ${data.score} / ${data.total}</div>`;
+        const quizScore = document.getElementById('quizScore');
+        const scoreBanner = document.createElement('div');
+        scoreBanner.className = 'quiz-score-banner';
+        scoreBanner.textContent = `Your Score: ${data.score} / ${data.total}`;
+        quizScore.replaceChildren(scoreBanner);
         data.results.forEach((res) => {
             const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
             if (!qEl) { return; }
             const feedback = qEl.querySelector('.feedback');
             feedback.style.display = 'block';
+            feedback.replaceChildren();
+            const status = document.createElement('span');
             if (res.is_correct) {
                 qEl.classList.add('correct');
                 feedback.className = 'feedback mt-3';
-                feedback.innerHTML = '<span class="status-chip public">Correct</span>';
+                status.className = 'status-chip public';
+                status.textContent = 'Correct';
+                feedback.appendChild(status);
             } else {
                 qEl.classList.add('incorrect');
                 feedback.className = 'feedback mt-3';
-                feedback.innerHTML = `<span class="status-chip danger">Incorrect</span> <span class="small-muted">Correct answers: ${res.correct_answers.join(', ')}</span>`;
+                status.className = 'status-chip danger';
+                status.textContent = 'Incorrect';
+                const correctAnswerText = document.createElement('span');
+                correctAnswerText.className = 'small-muted';
+                correctAnswerText.textContent = `Correct answers: ${res.correct_answers.join(', ')}`;
+                feedback.append(status, document.createTextNode(' '), correctAnswerText);
             }
         });
         document.getElementById('submitQuiz').style.display = 'none';
         document.getElementById('retakeQuiz').style.display = 'inline-flex';
     });
 });
+document.getElementById('retakeQuiz')?.addEventListener('click', () => window.location.reload());
 </script>
 {% endif %}
 {% endblock %}

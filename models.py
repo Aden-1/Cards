@@ -6,7 +6,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 db = SQLAlchemy()
 
 
-# User owns decks and quizzes.
+# Account and ownership models.
 class User(db.Model):
     user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     username = db.Column(db.String(100), nullable=False, unique=True)
@@ -22,6 +22,7 @@ class User(db.Model):
     decks_owned = db.relationship('Deck', backref='owner', lazy=True, cascade='all, delete-orphan')
     quizzes_owned = db.relationship('Quiz', backref='owner', lazy=True, cascade='all, delete-orphan')
     mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan')
+    match_progress = db.relationship('MatchPairProgress', backref='user', lazy=True, cascade='all, delete-orphan')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -34,36 +35,40 @@ class User(db.Model):
         return self.role == 'admin'
 
 
-# Flashcard deck metadata.
+# Flashcard models.
 class Deck(db.Model):
     deck_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
     description = db.Column(db.String(255), nullable=True)
     detailed_description = db.Column(db.Text, nullable=True)
     tags = db.Column(db.String(255), nullable=True)
     sortable = db.Column(db.Boolean, default=False)
-    is_public = db.Column(db.Boolean, default=False)
+    is_public = db.Column(db.Boolean, default=False, index=True)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
 
 
 # Card question plus one or more answers.
 class Card(db.Model):
     card_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id'), nullable=False)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id'), nullable=False, index=True)
     question = db.Column(db.Text, nullable=False)
     position = db.Column(db.Integer, nullable=False)
     answers = db.relationship('CardAnswer', backref='card', lazy=True, cascade='all, delete-orphan')
     mastery_progress = db.relationship('CardMasteryProgress', backref='card', lazy=True, cascade='all, delete-orphan')
 
+    __table_args__ = (
+        db.Index('ix_card_deck_id_position', 'deck_id', 'position'),
+    )
 
-# Single accepted answer for a card.
+
 class CardAnswer(db.Model):
     answer_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False)
+    card_id = db.Column(db.Integer, db.ForeignKey('card.card_id'), nullable=False, index=True)
     answer = db.Column(db.Text, nullable=False)
+    match_progress = db.relationship('MatchPairProgress', backref='answer', lazy=True, cascade='all, delete-orphan')
 
 
-# Per-user learning state for one card.
+# Progress-tracking models.
 class CardMasteryProgress(db.Model):
     progress_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
@@ -96,19 +101,19 @@ class MatchPairProgress(db.Model):
         db.UniqueConstraint('user_id', 'answer_id', name='uq_match_pair_user_answer'),
     )
 
-# Custom quiz tables.
+# Quiz authoring models.
 class Quiz(db.Model):
     quiz_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False, index=True)
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
     tags = db.Column(db.String(255), nullable=True)
-    is_public = db.Column(db.Boolean, default=False)
+    is_public = db.Column(db.Boolean, default=False, index=True)
     questions = db.relationship('QuizQuestion', backref='quiz', lazy=True, cascade='all, delete-orphan')
 
 class QuizQuestion(db.Model):
     question_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id'), nullable=False)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id'), nullable=False, index=True)
     question = db.Column(db.Text, nullable=False)
     # Static uses fixed options; dynamic pulls distractors from other quiz questions.
     type = db.Column(db.String(50), nullable=False, default='dynamic')
@@ -116,6 +121,15 @@ class QuizQuestion(db.Model):
 
 class QuizOption(db.Model):
     option_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    question_id = db.Column(db.Integer, db.ForeignKey('quiz_question.question_id'), nullable=False)
+    question_id = db.Column(db.Integer, db.ForeignKey('quiz_question.question_id'), nullable=False, index=True)
     text = db.Column(db.Text, nullable=False)
     is_correct = db.Column(db.Boolean, default=False)
+
+
+# Runtime quiz-session storage.
+class QuizAttempt(db.Model):
+    attempt_token = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)
+    correct_answers_json = db.Column(db.Text, nullable=False)
+    question_count = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)

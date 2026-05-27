@@ -26,7 +26,7 @@ def upgrade():
         batch_op.add_column(sa.Column('email', sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column('password_hash', sa.String(length=255), nullable=False, server_default=placeholder_hash))
         batch_op.add_column(sa.Column('role', sa.String(length=20), nullable=False, server_default='standard'))
-        batch_op.add_column(sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.text('1')))
+        batch_op.add_column(sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.true()))
         batch_op.add_column(sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')))
         batch_op.add_column(sa.Column('updated_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')))
         batch_op.create_index('ix_user_email_unique', ['email'], unique=True)

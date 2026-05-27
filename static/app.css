@@ -842,22 +842,68 @@ summary::-webkit-details-marker {
   flex-wrap: wrap;
 }
 
+.match-timer-shell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.match-timer-circle {
+  position: relative;
+  width: 2.75rem;
+  height: 2.75rem;
+  display: grid;
+  place-items: center;
+}
+
+.match-timer-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.match-timer-ring-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--line) 88%, transparent);
+  stroke-width: 4;
+}
+
+.match-timer-ring-progress {
+  fill: none;
+  stroke: var(--warning);
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 100ms linear;
+}
+
+.match-timer-value {
+  position: relative;
+  z-index: 1;
+  font-size: 0.88rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
 .match-stack {
   display: grid;
   gap: 0.65rem;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  align-items: stretch;
 }
 
 .match-tile {
   position: relative;
-  aspect-ratio: 1 / 1;
-  min-height: 0;
+  min-height: 140px;
   padding: 0.62rem;
   border-radius: 16px;
   cursor: pointer;
   transition: transform var(--transition-fast), opacity var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
   display: flex;
   align-items: stretch;
+  height: 100%;
 }
 
 .match-tile:hover {
@@ -895,7 +941,7 @@ summary::-webkit-details-marker {
   flex-direction: column;
   gap: 0.42rem;
   width: 100%;
-  height: 100%;
+  min-height: 100%;
 }
 
 .tile-label {
@@ -921,11 +967,14 @@ summary::-webkit-details-marker {
 }
 
 .tile-text {
-  font-size: 0.82rem;
-  line-height: 1.2;
+  font-size: var(--match-tile-font-size, 0.95rem);
+  line-height: 1.35;
   padding-right: 1.55rem;
-  overflow: auto;
+  overflow: visible;
   flex: 1 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .answer-count-badge,
@@ -1269,7 +1318,6 @@ summary::-webkit-details-marker {
   }
 
   .match-tile {
-    aspect-ratio: auto;
     min-height: 120px;
   }
 

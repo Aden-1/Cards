@@ -12,21 +12,28 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Study cards one at a time with answer reveal and keyboard shortcuts
 - Play a matching game with clickable question and answer tiles
 - Use multiple matching strategies, including progress-aware modes for signed-in users
-- Reorder sortable decks against the saved card order
+- Reorder sorted decks against the saved card order
 - Mark decks and quizzes public or private
 - Search public decks and custom quizzes
 - Build custom quizzes with static or dynamic questions
 - Master a deck with per-card confidence ratings and persistent progress
-- Register accounts, log in, manage account settings, and save theme/study preferences
+- Register accounts, optionally add recovery emails, manage account settings, and save theme/study preferences
 - Browse featured public decks and popular tags from the home page
 - Copy public decks and public quizzes into your own account
 - Admin users can review accounts and manage roles
 
 ## Quick Start
 
+This project targets Python `3.13`.
+
 ```bash
+# Create and activate a virtual environment
+py -3.13 -m venv .venv
+.\.venv\Scripts\activate
+
 # Install dependencies
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
 
 # Initialize database
 python -m flask db upgrade
@@ -36,6 +43,14 @@ python -m flask run
 ```
 
 Visit `http://localhost:5000`
+
+## Local Validation
+
+```bash
+python -m ruff check .
+python -m unittest
+python -m flask db upgrade
+```
 
 ## Usage
 
@@ -48,7 +63,7 @@ Visit `http://localhost:5000`
 ## Tech Stack
 
 - Backend: Flask (Python)
-- Database: SQLite with SQLAlchemy ORM
+- Database: SQLite or PostgreSQL with SQLAlchemy ORM
 - Frontend: HTML, Jinja2 Templates, Bootstrap, JavaScript
 
 ## Data Model Notes
@@ -79,37 +94,36 @@ Visit `http://localhost:5000`
 ## Local Development Notes
 
 - SQLite data lives in `instance/cards.db`
+- Set `DATABASE_URL=postgresql://user:password@host/database` for PostgreSQL; the app uses the bundled Psycopg 3 driver.
 - Run `python -m flask db upgrade` after pulling schema changes
+- Run `python -m flask rebuild-public-search-index` when you need to rebuild public search content explicitly
+- Health endpoints are available at `/healthz` and `/readyz`
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
-- Set `SECRET_KEY` in production
-- Set `SESSION_COOKIE_SECURE=1` behind HTTPS so secure cookies are enforced
-- Most `POST` requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
-- The first registered account is created with the `admin` role automatically
+- Set `TRUSTED_HOSTS` to the comma-separated public hostnames accepted in production
+- Public registration is controlled by `PUBLIC_REGISTRATION_ENABLED` and defaults to disabled in production
+- Accounts can optionally store a recovery email, and password resets use signed email links when an email is present
+- Quiz scoring uses one-time server-side attempt records; the browser never supplies answer correctness
+- Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
+- All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
+- Responses include a nonce-based Content Security Policy and standard browser security headers
+- Login, registration, account updates, and administrative changes are rate limited per web process
+- New passwords must be at least 12 characters and contain a letter and a number
+- Public registration always creates standard accounts; provision the initial administrator with `flask provision-admin --username <name> --email <email>`
+- Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
 - Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
 
-## Master Mode Notes
+## Production Deployment Notes
 
-- Master mode is a separate page from standard study mode (`/master`).
-- It requires a logged-in account so progress can be saved per user.
-- Each card is rated as:
-  - `I Know This` (marks card as mastered)
-  - `Still Learning` (keeps card in rotation)
-  - `I Missed This` (keeps card in rotation)
-- The app persists progress in `card_mastery_progress` (new migration required).
-- After one pass through all currently unmastered cards, the app starts a new pass automatically using only cards that are still unmastered.
-- When all cards are mastered, the deck is marked complete until the user chooses `Reset Progress`.
-- Strategy options currently include `spaced`, `weakest_first`, `mastery_mix`, and `random`, plus `linear` for sortable decks.
-
-## Matching Mode Notes
-
-- Matching mode supports multiple strategy presets.
-- Signed-in users get persistent match weighting through saved per-answer progress.
-- Available strategies currently include `standard_shuffle`, `retry_misses`, `progressive_build`, `reverse_pressure`, `timed_recovery`, `weakest_first`, and `mastery_mix`.
+- Set `APP_ENV=production` and `SECRET_KEY` in production
+- Production sessions automatically use secure cookies over HTTPS
+- Keep `WEB_CONCURRENCY=1` while rate limiting is still process-local; only raise it after moving limits to a shared store or edge control
+- Configure `MAIL_SERVER`, `MAIL_PORT`, `MAIL_DEFAULT_SENDER`, and related mail settings before enabling password recovery for users
 
 ## Related Docs
 
 - API reference: `docs/API.md`
 - Database reference: `docs/DATABASE.md`
+- Deployment notes: `docs/DEPLOYMENT.md`
 
 ### Website coming soon™!

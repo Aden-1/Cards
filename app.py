@@ -4,34 +4,248 @@ import unicodedata
 import os
 import csv
 import io
+import json
+import logging
+import secrets
+import smtplib
+import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
+import click
 from flask import Flask
 from flask_migrate import Migrate
+from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import text
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, CardMasteryProgress, MatchPairProgress
+from sqlalchemy.exc import IntegrityError
+from werkzeug.middleware.proxy_fix import ProxyFix
+from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, QuizAttempt, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
-# Session and cookie security. Set SECRET_KEY in production.
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-only-change-me')
+# Application environment and runtime configuration.
+environment_name = os.environ.get('APP_ENV', os.environ.get('FLASK_ENV', 'development')).lower()
+is_production = environment_name == 'production'
+
+
+def _env_bool(name, default=False):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _env_int(name, default):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f'{name} must be an integer.') from exc
+
+
+def _env_str(name, default=None):
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip()
+    return value or default
+
+
+def _env_list(name):
+    raw_value = os.environ.get(name)
+    if not raw_value:
+        return None
+    values = [value.strip() for value in raw_value.split(',') if value.strip()]
+    return values or None
+
+
+def _normalize_database_url(url, require_ssl=False):
+    if url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql+psycopg://', 1)
+    elif url.startswith('postgresql://'):
+        url = url.replace('postgresql://', 'postgresql+psycopg://', 1)
+
+    if require_ssl and url.startswith('postgresql+psycopg://') and 'sslmode=' not in url:
+        separator = '&' if '?' in url else '?'
+        url = f'{url}{separator}sslmode=require'
+    return url
+
+
+def _build_engine_options(database_url):
+    if database_url.startswith('sqlite'):
+        return {}
+
+    return {
+        'pool_pre_ping': True,
+        'pool_recycle': _env_int('DB_POOL_RECYCLE', 300),
+        'pool_size': _env_int('DB_POOL_SIZE', 5),
+        'max_overflow': _env_int('DB_MAX_OVERFLOW', 2),
+        'pool_timeout': _env_int('DB_POOL_TIMEOUT', 10),
+    }
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record):
+        payload = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+        }
+        if record.exc_info:
+            payload['exception'] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=True)
+
+
+def _configure_logging():
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonLogFormatter())
+
+    root_logger = logging.getLogger()
+    root_logger.handlers = [handler]
+    root_logger.setLevel(logging.INFO if is_production else logging.WARNING)
+    app.logger.handlers = []
+    app.logger.propagate = True
+
+
+_configure_logging()
+
+# Session and cookie security.
+# Deployed applications must never use a known key.
+secret_key = os.environ.get('SECRET_KEY')
+if is_production and not secret_key:
+    raise RuntimeError('SECRET_KEY must be set in production.')
+app.config['SECRET_KEY'] = secret_key or 'dev-only-change-me'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes')
+app.config['SESSION_COOKIE_SECURE'] = is_production or _env_bool('SESSION_COOKIE_SECURE', default=False)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=_env_int('SESSION_LIFETIME_DAYS', 7))
+app.config['IS_PRODUCTION'] = is_production
+app.config['PREFERRED_URL_SCHEME'] = 'https' if is_production else 'http'
+app.config['MAX_CONTENT_LENGTH'] = _env_int('MAX_CONTENT_LENGTH', 2 * 1024 * 1024)
+app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] = _env_int('PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS', 3600)
+app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
+    'PUBLIC_REGISTRATION_ENABLED',
+    default=not is_production,
+)
+app.config['MAIL_SERVER'] = _env_str('MAIL_SERVER')
+app.config['MAIL_PORT'] = _env_int('MAIL_PORT', 587)
+app.config['MAIL_USERNAME'] = _env_str('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = _env_str('MAIL_PASSWORD')
+app.config['MAIL_USE_TLS'] = _env_bool('MAIL_USE_TLS', default=True)
+app.config['MAIL_USE_SSL'] = _env_bool('MAIL_USE_SSL', default=False)
+app.config['MAIL_DEFAULT_SENDER'] = _env_str('MAIL_DEFAULT_SENDER')
+app.config['PASSWORD_RESET_URL_BASE'] = _env_str('PASSWORD_RESET_URL_BASE')
+app.config['PASSWORD_RESET_EMAILS_ENABLED'] = bool(
+    app.config['MAIL_SERVER'] and app.config['MAIL_DEFAULT_SENDER']
+)
+trusted_hosts = _env_list('TRUSTED_HOSTS')
+if is_production and not trusted_hosts:
+    raise RuntimeError('TRUSTED_HOSTS must be set in production.')
+app.config['TRUSTED_HOSTS'] = trusted_hosts
+if is_production:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-# Local SQLite config.
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cards.db'
+# Database configuration.
+# Use DATABASE_URL in deployed environments with local SQLite fallback.
+database_url = os.environ.get('DATABASE_URL')
+if is_production and not database_url:
+    raise RuntimeError('DATABASE_URL must be set in production.')
+database_url = database_url or 'sqlite:///cards.db'
+database_url = _normalize_database_url(database_url, require_ssl=is_production)
+if is_production and not database_url.startswith('postgresql+psycopg://'):
+    raise RuntimeError('DATABASE_URL must use PostgreSQL in production.')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _build_engine_options(database_url)
+app.config['DATABASE_SSL_REQUIRED'] = is_production and database_url.startswith('postgresql+psycopg://')
 
 db.init_app(app)
 migrate = Migrate(app, db)
 
+MAX_DECK_DESCRIPTION_LENGTH = 255
+MAX_DECK_DETAILED_DESCRIPTION_LENGTH = 5000
+MAX_DECK_TAGS_LENGTH = 255
+MAX_QUIZ_TITLE_LENGTH = 255
+MAX_QUIZ_DESCRIPTION_LENGTH = 5000
+MAX_QUIZ_TAGS_LENGTH = 255
+MAX_CARD_QUESTION_LENGTH = 5000
+MAX_CARD_ANSWER_LENGTH = 2000
+MAX_IMPORT_CARD_COUNT = 500
+MAX_IMPORT_ANSWERS_PER_CARD = 10
+MAX_QUIZ_OPTIONS_PER_QUESTION = 5
 
+
+# Text validation helpers.
+def _clean_text(value):
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _validate_text_length(label, value, max_length, required=False):
+    value = _clean_text(value)
+    if required and not value:
+        raise ValueError(f'{label} is required.')
+    if value and len(value) > max_length:
+        raise ValueError(f'{label} must be {max_length} characters or fewer.')
+    return value
+
+
+def _validate_deck_metadata(description, detailed_description=None, tags=None):
+    return (
+        _validate_text_length('Deck name', description, MAX_DECK_DESCRIPTION_LENGTH, required=True),
+        _validate_text_length('Detailed description', detailed_description, MAX_DECK_DETAILED_DESCRIPTION_LENGTH),
+        _validate_text_length('Tags', tags, MAX_DECK_TAGS_LENGTH),
+    )
+
+
+def _validate_quiz_metadata(title, description=None, tags=None):
+    return (
+        _validate_text_length('Quiz title', title, MAX_QUIZ_TITLE_LENGTH, required=True),
+        _validate_text_length('Quiz description', description, MAX_QUIZ_DESCRIPTION_LENGTH),
+        _validate_text_length('Quiz tags', tags, MAX_QUIZ_TAGS_LENGTH),
+    )
+
+
+def _validate_card_payload(question, answers):
+    question = _validate_text_length('Question', question, MAX_CARD_QUESTION_LENGTH, required=True)
+    normalized_answers = _normalize_answers(answers)
+    if not normalized_answers:
+        raise ValueError('At least one answer is required.')
+    if len(normalized_answers) > MAX_IMPORT_ANSWERS_PER_CARD:
+        raise ValueError(f'Cards may have at most {MAX_IMPORT_ANSWERS_PER_CARD} answers.')
+
+    cleaned_answers = []
+    for answer_text in normalized_answers:
+        cleaned_answers.append(
+            _validate_text_length('Answer', answer_text, MAX_CARD_ANSWER_LENGTH, required=True)
+        )
+    return question, cleaned_answers
+
+
+def _log_search_index_failure(action, exc, item_type=None, item_id=None):
+    app.logger.exception(
+        'public_search_index_failure action=%s item_type=%s item_id=%s',
+        action,
+        item_type,
+        item_id,
+    )
+
+
+# Lightweight startup migrations for older local SQLite databases.
 def _ensure_user_theme_preference_column():
     """Add User.theme_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'theme_preference' in columns:
         return
@@ -43,7 +257,11 @@ def _ensure_user_theme_preference_column():
 
 def _ensure_user_mastery_strategy_preference_column():
     """Add User.mastery_strategy_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'mastery_strategy_preference' in columns:
         return
@@ -55,7 +273,11 @@ def _ensure_user_mastery_strategy_preference_column():
 
 def _ensure_user_match_strategy_preference_column():
     """Add User.match_strategy_preference for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
     inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     columns = {column['name'] for column in inspector.get_columns('user')}
     if 'match_strategy_preference' in columns:
         return
@@ -67,10 +289,15 @@ def _ensure_user_match_strategy_preference_column():
 
 def _ensure_match_pair_progress_table():
     """Create MatchPairProgress table for existing databases if missing."""
+    if not _is_sqlite_backend():
+        return
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        return
     MatchPairProgress.__table__.create(bind=db.engine, checkfirst=True)
 
 
-# Normalize answer input into a clean list.
+# Serialization and import helpers.
 def _normalize_answers(answers):
     if answers is None:
         return []
@@ -79,7 +306,6 @@ def _normalize_answers(answers):
     return [answer.strip() for answer in answers if str(answer).strip()]
 
 
-# Serialize one card for JSON responses.
 def _serialize_card(card, detailed=False):
     answer_objects = [{'answer_id': answer.answer_id, 'answer': answer.answer} for answer in card.answers]
     payload = {
@@ -93,7 +319,6 @@ def _serialize_card(card, detailed=False):
     return payload
 
 
-# Serialize a deck and its cards.
 def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_answers=False):
     cards = list(deck.cards)
     cards.sort(key=lambda card: card.position)
@@ -165,15 +390,21 @@ def parse_imported_deck_text(raw_text):
     card_map = {}
     card_order = []
     for question, answer in parsed_rows:
-        if question not in card_map:
-            card_map[question] = []
-            card_order.append(question)
-        if answer not in card_map[question]:
-            card_map[question].append(answer)
+        cleaned_question = _validate_text_length('Question', question, MAX_CARD_QUESTION_LENGTH, required=True)
+        cleaned_answer = _validate_text_length('Answer', answer, MAX_CARD_ANSWER_LENGTH, required=True)
+        if cleaned_question not in card_map:
+            card_map[cleaned_question] = []
+            card_order.append(cleaned_question)
+        if cleaned_answer not in card_map[cleaned_question]:
+            if len(card_map[cleaned_question]) >= MAX_IMPORT_ANSWERS_PER_CARD:
+                raise ValueError(f'Cards may have at most {MAX_IMPORT_ANSWERS_PER_CARD} answers.')
+            card_map[cleaned_question].append(cleaned_answer)
 
     cards = [{'question': question, 'answers': card_map[question]} for question in card_order if card_map[question]]
     if not cards:
         raise ValueError('No valid cards found after parsing.')
+    if len(cards) > MAX_IMPORT_CARD_COUNT:
+        raise ValueError(f'Imported decks may contain at most {MAX_IMPORT_CARD_COUNT} cards.')
 
     return {
         'cards': cards,
@@ -194,19 +425,16 @@ def export_deck_as_text(deck):
 
 
 # Custom quiz helpers.
-
-# Return public and owned custom quizzes.
 def get_accessible_custom_quizzes(user_id=None):
     if user_id is None:
         return Quiz.query.filter(Quiz.is_public == True).all()
     return Quiz.query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
 
-# Return quizzes owned by one user.
 def get_user_custom_quizzes(user_id):
     return Quiz.query.filter_by(owned_by=user_id).all()
 
-# Create and index a custom quiz.
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
+    title, description, tags = _validate_quiz_metadata(title, description, tags)
     quiz = Quiz(
         owned_by=user_id,
         title=title,
@@ -219,10 +447,10 @@ def create_custom_quiz(user_id, title, is_public=False, description=None, tags=N
     _sync_content_fts_index_for_quiz(quiz)
     return quiz
 
-# Update a custom quiz and refresh search.
 def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=None):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
+        title, description, tags = _validate_quiz_metadata(title, description, tags)
         quiz.title = title
         quiz.is_public = is_public
         quiz.description = description
@@ -232,7 +460,6 @@ def edit_custom_quiz(quiz_id, title, is_public=False, description=None, tags=Non
         return quiz
     return None
 
-# Delete a custom quiz and its index row.
 def delete_custom_quiz(quiz_id):
     quiz = Quiz.query.get(quiz_id)
     if quiz:
@@ -243,7 +470,6 @@ def delete_custom_quiz(quiz_id):
     return False
 
 
-# Duplicate a public quiz into one user's account.
 def copy_public_quiz_to_user(source_quiz_id, user_id):
     source_quiz = Quiz.query.get(source_quiz_id)
     if not source_quiz or not source_quiz.is_public:
@@ -280,7 +506,6 @@ def copy_public_quiz_to_user(source_quiz_id, user_id):
     return copied_quiz
 
 
-# Duplicate a public deck into one user's account.
 def copy_public_deck_to_user(source_deck_id, user_id):
     source_deck = Deck.query.get(source_deck_id)
     if not source_deck or not source_deck.is_public:
@@ -318,18 +543,53 @@ def copy_public_deck_to_user(source_deck_id, user_id):
     _sync_content_fts_index_for_deck(copied_deck)
     return copied_deck
 
-# Insert a quiz question and its options.
 def add_quiz_question(quiz_id, question_text, q_type, options_data):
+    if q_type not in ('dynamic', 'static'):
+        raise ValueError('Quiz question type must be dynamic or static.')
+    if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
+        raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
+
+    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
+    cleaned_options = []
+    for opt in options_data:
+        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
+        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+
     q = QuizQuestion(quiz_id=quiz_id, question=question_text, type=q_type)
     db.session.add(q)
     db.session.flush()
     
-    for opt in options_data:
-        if opt['text'].strip():
-            qo = QuizOption(question_id=q.question_id, text=opt['text'].strip(), is_correct=opt.get('is_correct', False))
-            db.session.add(qo)
+    for opt in cleaned_options:
+        qo = QuizOption(question_id=q.question_id, text=opt['text'], is_correct=opt['is_correct'])
+        db.session.add(qo)
     db.session.commit()
     return q
+
+
+def edit_quiz_question(question_id, question_text, q_type, options_data):
+    q = QuizQuestion.query.get(question_id)
+    if not q:
+        return None
+    if q_type not in ('dynamic', 'static'):
+        raise ValueError('Quiz question type must be dynamic or static.')
+    if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
+        raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
+
+    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
+    cleaned_options = []
+    for opt in options_data:
+        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
+        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+
+    q.question = question_text
+    q.type = q_type
+    for existing_option in list(q.options):
+        db.session.delete(existing_option)
+    for opt in cleaned_options:
+        db.session.add(QuizOption(question_id=q.question_id, text=opt['text'], is_correct=opt['is_correct']))
+    db.session.commit()
+    return q
+
 
 # Delete a quiz question and child options.
 def delete_quiz_question(question_id):
@@ -342,7 +602,6 @@ def delete_quiz_question(question_id):
 
 
 # User helpers.
-# Create a user record.
 def create_user(username, password, email=None, role='standard'):
     user = User(username=username, email=email or None, role=role)
     user.set_password(password)
@@ -350,7 +609,67 @@ def create_user(username, password, email=None, role='standard'):
     db.session.commit()
     return user
 
-# Look up a user by username.
+
+def set_user_role(user, role):
+    if role not in ('standard', 'moderator', 'admin'):
+        raise ValueError('Role must be standard, moderator, or admin.')
+    user.role = role
+    db.session.commit()
+    return user
+
+
+@app.cli.command('provision-admin')
+@click.option('--username', required=True, help='Username for the new administrator.')
+@click.option('--email', default=None, help='Optional email address for the administrator.')
+@click.password_option(confirmation_prompt=True)
+def provision_admin(username, email, password):
+    """Create the initial administrator outside the public registration flow."""
+    username = username.strip()
+    email = email.strip().lower() if email else None
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{3,40}', username):
+        raise click.ClickException('Username must be 3-40 letters, numbers, dots, dashes, or underscores.')
+    if len(password) < 12 or not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+        raise click.ClickException('Password must be at least 12 characters and contain a letter and a number.')
+    if get_user(username) or (email and get_user_by_email(email)):
+        raise click.ClickException('An account already exists with that username or email.')
+
+    try:
+        user = create_user(username=username, password=password, email=email, role='admin')
+    except IntegrityError as exc:
+        db.session.rollback()
+        raise click.ClickException('An account already exists with that username or email.') from exc
+    app.logger.info('administrator_provisioned username=%s user_id=%s', user.username, user.user_id)
+    click.echo(f'Created administrator account: {user.username}')
+
+
+@app.cli.command('set-user-role')
+@click.option('--username', default=None, help='Username of the existing account.')
+@click.option('--email', default=None, help='Email of the existing account.')
+@click.option('--role', required=True, type=click.Choice(['standard', 'moderator', 'admin'], case_sensitive=False))
+def set_user_role_command(username, email, role):
+    """Change an existing user's role through a controlled CLI workflow."""
+    username = username.strip() if username else None
+    email = email.strip().lower() if email else None
+    if not username and not email:
+        raise click.ClickException('Provide --username or --email.')
+
+    user = get_user(username) if username else get_user_by_email(email)
+    if not user:
+        raise click.ClickException('User not found.')
+
+    role = role.lower()
+    set_user_role(user, role)
+    app.logger.info('user_role_changed username=%s user_id=%s role=%s', user.username, user.user_id, role)
+    click.echo(f'Updated {user.username} to role {role}.')
+
+
+@app.cli.command('rebuild-public-search-index')
+def rebuild_public_search_index_command():
+    """Rebuild the public full-text search index."""
+    _rebuild_content_fts_index()
+    app.logger.info('public_search_index_rebuilt backend=%s', _search_backend_name())
+    click.echo(f"Rebuilt public search index for {_search_backend_name()}.")
+
 def get_user(username):
     return User.query.filter_by(username=username).first()
 
@@ -366,7 +685,7 @@ def get_user_by_email(email):
 
 
 def update_user_account(user_id, username, email=None, password=None):
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         return None
     user.username = username
@@ -377,9 +696,93 @@ def update_user_account(user_id, username, email=None, password=None):
     return user
 
 
+def _account_token_serializer():
+    return URLSafeTimedSerializer(app.config['SECRET_KEY'], salt='cards-account-lifecycle')
+
+
+def generate_password_reset_token(user):
+    serializer = _account_token_serializer()
+    return serializer.dumps({'user_id': user.user_id, 'email': user.email, 'purpose': 'password_reset'})
+
+
+def get_user_by_password_reset_token(token, max_age_seconds=None):
+    serializer = _account_token_serializer()
+    max_age_seconds = max_age_seconds or app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS']
+    try:
+        payload = serializer.loads(token, max_age=max_age_seconds)
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        return None
+
+    if payload.get('purpose') != 'password_reset':
+        return None
+    user_id = payload.get('user_id')
+    email = payload.get('email')
+    if not user_id or not email:
+        return None
+    user = db.session.get(User, user_id)
+    if not user or not user.is_active or user.email != email:
+        return None
+    return user
+
+
+def build_password_reset_url(token):
+    configured_base = app.config.get('PASSWORD_RESET_URL_BASE')
+    if configured_base:
+        return f"{configured_base.rstrip('/')}?token={token}"
+    return None
+
+
+def send_password_reset_email(user, reset_url):
+    message = EmailMessage()
+    message['Subject'] = 'Reset your Cards password'
+    message['From'] = app.config['MAIL_DEFAULT_SENDER']
+    message['To'] = user.email
+    message.set_content(
+        (
+            f"Hello {user.username},\n\n"
+            "We received a request to reset your Cards password.\n"
+            f"Use this link within {app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] // 60} minutes:\n\n"
+            f"{reset_url}\n\n"
+            "If you did not request this, you can ignore this email."
+        )
+    )
+
+    smtp_host = app.config['MAIL_SERVER']
+    smtp_port = app.config['MAIL_PORT']
+    smtp_username = app.config.get('MAIL_USERNAME')
+    smtp_password = app.config.get('MAIL_PASSWORD')
+    use_ssl = app.config.get('MAIL_USE_SSL')
+    use_tls = app.config.get('MAIL_USE_TLS')
+
+    smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    with smtp_class(smtp_host, smtp_port, timeout=10) as smtp:
+        if not use_ssl and use_tls:
+            smtp.starttls()
+        if smtp_username:
+            smtp.login(smtp_username, smtp_password or '')
+        smtp.send_message(message)
+
+
+def delete_user_account(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        return False
+
+    owned_deck_ids = [deck_id for (deck_id,) in db.session.query(Deck.deck_id).filter_by(owned_by=user.user_id).all()]
+    owned_quiz_ids = [quiz_id for (quiz_id,) in db.session.query(Quiz.quiz_id).filter_by(owned_by=user.user_id).all()]
+    for deck_id in owned_deck_ids:
+        _delete_content_fts_index_row('deck', deck_id)
+    for quiz_id in owned_quiz_ids:
+        _delete_content_fts_index_row('quiz', quiz_id)
+
+    db.session.delete(user)
+    db.session.commit()
+    return True
+
+
 # Deck helpers.
-# Create a deck and mirror it into search.
 def create_deck(user_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
+    description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     deck = Deck(
         owned_by=user_id,
         description=description,
@@ -395,6 +798,7 @@ def create_deck(user_id, description, sortable=False, is_public=False, detailed_
 
 
 def import_deck(user_id, description, raw_text, sortable=False, is_public=False, detailed_description=None, tags=None):
+    description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     parsed = parse_imported_deck_text(raw_text)
     cards = parsed['cards']
 
@@ -427,13 +831,10 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
         'line_count': parsed['line_count'],
     }
 
-# Return decks owned by one user.
 def get_user_decks(user_id):
     return Deck.query.filter_by(owned_by=user_id).all()
 
 
-# Owned or public decks.
-# Return owned and public decks.
 def get_accessible_decks(user_id=None):
     if user_id is None:
         return Deck.query.filter(Deck.is_public == True).all()
@@ -479,12 +880,10 @@ def get_homepage_public_data(featured_limit=3, tag_limit=5):
     }
 
 
-# Fetch a deck by id.
 def get_deck(deck_id):
     return Deck.query.get(deck_id)
 
 
-# Delete a deck and its search row.
 def delete_deck(deck_id):
     deck = Deck.query.get(deck_id)
     if deck:
@@ -494,10 +893,10 @@ def delete_deck(deck_id):
         return True
     return False
 
-# Update deck metadata and search.
 def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
     deck = Deck.query.get(deck_id)
     if deck:
+        description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
         deck.description = description
         deck.sortable = sortable
         deck.is_public = is_public
@@ -508,7 +907,7 @@ def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_de
         return deck
     return None
 
-# Simple fallback search for public decks.
+# Search helpers.
 def search_public_decks(query_text):
     if not query_text:
         return []
@@ -526,7 +925,6 @@ def search_public_decks(query_text):
     return decks
 
 
-# Simple fallback search for public quizzes.
 def search_public_quizzes(query_text):
     if not query_text:
         return []
@@ -543,7 +941,6 @@ def search_public_quizzes(query_text):
     return quizzes
 
 
-# Normalize text for search matching.
 def _normalize_search_text(text):
     text = (text or '').lower()
     text = unicodedata.normalize('NFKD', text)
@@ -553,7 +950,6 @@ def _normalize_search_text(text):
     return text
 
 
-# Split normalized search text into tokens.
 def _tokenize_search_text(text):
     normalized = _normalize_search_text(text)
     if not normalized:
@@ -561,7 +957,6 @@ def _tokenize_search_text(text):
     return [token for token in normalized.split() if token]
 
 
-# Build a loose FTS query from user input.
 def _build_fts_query(query_text):
     tokens = _tokenize_search_text(query_text)
     if not tokens:
@@ -577,63 +972,117 @@ def _build_fts_query(query_text):
     return ' OR '.join(parts), tokens
 
 
-# Public search index helpers.
-# Create the public content FTS table if needed.
+def _search_backend_name():
+    # Reflect the SQLAlchemy engine dialect (e.g., sqlite, postgresql).
+    return db.engine.dialect.name
+
+
+def _is_sqlite_backend():
+    # SQLite keeps the existing FTS5 implementation.
+    return _search_backend_name() == 'sqlite'
+
+
+def _is_postgres_backend():
+    # Postgres uses tsvector-based full-text search.
+    return _search_backend_name().startswith('postgresql')
+
+
 def _ensure_content_fts_index():
-    db.session.execute(text("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS public_content_fts USING fts5(
-            item_type UNINDEXED,
-            item_id UNINDEXED,
-            title,
-            description,
-            tags,
-            tokenize = 'porter unicode61 remove_diacritics 2'
-        )
-    """))
+    # Create backend-specific full-text structures only when needed.
+    if _is_sqlite_backend():
+        db.session.execute(text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS public_content_fts USING fts5(
+                item_type UNINDEXED,
+                item_id UNINDEXED,
+                title,
+                description,
+                tags,
+                tokenize = 'porter unicode61 remove_diacritics 2'
+            )
+        """))
     db.session.commit()
 
 
-# Remove one row from the public search index.
+def _postgres_search_vector_expression():
+    # Weight fields so title and tags rank above long descriptions.
+    return (
+        "setweight(to_tsvector('english', coalesce(:title, '')), 'A') || "
+        "setweight(to_tsvector('english', coalesce(:tags, '')), 'B') || "
+        "setweight(to_tsvector('english', coalesce(:description, '')), 'C')"
+    )
+
+
 def _delete_content_fts_index_row(item_type, item_id):
     try:
         _ensure_content_fts_index()
-        db.session.execute(
-            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
-            {'item_type': item_type, 'item_id': str(item_id)}
-        )
+        if _is_sqlite_backend():
+            db.session.execute(
+                text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': str(item_id)}
+            )
+        else:
+            db.session.execute(
+                text("DELETE FROM public_content_search WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': int(item_id)}
+            )
         db.session.commit()
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        _log_search_index_failure('delete', exc, item_type=item_type, item_id=item_id)
 
 
-# Write one row into the public search index.
 def _sync_content_fts_index_row(item_type, item_id, title, description, tags, is_public):
     try:
         _ensure_content_fts_index()
-        db.session.execute(
-            text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
-            {'item_type': item_type, 'item_id': str(item_id)}
-        )
-        if is_public:
+        if _is_sqlite_backend():
             db.session.execute(
-                text("""
-                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                    VALUES (:item_type, :item_id, :title, :description, :tags)
-                """),
-                {
-                    'item_type': item_type,
-                    'item_id': str(item_id),
-                    'title': title or '',
-                    'description': description or '',
-                    'tags': tags or '',
-                }
+                text("DELETE FROM public_content_fts WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': str(item_id)}
             )
+            if is_public:
+                db.session.execute(
+                    text("""
+                        INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                        VALUES (:item_type, :item_id, :title, :description, :tags)
+                    """),
+                    {
+                        'item_type': item_type,
+                        'item_id': str(item_id),
+                        'title': title or '',
+                        'description': description or '',
+                        'tags': tags or '',
+                    }
+                )
+        else:
+            db.session.execute(
+                text("DELETE FROM public_content_search WHERE item_type = :item_type AND item_id = :item_id"),
+                {'item_type': item_type, 'item_id': int(item_id)}
+            )
+            if is_public:
+                db.session.execute(
+                    text(f"""
+                        INSERT INTO public_content_search (
+                            item_type, item_id, title, description, tags, search_vector
+                        )
+                        VALUES (
+                            :item_type, :item_id, :title, :description, :tags,
+                            {_postgres_search_vector_expression()}
+                        )
+                    """),
+                    {
+                        'item_type': item_type,
+                        'item_id': int(item_id),
+                        'title': title or '',
+                        'description': description or '',
+                        'tags': tags or '',
+                    }
+                )
         db.session.commit()
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        _log_search_index_failure('sync', exc, item_type=item_type, item_id=item_id)
 
 
-# Sync one deck into the search index.
 def _sync_content_fts_index_for_deck(deck):
     _sync_content_fts_index_row(
         item_type='deck',
@@ -645,7 +1094,6 @@ def _sync_content_fts_index_for_deck(deck):
     )
 
 
-# Sync one quiz into the search index.
 def _sync_content_fts_index_for_quiz(quiz):
     _sync_content_fts_index_row(
         item_type='quiz',
@@ -657,45 +1105,82 @@ def _sync_content_fts_index_for_quiz(quiz):
     )
 
 
-# Rebuild the full public search index.
 def _rebuild_content_fts_index():
     _ensure_content_fts_index()
-    db.session.execute(text("DELETE FROM public_content_fts"))
-
-    for deck in Deck.query.filter(Deck.is_public == True).all():
-        db.session.execute(
-            text("""
-                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                VALUES (:item_type, :item_id, :title, :description, :tags)
-            """),
-            {
-                'item_type': 'deck',
-                'item_id': str(deck.deck_id),
-                'title': deck.description or '',
-                'description': deck.detailed_description or '',
-                'tags': deck.tags or '',
-            }
-        )
-
-    for quiz in Quiz.query.filter(Quiz.is_public == True).all():
-        db.session.execute(
-            text("""
-                INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
-                VALUES (:item_type, :item_id, :title, :description, :tags)
-            """),
-            {
-                'item_type': 'quiz',
-                'item_id': str(quiz.quiz_id),
-                'title': quiz.title or '',
-                'description': quiz.description or '',
-                'tags': quiz.tags or '',
-            }
-        )
+    if _is_sqlite_backend():
+        db.session.execute(text("DELETE FROM public_content_fts"))
+        for deck in Deck.query.filter(Deck.is_public == True).all():
+            db.session.execute(
+                text("""
+                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                    VALUES (:item_type, :item_id, :title, :description, :tags)
+                """),
+                {
+                    'item_type': 'deck',
+                    'item_id': str(deck.deck_id),
+                    'title': deck.description or '',
+                    'description': deck.detailed_description or '',
+                    'tags': deck.tags or '',
+                }
+            )
+        for quiz in Quiz.query.filter(Quiz.is_public == True).all():
+            db.session.execute(
+                text("""
+                    INSERT INTO public_content_fts (item_type, item_id, title, description, tags)
+                    VALUES (:item_type, :item_id, :title, :description, :tags)
+                """),
+                {
+                    'item_type': 'quiz',
+                    'item_id': str(quiz.quiz_id),
+                    'title': quiz.title or '',
+                    'description': quiz.description or '',
+                    'tags': quiz.tags or '',
+                }
+            )
+    else:
+        db.session.execute(text("DELETE FROM public_content_search"))
+        for deck in Deck.query.filter(Deck.is_public == True).all():
+            db.session.execute(
+                text(f"""
+                    INSERT INTO public_content_search (
+                        item_type, item_id, title, description, tags, search_vector
+                    )
+                    VALUES (
+                        :item_type, :item_id, :title, :description, :tags,
+                        {_postgres_search_vector_expression()}
+                    )
+                """),
+                {
+                    'item_type': 'deck',
+                    'item_id': int(deck.deck_id),
+                    'title': deck.description or '',
+                    'description': deck.detailed_description or '',
+                    'tags': deck.tags or '',
+                }
+            )
+        for quiz in Quiz.query.filter(Quiz.is_public == True).all():
+            db.session.execute(
+                text(f"""
+                    INSERT INTO public_content_search (
+                        item_type, item_id, title, description, tags, search_vector
+                    )
+                    VALUES (
+                        :item_type, :item_id, :title, :description, :tags,
+                        {_postgres_search_vector_expression()}
+                    )
+                """),
+                {
+                    'item_type': 'quiz',
+                    'item_id': int(quiz.quiz_id),
+                    'title': quiz.title or '',
+                    'description': quiz.description or '',
+                    'tags': quiz.tags or '',
+                }
+            )
 
     db.session.commit()
 
 
-# Fallback search when FTS is unavailable.
 def _fallback_search_public_content(query_text):
     search_term = f"%{query_text}%"
     decks = Deck.query.filter(
@@ -717,14 +1202,13 @@ def _fallback_search_public_content(query_text):
     return decks, quizzes
 
 
-# Search public decks and quizzes.
 def search_public_content(query_text, limit=50, user_id=None):
     query_text = (query_text or '').strip()
     if not query_text:
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
     fts_query, query_tokens = _build_fts_query(query_text)
-    if not fts_query:
+    if not query_tokens:
         return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
 
     deck_results = []
@@ -733,26 +1217,8 @@ def search_public_content(query_text, limit=50, user_id=None):
 
     try:
         _ensure_content_fts_index()
-        results = db.session.execute(
-            text("""
-                SELECT
-                    item_type,
-                    item_id,
-                    bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
-                    snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
-                    snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
-                    snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
-                FROM public_content_fts
-                WHERE public_content_fts MATCH :match_query
-                ORDER BY rank
-                LIMIT :limit
-            """),
-            {'match_query': fts_query, 'limit': int(limit)}
-        ).fetchall()
-
-        if not results:
-            # Rebuild if the index is empty or stale.
-            _rebuild_content_fts_index()
+        if _is_sqlite_backend():
+            # SQLite FTS5 path with bm25 ranking and snippets.
             results = db.session.execute(
                 text("""
                     SELECT
@@ -769,12 +1235,131 @@ def search_public_content(query_text, limit=50, user_id=None):
                 """),
                 {'match_query': fts_query, 'limit': int(limit)}
             ).fetchall()
+        else:
+            # Postgres full-text path with weighted ranking and highlighted snippets.
+            results = db.session.execute(
+                text("""
+                    SELECT
+                        item_type,
+                        item_id,
+                        ts_rank_cd(
+                            search_vector,
+                            websearch_to_tsquery('english', :query_text)
+                        ) AS rank,
+                        ts_headline('english', title, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS title_snippet,
+                        ts_headline('english', description, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=12,MinWords=3') AS description_snippet,
+                        ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
+                    FROM public_content_search
+                    WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
+                    ORDER BY rank DESC
+                    LIMIT :limit
+                """),
+                {'query_text': query_text, 'limit': int(limit)}
+            ).fetchall()
+
+        if not results:
+            # Rebuild if the index is empty or stale.
+            _rebuild_content_fts_index()
+            if _is_sqlite_backend():
+                results = db.session.execute(
+                    text("""
+                        SELECT
+                            item_type,
+                            item_id,
+                            bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
+                            snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
+                            snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
+                            snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
+                        FROM public_content_fts
+                        WHERE public_content_fts MATCH :match_query
+                        ORDER BY rank
+                        LIMIT :limit
+                    """),
+                    {'match_query': fts_query, 'limit': int(limit)}
+                ).fetchall()
+            else:
+                results = db.session.execute(
+                    text("""
+                        SELECT
+                            item_type,
+                            item_id,
+                            ts_rank_cd(
+                                search_vector,
+                                websearch_to_tsquery('english', :query_text)
+                            ) AS rank,
+                            ts_headline('english', title, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS title_snippet,
+                            ts_headline('english', description, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=12,MinWords=3') AS description_snippet,
+                            ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
+                        FROM public_content_search
+                        WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
+                        ORDER BY rank DESC
+                        LIMIT :limit
+                    """),
+                    {'query_text': query_text, 'limit': int(limit)}
+                ).fetchall()
+
+        deck_ids = [int(row[1]) for row in results if row[0] == 'deck']
+        quiz_ids = [int(row[1]) for row in results if row[0] == 'quiz']
+
+        deck_rows = {}
+        if deck_ids:
+            deck_rows = {
+                row.deck_id: row
+                for row in db.session.query(
+                    Deck.deck_id,
+                    Deck.owned_by,
+                    Deck.description,
+                    Deck.detailed_description,
+                    Deck.tags,
+                    Deck.sortable,
+                    Deck.is_public,
+                    db.func.count(Card.card_id).label('card_count'),
+                )
+                .outerjoin(Card, Card.deck_id == Deck.deck_id)
+                .filter(Deck.deck_id.in_(deck_ids))
+                .group_by(
+                    Deck.deck_id,
+                    Deck.owned_by,
+                    Deck.description,
+                    Deck.detailed_description,
+                    Deck.tags,
+                    Deck.sortable,
+                    Deck.is_public,
+                )
+                .all()
+            }
+
+        quiz_rows = {}
+        if quiz_ids:
+            quiz_rows = {
+                row.quiz_id: row
+                for row in db.session.query(
+                    Quiz.quiz_id,
+                    Quiz.owned_by,
+                    Quiz.title,
+                    Quiz.description,
+                    Quiz.tags,
+                    Quiz.is_public,
+                    db.func.count(QuizQuestion.question_id).label('question_count'),
+                )
+                .outerjoin(QuizQuestion, QuizQuestion.quiz_id == Quiz.quiz_id)
+                .filter(Quiz.quiz_id.in_(quiz_ids))
+                .group_by(
+                    Quiz.quiz_id,
+                    Quiz.owned_by,
+                    Quiz.title,
+                    Quiz.description,
+                    Quiz.tags,
+                    Quiz.is_public,
+                )
+                .all()
+            }
 
         for row in results:
             item_type = row[0]
             item_id = int(row[1])
             rank_value = float(row[2]) if row[2] is not None else 0.0
-            score = round(-rank_value, 4)
+            score = round((-rank_value if _is_sqlite_backend() else rank_value), 4)
             reasons = []
             if row[3]:
                 reasons.append(f"title: {row[3]}")
@@ -784,7 +1369,7 @@ def search_public_content(query_text, limit=50, user_id=None):
                 reasons.append(f"tags: {row[5]}")
 
             if item_type == 'deck':
-                deck = Deck.query.get(item_id)
+                deck = deck_rows.get(item_id)
                 if not deck or not deck.is_public:
                     continue
                 if _normalize_search_text(query_text) in _normalize_search_text(deck.description or ''):
@@ -798,12 +1383,12 @@ def search_public_content(query_text, limit=50, user_id=None):
                     'tags': deck.tags,
                     'sortable': deck.sortable,
                     'is_public': deck.is_public,
-                    'card_count': len(deck.cards),
+                    'card_count': int(deck.card_count or 0),
                     'score': score,
                     'match_reasons': reasons,
                 })
             elif item_type == 'quiz':
-                quiz = Quiz.query.get(item_id)
+                quiz = quiz_rows.get(item_id)
                 if not quiz or not quiz.is_public:
                     continue
                 if _normalize_search_text(query_text) in _normalize_search_text(quiz.title or ''):
@@ -816,13 +1401,14 @@ def search_public_content(query_text, limit=50, user_id=None):
                     'description': quiz.description,
                     'tags': quiz.tags,
                     'is_public': quiz.is_public,
-                    'question_count': len(quiz.questions),
+                    'question_count': int(quiz.question_count or 0),
                     'score': score,
                     'match_reasons': reasons,
                 })
 
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        app.logger.exception('public_search_query_failed query=%s', query_text, exc_info=exc)
         # Fall back to simple LIKE search if FTS fails.
         decks, quizzes = _fallback_search_public_content(query_text)
         deck_results = [{
@@ -861,20 +1447,15 @@ def search_public_content(query_text, limit=50, user_id=None):
     }
 
 # Card and answer helpers.
-
-# Add a card with one or more answers.
 def add_card(deck_id, question, answers):
     # Positions are 1-based within each deck.
     max_position = db.session.query(db.func.max(Card.position)).filter_by(deck_id=deck_id).scalar() or 0
     next_position = max_position + 1
+    question, answers = _validate_card_payload(question, answers)
 
     card = Card(deck_id=deck_id, question=question, position=next_position)
     db.session.add(card)
     db.session.flush()
-    
-    answers = _normalize_answers(answers)
-    if not answers:
-        raise ValueError('At least one answer is required')
 
     for answer_text in answers:
         card_answer = CardAnswer(card_id=card.card_id, answer=answer_text)
@@ -884,7 +1465,6 @@ def add_card(deck_id, question, answers):
     return card
 
 
-# Add one answer to an existing card.
 def add_answer_to_card(card_id, answer):
     card = Card.query.get(card_id)
     if card:
@@ -895,7 +1475,6 @@ def add_answer_to_card(card_id, answer):
     return None
 
 
-# Delete an answer and maybe its card.
 def delete_answer(answer_id):
     # Remove the card if its last answer disappears.
     answer = CardAnswer.query.get(answer_id)
@@ -919,7 +1498,6 @@ def delete_answer(answer_id):
     return {'answer_deleted': True, 'card_deleted': card_deleted, 'card_id': card_id, 'deck_id': deck_id}
 
 
-# Delete one card and its answers.
 def delete_card(card_id):
     card = Card.query.get(card_id)
     if card:
@@ -929,17 +1507,18 @@ def delete_card(card_id):
     return False
 
 
-# Replace a card question and answers.
 def edit_card(card_id, question, answers):
     card = Card.query.get(card_id)
     if card:
-        card.question = question
         answers = _normalize_answers(answers)
         if not answers:
             deck_id = card.deck_id
             db.session.delete(card)
             db.session.commit()
             return {'deleted': True, 'card_id': card_id, 'deck_id': deck_id}
+
+        question, answers = _validate_card_payload(question, answers)
+        card.question = question
 
         # Replace the answer set in one pass.
         CardAnswer.query.filter_by(card_id=card_id).delete()
@@ -951,8 +1530,6 @@ def edit_card(card_id, question, answers):
     return None
 
 
-# Card fetch helper.
-# Fetch one card in API-friendly form.
 def get_card_from_deck(card_id, detailed=False):
     card = Card.query.get(card_id)
     if card:
@@ -968,7 +1545,6 @@ def get_card_from_deck(card_id, detailed=False):
     return None
 
 
-# Build deck data for study and games.
 def get_deck_study_data(deck_id, shuffle=True):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1105,27 +1681,47 @@ def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
 def record_match_attempt(user_id, answer_id, is_correct):
     if not user_id or not answer_id:
         return
-    progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).first()
-    if not progress:
-        progress = MatchPairProgress(user_id=user_id, answer_id=answer_id, correct_count=0, incorrect_count=0)
-        db.session.add(progress)
-    if is_correct:
-        progress.correct_count = (progress.correct_count or 0) + 1
-        progress.last_outcome = 'correct'
-    else:
-        progress.incorrect_count = (progress.incorrect_count or 0) + 1
-        progress.last_outcome = 'incorrect'
-    db.session.commit()
+    for _ in range(2):
+        progress = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).first()
+        if not progress:
+            try:
+                progress = MatchPairProgress(user_id=user_id, answer_id=answer_id, correct_count=0, incorrect_count=0)
+                db.session.add(progress)
+                db.session.flush()
+            except IntegrityError:
+                db.session.rollback()
+                continue
+        if is_correct:
+            updated = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).update(
+                {
+                    MatchPairProgress.correct_count: MatchPairProgress.correct_count + 1,
+                    MatchPairProgress.last_outcome: 'correct',
+                },
+                synchronize_session=False,
+            )
+        else:
+            updated = MatchPairProgress.query.filter_by(user_id=user_id, answer_id=answer_id).update(
+                {
+                    MatchPairProgress.incorrect_count: MatchPairProgress.incorrect_count + 1,
+                    MatchPairProgress.last_outcome: 'incorrect',
+                },
+                synchronize_session=False,
+            )
+        if updated:
+            db.session.commit()
+            return
+        db.session.rollback()
+
+    app.logger.warning('match_progress_update_skipped user_id=%s answer_id=%s', user_id, answer_id)
 
 
-# Compare submitted order against saved positions.
 def check_deck_order(deck_id, ordered_card_ids):
     """Validate a user-submitted card order against stored card positions."""
     deck = Deck.query.get(deck_id)
     if not deck:
         return {'valid': False, 'error': 'Deck not found'}
     if not deck.sortable:
-        return {'valid': False, 'error': 'Deck is not sortable'}
+        return {'valid': False, 'error': 'Deck is not sorted'}
 
     # Stored positions define the correct order.
     cards = sorted(list(deck.cards), key=lambda card: card.position)
@@ -1154,14 +1750,13 @@ def check_deck_order(deck_id, ordered_card_ids):
     }
 
 
-# Move one card up or down.
 def move_card_in_deck(card_id, direction):
     """Move a card up or down within its deck by swapping position with a neighbor."""
     card = Card.query.get(card_id)
     if not card:
         return {'success': False, 'error': 'Card not found'}
     if not card.deck.sortable:
-        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+        return {'success': False, 'error': 'Card order can only be changed in sorted decks'}
 
     if direction not in ('up', 'down'):
         return {'success': False, 'error': 'Invalid direction'}
@@ -1182,7 +1777,6 @@ def move_card_in_deck(card_id, direction):
     return {'success': True, 'moved': True, 'deck_id': card.deck_id}
 
 
-# Swap two cards inside one deck.
 def swap_cards_in_deck(card_id, target_card_id):
     """Swap two cards in the same sortable deck."""
     first_card = Card.query.get(card_id)
@@ -1193,7 +1787,7 @@ def swap_cards_in_deck(card_id, target_card_id):
     if first_card.deck_id != second_card.deck_id:
         return {'success': False, 'error': 'Cards must be in the same deck'}
     if not first_card.deck.sortable:
-        return {'success': False, 'error': 'Card order can only be changed in sortable decks'}
+        return {'success': False, 'error': 'Card order can only be changed in sorted decks'}
     if first_card.card_id == second_card.card_id:
         return {'success': True, 'swapped': False, 'deck_id': first_card.deck_id}
 
@@ -1202,9 +1796,7 @@ def swap_cards_in_deck(card_id, target_card_id):
 
     return {'success': True, 'swapped': True, 'deck_id': first_card.deck_id}
 
-
-# Get all cards from a deck ordered by position
-# Return cards from one deck.
+# Read-only deck access helpers.
 def list_cards_from_deck(deck_id, detailed=False, shuffle=False):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1212,7 +1804,6 @@ def list_cards_from_deck(deck_id, detailed=False, shuffle=False):
     return _serialize_deck(deck, detailed_cards=detailed, shuffle_cards=shuffle, shuffle_answers=False)['cards']
 
 
-# Return full deck details for the UI.
 def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
     deck = Deck.query.get(deck_id)
     if not deck:
@@ -1220,6 +1811,7 @@ def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle_cards, shuffle_answers=shuffle_answers)
 
 
+# Mastery mode helpers.
 def _mastery_status_for_rating(rating):
     if rating == 'understood':
         return 'mastered'
@@ -1447,31 +2039,48 @@ def record_mastery_rating(user_id, deck_id, card_id, rating):
     if rating not in ('understood', 'still_learning', 'dont_know'):
         return {'success': False, 'error': 'Invalid rating'}
 
-    progress = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).first()
-    if not progress:
-        progress = CardMasteryProgress(
-            user_id=user_id,
-            card_id=card_id,
-            status='new',
-            understood_count=0,
-            learning_count=0,
-            dont_know_count=0,
-            reviewed_count=0,
+    for _ in range(2):
+        progress = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).first()
+        if not progress:
+            try:
+                progress = CardMasteryProgress(
+                    user_id=user_id,
+                    card_id=card_id,
+                    status='new',
+                    understood_count=0,
+                    learning_count=0,
+                    dont_know_count=0,
+                    reviewed_count=0,
+                )
+                db.session.add(progress)
+                db.session.flush()
+            except IntegrityError:
+                db.session.rollback()
+                continue
+
+        updates = {
+            CardMasteryProgress.reviewed_count: CardMasteryProgress.reviewed_count + 1,
+            CardMasteryProgress.last_rating: rating,
+            CardMasteryProgress.status: _mastery_status_for_rating(rating),
+        }
+        if rating == 'understood':
+            updates[CardMasteryProgress.understood_count] = CardMasteryProgress.understood_count + 1
+        elif rating == 'still_learning':
+            updates[CardMasteryProgress.learning_count] = CardMasteryProgress.learning_count + 1
+        else:
+            updates[CardMasteryProgress.dont_know_count] = CardMasteryProgress.dont_know_count + 1
+
+        updated = CardMasteryProgress.query.filter_by(user_id=user_id, card_id=card_id).update(
+            updates,
+            synchronize_session=False,
         )
-        db.session.add(progress)
+        if updated:
+            db.session.commit()
+            return {'success': True}
+        db.session.rollback()
 
-    progress.reviewed_count = (progress.reviewed_count or 0) + 1
-    progress.last_rating = rating
-    if rating == 'understood':
-        progress.understood_count = (progress.understood_count or 0) + 1
-    elif rating == 'still_learning':
-        progress.learning_count = (progress.learning_count or 0) + 1
-    elif rating == 'dont_know':
-        progress.dont_know_count = (progress.dont_know_count or 0) + 1
-
-    progress.status = _mastery_status_for_rating(rating)
-    db.session.commit()
-    return {'success': True}
+    app.logger.warning('mastery_progress_update_skipped user_id=%s card_id=%s', user_id, card_id)
+    return {'success': False, 'error': 'Could not save progress right now.'}
 
 
 def reset_mastery_progress(user_id, deck_id):
@@ -1484,102 +2093,153 @@ def reset_mastery_progress(user_id, deck_id):
     return deleted_rows
 
 
-# Generate quiz questions from a deck or custom quiz.
-def generate_quiz_data(deck_id=None, custom_quiz_id=None):
-    from models import Quiz, Card, CardAnswer
+def create_quiz_attempt(user_id, quiz_questions):
+    """Persist server-held correctness data while sending display-only options to the browser."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    QuizAttempt.query.filter(QuizAttempt.created_at < cutoff).delete(synchronize_session=False)
+
+    correct_answers = {
+        str(question['id']): [
+            option['text'] for option in question['options'] if option.get('is_correct')
+        ]
+        for question in quiz_questions
+    }
+    attempt = QuizAttempt(
+        attempt_token=secrets.token_urlsafe(32),
+        user_id=user_id,
+        correct_answers_json=json.dumps(correct_answers),
+        question_count=len(quiz_questions),
+    )
+    db.session.add(attempt)
+    db.session.commit()
+
+    display_questions = [
+        {
+            'id': question['id'],
+            'question': question['question'],
+            'options': [{'text': option['text']} for option in question['options']],
+        }
+        for question in quiz_questions
+    ]
+    return attempt.attempt_token, display_questions
+
+
+def score_quiz_attempt(attempt_token, user_id, submitted_answers):
+    """Consume one rendered quiz attempt and calculate its result from server-held data."""
+    attempt = db.session.get(QuizAttempt, attempt_token)
+    if not attempt or attempt.user_id != user_id:
+        return None
+
+    correct_answers = json.loads(attempt.correct_answers_json)
+    results = []
+    score = 0
+    for question_id, answers in correct_answers.items():
+        selected = set(submitted_answers.get(question_id, []))
+        correct = set(answers)
+        is_correct = bool(selected) and selected == correct
+        if is_correct:
+            score += 1
+        results.append({
+            'id': question_id,
+            'is_correct': is_correct,
+            'correct_answers': list(correct),
+        })
+
+    result = {
+        'success': True,
+        'score': score,
+        'total': attempt.question_count,
+        'results': results,
+    }
+    db.session.delete(attempt)
+    db.session.commit()
+    return result
+
+
+def _generate_deck_quiz_questions(deck_id):
+    """Build multiple-choice questions from one deck's cards and answers."""
+    from models import CardAnswer
+
+    deck = Deck.query.get(deck_id)
+    cards = list(deck.cards) if deck else []
+    deck_answers = [answer.answer for answer in CardAnswer.query.join(Card).filter(Card.deck_id == deck_id).all()]
+    if not deck_answers:
+        deck_answers = ['Option A', 'Option B', 'Option C', 'Option D', 'No other answers available']
+
     quiz_questions = []
-    
-    if deck_id:
-        deck = Deck.query.get(deck_id)
-        cards = list(deck.cards) if deck else []
+    for card in cards:
+        correct_answers = [answer.answer for answer in card.answers]
+        chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
+        wrong_needed = max(0, 4 - len(chosen_correct))
+        if wrong_needed < 0:
+            chosen_correct = random.sample(chosen_correct, 4)
+            wrong_needed = 0
 
-        # Build distractors from the selected deck only.
-        all_distractors = []
-        other_answers = CardAnswer.query.join(Card).filter(Card.deck_id == deck_id).all()
-        all_distractors = [a.answer for a in other_answers]
-        
-        if not all_distractors:
-            all_distractors = ["Option A", "Option B", "Option C", "Option D", "No other answers available"]
+        safe_distractors = [answer for answer in deck_answers if answer not in correct_answers]
+        if len(safe_distractors) >= wrong_needed:
+            chosen_wrong = random.sample(safe_distractors, wrong_needed)
+        else:
+            chosen_wrong = safe_distractors + [f'Generic Distractor {index}' for index in range(wrong_needed - len(safe_distractors))]
 
-        for i, c in enumerate(cards):
-            is_obj = hasattr(c, 'question')
-            question_text = c.question if is_obj else c.get('question')
-            
-            if is_obj:
-                correct_pool = [a.answer for a in c.answers]
-            else:
-                correct_pool = c.get('correct_answers', [])
-                
-            num_correct = random.randint(1, len(correct_pool)) if correct_pool else 0
-            chosen_correct = random.sample(correct_pool, num_correct) if correct_pool else []
-            
-            num_wrong = 4 - len(chosen_correct)
-            if num_wrong < 0:
-                chosen_correct = random.sample(chosen_correct, 4)
-                num_wrong = 0
-                
-            chosen_wrong = []
-            if num_wrong > 0:
-                safe_distractors = [d for d in all_distractors if d not in correct_pool]
-                if len(safe_distractors) >= num_wrong:
-                    chosen_wrong = random.sample(safe_distractors, num_wrong)
-                else:
-                    chosen_wrong = safe_distractors + [f"Generic Distractor {x}" for x in range(num_wrong - len(safe_distractors))]
-                    
-            options = [{'text': ans, 'is_correct': True} for ans in chosen_correct] + \
-                      [{'text': ans, 'is_correct': False} for ans in chosen_wrong]
-            random.shuffle(options)
-            
-            quiz_questions.append({
-                'id': c.card_id if is_obj else f"custom_{i}",
-                'question': question_text,
-                'options': options
-            })
-            
-    elif custom_quiz_id:
-        quiz = Quiz.query.get(custom_quiz_id)
-        if not quiz: return []
-        
-        all_quiz_options_by_q = {q.question_id: [opt.text for opt in q.options] for q in quiz.questions}
-        
-        for q in quiz.questions:
-            if q.type == 'static':
-                options = [{'text': opt.text, 'is_correct': opt.is_correct} for opt in q.options]
-                random.shuffle(options)
-                quiz_questions.append({
-                    'id': f"q_{q.question_id}",
-                    'question': q.question,
-                    'options': options
-                })
-            elif q.type == 'dynamic':
-                # Dynamic quiz questions draw one correct option plus distractors.
-                correct_pool = [opt.text for opt in q.options]
-                chosen_correct = [random.choice(correct_pool)] if correct_pool else []
-                
-                distractor_pool = []
-                for other_q_id, opts in all_quiz_options_by_q.items():
-                    if other_q_id != q.question_id:
-                        distractor_pool.extend(opts)
-                
-                chosen_wrong = []
-                # Ensure distractors are not accidentally correct for this question
-                safe_distractors = list(set([d for d in distractor_pool if d not in correct_pool]))
-                if len(safe_distractors) >= 3:
-                    chosen_wrong = random.sample(safe_distractors, 3)
-                else:
-                    chosen_wrong = safe_distractors + [f"Distractor {x}" for x in range(3 - len(safe_distractors))]
-                    
-                options = [{'text': ans, 'is_correct': True} for ans in chosen_correct] + \
-                          [{'text': ans, 'is_correct': False} for ans in chosen_wrong]
-                random.shuffle(options)
-                
-                quiz_questions.append({
-                    'id': f"q_{q.question_id}",
-                    'question': q.question,
-                    'options': options
-                })
-        
+        options = (
+            [{'text': answer, 'is_correct': True} for answer in chosen_correct]
+            + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
+        )
+        random.shuffle(options)
+        quiz_questions.append({
+            'id': card.card_id,
+            'question': card.question,
+            'options': options,
+        })
     return quiz_questions
+
+
+def _generate_custom_quiz_questions(custom_quiz_id):
+    """Build either static or dynamic multiple-choice questions from a saved custom quiz."""
+    quiz = Quiz.query.get(custom_quiz_id)
+    if not quiz:
+        return []
+
+    all_quiz_options = {question.question_id: [option.text for option in question.options] for question in quiz.questions}
+    quiz_questions = []
+    for question in quiz.questions:
+        if question.type == 'static':
+            options = [{'text': option.text, 'is_correct': option.is_correct} for option in question.options]
+            random.shuffle(options)
+        else:
+            correct_answers = [option.text for option in question.options]
+            distractor_pool = []
+            for other_question_id, options_for_question in all_quiz_options.items():
+                if other_question_id != question.question_id:
+                    distractor_pool.extend(options_for_question)
+            chosen_correct = [random.choice(correct_answers)] if correct_answers else []
+            safe_distractors = list(set(answer for answer in distractor_pool if answer not in correct_answers))
+            if len(safe_distractors) >= 3:
+                chosen_wrong = random.sample(safe_distractors, 3)
+            else:
+                chosen_wrong = safe_distractors + [f'Distractor {index}' for index in range(3 - len(safe_distractors))]
+
+            options = (
+                [{'text': answer, 'is_correct': True} for answer in chosen_correct]
+                + [{'text': answer, 'is_correct': False} for answer in chosen_wrong]
+            )
+            random.shuffle(options)
+
+        quiz_questions.append({
+            'id': f'q_{question.question_id}',
+            'question': question.question,
+            'options': options,
+        })
+    return quiz_questions
+
+
+def generate_quiz_data(deck_id=None, custom_quiz_id=None):
+    """Generate a browser-safe quiz payload from a deck or custom quiz."""
+    if deck_id:
+        return _generate_deck_quiz_questions(deck_id)
+    if custom_quiz_id:
+        return _generate_custom_quiz_questions(custom_quiz_id)
+    return []
 
 
 with app.app_context():
@@ -1588,12 +2248,12 @@ with app.app_context():
     _ensure_user_match_strategy_preference_column()
     _ensure_match_pair_progress_table()
 
-# Register all application routes
+# Route registration lives in routes.py so view handlers stay in one place.
 register_routes(app)
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=not is_production)
 
 
 
