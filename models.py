@@ -44,6 +44,7 @@ class Deck(db.Model):
     tags = db.Column(db.String(255), nullable=True)
     sortable = db.Column(db.Boolean, default=False)
     is_public = db.Column(db.Boolean, default=False, index=True)
+    is_featured = db.Column(db.Boolean, default=False, index=True)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
 
 

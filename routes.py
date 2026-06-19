@@ -42,8 +42,9 @@ def _deck_summary_payload(deck, user_id):
         'tags': deck.tags,
         'sortable': deck.sortable,
         'is_public': deck.is_public,
+        'is_featured': deck.is_featured,
         'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
+        'card_count': getattr(deck, 'card_count', len(deck.cards)),
     }
 
 
@@ -53,7 +54,7 @@ def _quiz_launcher_deck_payload(deck, user_id):
         'deck_id': deck.deck_id,
         'description': deck.description,
         'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': len(deck.cards),
+        'card_count': getattr(deck, 'card_count', len(deck.cards)),
     }
 
 
@@ -166,9 +167,9 @@ def _set_security_headers(response):
         "object-src 'none'; "
         "frame-ancestors 'none'; "
         "form-action 'self'; "
-        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "font-src 'self' https://cdn.jsdelivr.net data:; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' data:; "
         "img-src 'self' data:; "
         "connect-src 'self'"
     )
@@ -232,11 +233,29 @@ def admin_required(view_func):
 
 
 def _csrf_token():
+    return session.get('csrf_token')
+
+
+def _ensure_csrf_token():
     token = session.get('csrf_token')
     if not token:
         token = secrets.token_urlsafe(32)
         session['csrf_token'] = token
     return token
+
+
+def _page_needs_csrf_token(user=None):
+    if user:
+        return True
+    return request.endpoint in {
+        'login',
+        'register',
+        'forgot_password',
+        'reset_password',
+        'match',
+        'reorder',
+        'quiz',
+    }
 
 
 def _validate_csrf():
@@ -898,7 +917,7 @@ def create_deck_route():
     if not description:
         return jsonify({'error': 'User ID and description are required'}), 400
     try:
-        deck = create_deck(user_id, description, sortable, is_public, detailed_description, tags)
+        deck = create_deck(user_id, description, sortable, is_public, False, detailed_description, tags)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     if request.is_json:
@@ -925,7 +944,12 @@ def get_deck_list_route():
     
     decks = get_user_decks(user_id)
     if decks:
-        decks_data = [{'deck_id': d.deck_id, 'description': d.description, 'sortable': d.sortable, 'card_count': len(d.cards)} for d in decks]
+        decks_data = [{
+            'deck_id': d.deck_id,
+            'description': d.description,
+            'sortable': d.sortable,
+            'card_count': getattr(d, 'card_count', len(d.cards)),
+        } for d in decks]
         return jsonify({'success': True, 'decks': decks_data})
     else:
         return jsonify({'success': True, 'decks': []})
@@ -972,10 +996,12 @@ def edit_deck_route():
 
     if not deck_id or not description:
         return jsonify({'error': 'Deck ID and description are required'}), 400
-    if not _owned_deck(deck_id, user_id):
+    owned_deck = _owned_deck(deck_id, user_id)
+    if not owned_deck:
         return jsonify({'error': 'You can only edit decks you own'}), 403
     try:
-        deck = edit_deck(deck_id, description, sortable, is_public, detailed_description, tags)
+        existing_featured = bool(owned_deck.is_featured)
+        deck = edit_deck(deck_id, description, sortable, is_public, existing_featured, detailed_description, tags)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     if deck:
@@ -1131,6 +1157,7 @@ def import_deck_route():
             raw_text=import_text,
             sortable=sortable,
             is_public=is_public,
+            is_featured=False,
             detailed_description=detailed_description,
             tags=tags,
         )
@@ -1719,10 +1746,13 @@ def register_routes(app):
     @app.context_processor
     def inject_security_context():
         user = _current_user()
+        csrf_token_required = _page_needs_csrf_token(user)
         return {
             'current_user': user,
             'active_theme': (user.theme_preference if user else None),
             'csrf_token': _csrf_token,
+            'ensure_csrf_token': _ensure_csrf_token,
+            'csrf_token_required': csrf_token_required,
             'csp_nonce': g.csp_nonce,
         }
 

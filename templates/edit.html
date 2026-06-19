@@ -82,6 +82,7 @@
                     <div class="card-rail">
                         <span class="status-chip {{ 'warning' if deck.sortable else 'info' }}">{{ 'Sorted' if deck.sortable else 'Shuffled' }}</span>
                         <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
+                        {% if deck.is_featured %}<span class="status-chip success">Featured</span>{% endif %}
                     </div>
                 </div>
                 {% if deck.tags %}<div class="card-rail">{% for tag in deck.tags.split(',') %}{% if tag.strip() %}<span class="tag-chip">{{ tag.strip() }}</span>{% endif %}{% endfor %}</div>{% endif %}

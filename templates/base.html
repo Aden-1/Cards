@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Cards{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='app.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
@@ -48,7 +47,7 @@
                     {% endif %}
                 </nav>
                 <form class="nav-search" action="{{ url_for('search') }}" method="get">
-                    <i class="bi bi-search nav-search-icon"></i>
+                    <span class="nav-search-icon" aria-hidden="true">⌕</span>
                     <input id="navSearchInput" class="form-control" data-random-placeholder="search" type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search decks and quizzes">
                 </form>
                 <div class="nav-actions">
@@ -66,7 +65,7 @@
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form method="post" action="{{ url_for('logout') }}">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
                                     <button class="dropdown-item" type="submit">Log Out</button>
                                 </form>
                             </li>
@@ -99,9 +98,9 @@
         <div>&copy; 2026 Cards</div>
     </div>
 </footer>
-<script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
 <script nonce="{{ csp_nonce }}">
-window.cardsCsrfToken = '{{ csrf_token() }}';
+window.cardsCsrfToken = {{ (ensure_csrf_token() if csrf_token_required else '') | tojson }};
 window.cardsConfig = {
     isAuthenticated: {{ 'true' if current_user else 'false' }},
     userTheme: {{ (active_theme or '') | tojson }}

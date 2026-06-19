@@ -287,6 +287,25 @@ def _ensure_user_match_strategy_preference_column():
     db.session.commit()
 
 
+def _ensure_deck_is_featured_column():
+    """Add Deck.is_featured for existing SQLite databases if missing."""
+    if not _is_sqlite_backend():
+        return
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('deck'):
+        return
+    columns = {column['name'] for column in inspector.get_columns('deck')}
+    if 'is_featured' not in columns:
+        db.session.execute(
+            text("ALTER TABLE deck ADD COLUMN is_featured BOOLEAN NOT NULL DEFAULT 0")
+        )
+        db.session.commit()
+    index_names = {index['name'] for index in inspector.get_indexes('deck')}
+    if 'ix_deck_is_featured' not in index_names:
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_deck_is_featured ON deck (is_featured)"))
+        db.session.commit()
+
+
 def _ensure_match_pair_progress_table():
     """Create MatchPairProgress table for existing databases if missing."""
     if not _is_sqlite_backend():
@@ -353,6 +372,7 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
         'tags': deck.tags,
         'sortable': deck.sortable,
         'is_public': deck.is_public,
+        'is_featured': deck.is_featured,
         'card_count': len(cards),
         'answer_count': len(flattened_answers),
         'cards': serialized_cards,
@@ -781,13 +801,14 @@ def delete_user_account(user_id):
 
 
 # Deck helpers.
-def create_deck(user_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
+def create_deck(user_id, description, sortable=False, is_public=False, is_featured=False, detailed_description=None, tags=None):
     description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     deck = Deck(
         owned_by=user_id,
         description=description,
         sortable=sortable,
         is_public=is_public,
+        is_featured=is_featured,
         detailed_description=detailed_description,
         tags=tags
     )
@@ -797,7 +818,7 @@ def create_deck(user_id, description, sortable=False, is_public=False, detailed_
     return deck
 
 
-def import_deck(user_id, description, raw_text, sortable=False, is_public=False, detailed_description=None, tags=None):
+def import_deck(user_id, description, raw_text, sortable=False, is_public=False, is_featured=False, detailed_description=None, tags=None):
     description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
     parsed = parse_imported_deck_text(raw_text)
     cards = parsed['cards']
@@ -807,6 +828,7 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
         description=description,
         sortable=sortable,
         is_public=is_public,
+        is_featured=is_featured,
         detailed_description=detailed_description,
         tags=tags
     )
@@ -832,23 +854,51 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
     }
 
 def get_user_decks(user_id):
-    return Deck.query.filter_by(owned_by=user_id).all()
+    return _attach_deck_card_counts(
+        _deck_query_with_card_counts()
+        .filter(Deck.owned_by == user_id)
+        .all()
+    )
+
+
+def _attach_deck_card_counts(deck_rows):
+    decks = []
+    for deck, card_count in deck_rows:
+        deck.card_count = int(card_count or 0)
+        decks.append(deck)
+    return decks
+
+
+def _deck_query_with_card_counts():
+    return (
+        db.session.query(Deck)
+        .outerjoin(Card, Card.deck_id == Deck.deck_id)
+        .group_by(Deck.deck_id)
+        .add_columns(db.func.count(Card.card_id).label('card_count'))
+    )
 
 
 def get_accessible_decks(user_id=None):
+    query = _deck_query_with_card_counts()
     if user_id is None:
-        return Deck.query.filter(Deck.is_public == True).all()
-    return Deck.query.filter((Deck.owned_by == user_id) | (Deck.is_public == True)).all()
+        return _attach_deck_card_counts(query.filter(Deck.is_public == True).all())
+    return _attach_deck_card_counts(
+        query.filter((Deck.owned_by == user_id) | (Deck.is_public == True)).all()
+    )
 
 
 def get_homepage_public_data(featured_limit=3, tag_limit=5):
-    public_decks = Deck.query.filter(Deck.is_public == True).all()
+    public_decks = get_accessible_decks(None)
+    eligible_featured_decks = [deck for deck in public_decks if deck.is_featured]
     featured_limit = max(0, int(featured_limit))
     tag_limit = max(0, int(tag_limit))
 
     featured_decks = []
-    if public_decks and featured_limit > 0:
-        featured_decks = random.sample(public_decks, min(featured_limit, len(public_decks)))
+    if eligible_featured_decks and featured_limit > 0:
+        day_seed = datetime.now().date().isoformat()
+        daily_rng = random.Random(day_seed)
+        featured_pool = sorted(eligible_featured_decks, key=lambda deck: deck.deck_id)
+        featured_decks = daily_rng.sample(featured_pool, min(featured_limit, len(featured_pool)))
 
     tag_counter = Counter()
     for deck in public_decks:
@@ -872,7 +922,8 @@ def get_homepage_public_data(featured_limit=3, tag_limit=5):
                 'deck_id': deck.deck_id,
                 'description': deck.description,
                 'detailed_description': deck.detailed_description,
-                'card_count': len(deck.cards),
+                'card_count': getattr(deck, 'card_count', 0),
+                'is_featured': deck.is_featured,
             }
             for deck in featured_decks
         ],
@@ -893,13 +944,14 @@ def delete_deck(deck_id):
         return True
     return False
 
-def edit_deck(deck_id, description, sortable=False, is_public=False, detailed_description=None, tags=None):
+def edit_deck(deck_id, description, sortable=False, is_public=False, is_featured=False, detailed_description=None, tags=None):
     deck = Deck.query.get(deck_id)
     if deck:
         description, detailed_description, tags = _validate_deck_metadata(description, detailed_description, tags)
         deck.description = description
         deck.sortable = sortable
         deck.is_public = is_public
+        deck.is_featured = is_featured
         deck.detailed_description = detailed_description
         deck.tags = tags
         db.session.commit()
@@ -1183,14 +1235,16 @@ def _rebuild_content_fts_index():
 
 def _fallback_search_public_content(query_text):
     search_term = f"%{query_text}%"
-    decks = Deck.query.filter(
-        Deck.is_public == True,
-        db.or_(
-            Deck.description.ilike(search_term),
-            Deck.detailed_description.ilike(search_term),
-            Deck.tags.ilike(search_term)
-        )
-    ).all()
+    decks = _attach_deck_card_counts(
+        _deck_query_with_card_counts().filter(
+            Deck.is_public == True,
+            db.or_(
+                Deck.description.ilike(search_term),
+                Deck.detailed_description.ilike(search_term),
+                Deck.tags.ilike(search_term)
+            )
+        ).all()
+    )
     quizzes = Quiz.query.filter(
         Quiz.is_public == True,
         db.or_(
@@ -1420,7 +1474,7 @@ def search_public_content(query_text, limit=50, user_id=None):
             'tags': deck.tags,
             'sortable': deck.sortable,
             'is_public': deck.is_public,
-            'card_count': len(deck.cards),
+            'card_count': getattr(deck, 'card_count', len(deck.cards)),
             'score': 0.0,
             'match_reasons': ['fallback match'],
         } for deck in decks]
@@ -2246,6 +2300,7 @@ with app.app_context():
     _ensure_user_theme_preference_column()
     _ensure_user_mastery_strategy_preference_column()
     _ensure_user_match_strategy_preference_column()
+    _ensure_deck_is_featured_column()
     _ensure_match_pair_progress_table()
 
 # Route registration lives in routes.py so view handlers stay in one place.

@@ -90,6 +90,20 @@ Migration rollback:
 - Logs are arriving
 - Error monitoring is receiving events
 
+## Sample Deck Seed
+
+After migrations have completed, create the `cards` content account and the 15
+reviewed public sample decks with:
+
+```powershell
+python -m scripts.seed_sample_decks
+```
+
+The command is additive and safe to run again: existing sample deck titles
+owned by `cards` are skipped. It also rebuilds the public search index when it
+adds content. To deliberately delete and recreate those decks, including their
+associated learner progress, run `python -m scripts.seed_sample_decks --replace`.
+
 ## Privacy And Account Operations
 
 Until richer product workflows exist, account deletion and role changes should be treated as administrative operations with audit review in logs.
