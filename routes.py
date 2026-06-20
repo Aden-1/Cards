@@ -625,6 +625,17 @@ def _owned_deck(deck_id, user_id):
     return Deck.query.filter_by(deck_id=deck_id, owned_by=user_id).first()
 
 
+def _directly_accessible_deck(deck_id, user_id):
+    """Allow an owned deck or an explicitly linked public deck."""
+    from models import Deck, db
+    if not deck_id:
+        return None
+    deck = db.session.get(Deck, deck_id)
+    if not deck or (deck.owned_by != user_id and not deck.is_public):
+        return None
+    return deck
+
+
 def _owned_quiz(quiz_id, user_id):
     from models import Quiz
     if not quiz_id:
@@ -693,17 +704,17 @@ def edit():
 # Render the study page.
 def view():
     user_id = _current_user_id()
-    from app import get_accessible_decks, get_deck_details
+    from app import get_deck_details, get_user_decks
 
-    decks = get_accessible_decks(user_id)
+    decks = get_user_decks(user_id) if user_id is not None else []
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
-    accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
-    if selected_deck_id not in accessible_deck_ids:
+    selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
+    if not selected_deck_record:
         selected_deck_id = None
     study_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False) if selected_deck_id else None
-    selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
+    selected_deck_is_owned = bool(selected_deck_record and selected_deck_record.owned_by == user_id)
 
     return render_template('view.html', user_id=user_id, decks=deck_data, study_deck=study_deck, selected_deck_id=selected_deck_id, selected_deck_is_owned=selected_deck_is_owned)
 
@@ -713,16 +724,16 @@ def view():
 def match():
     user = _current_user()
     user_id = user.user_id if user else None
-    from app import get_accessible_decks, get_match_game_data, get_match_strategy_catalog, normalize_match_strategy
+    from app import get_match_game_data, get_match_strategy_catalog, get_user_decks, normalize_match_strategy
 
-    decks = get_accessible_decks(user_id)
+    decks = get_user_decks(user_id) if user_id is not None else []
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_question_id = _int_value(request.args.get('selected_question'))
     error_message = request.args.get('error')
-    accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
-    if selected_deck_id not in accessible_deck_ids:
+    selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
+    if not selected_deck_record:
         selected_deck_id = None
     match_strategy_catalog = get_match_strategy_catalog(include_account_only=bool(user))
     selected_strategy = normalize_match_strategy(
@@ -730,7 +741,7 @@ def match():
         include_account_only=bool(user),
     )
     match_deck = get_match_game_data(user_id, selected_deck_id, strategy=selected_strategy) if selected_deck_id else None
-    selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
+    selected_deck_is_owned = bool(selected_deck_record and selected_deck_record.owned_by == user_id)
 
     return render_template(
         'match.html',
@@ -749,21 +760,21 @@ def match():
 # Render the reorder game page.
 def reorder():
     user_id = _current_user_id()
-    from app import get_accessible_decks, get_deck_details
+    from app import get_deck_details, get_user_decks
 
-    decks = get_accessible_decks(user_id)
+    decks = get_user_decks(user_id) if user_id is not None else []
     # Only sortable decks can enter this game.
     sortable_decks = [deck for deck in decks if deck.sortable]
     deck_data = [_deck_summary_payload(deck, user_id) for deck in sortable_decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
-    sortable_deck_ids = {deck['deck_id'] for deck in deck_data}
-    if selected_deck_id not in sortable_deck_ids:
+    selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
+    if not selected_deck_record or not selected_deck_record.sortable:
         selected_deck_id = None
 
     # Start each round with a shuffled card list.
     reorder_deck = get_deck_details(selected_deck_id, shuffle_cards=True, shuffle_answers=False) if selected_deck_id else None
-    selected_deck_is_owned = any(deck['deck_id'] == selected_deck_id and deck['is_owned'] for deck in deck_data)
+    selected_deck_is_owned = bool(selected_deck_record and selected_deck_record.owned_by == user_id)
 
     return render_template(
         'reorder.html',
@@ -778,19 +789,21 @@ def reorder():
 # Mastery mode page (spaced repetition-style practice).
 @login_required
 def master():
-    from app import get_accessible_decks, get_mastery_snapshot, get_mastery_strategy_catalog, normalize_mastery_strategy
+    from app import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks, normalize_mastery_strategy
 
     user = _current_user()
     user_id = user.user_id if user else None
-    decks = get_accessible_decks(user_id)
+    decks = get_user_decks(user_id)
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
-    accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
-    if selected_deck_id not in accessible_deck_ids:
+    selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
+    if not selected_deck_record:
         selected_deck_id = None
 
     selected_deck_meta = next((deck for deck in deck_data if deck['deck_id'] == selected_deck_id), None)
+    if not selected_deck_meta and selected_deck_record:
+        selected_deck_meta = _deck_summary_payload(selected_deck_record, user_id)
     requested_strategy = request.args.get('strategy')
     selected_strategy = normalize_mastery_strategy(
         requested_strategy or (user.mastery_strategy_preference if user else None),
@@ -1518,9 +1531,9 @@ def copy_public_deck_route():
 
 # Render the quiz launcher and quiz data.
 def quiz_route():
-    from app import create_quiz_attempt, get_accessible_decks, get_accessible_custom_quizzes, generate_quiz_data
+    from app import create_quiz_attempt, get_accessible_custom_quizzes, generate_quiz_data, get_user_decks
     user_id = _current_user_id()
-    decks = get_accessible_decks(user_id)
+    decks = get_user_decks(user_id) if user_id is not None else []
     deck_data = [_quiz_launcher_deck_payload(deck, user_id) for deck in decks]
     
     custom_quizzes = get_accessible_custom_quizzes(user_id)
@@ -1546,8 +1559,8 @@ def quiz_route():
         elif selected_custom_quiz_id:
             selected_source = f'custom:{selected_custom_quiz_id}'
 
-    accessible_deck_ids = {deck['deck_id'] for deck in deck_data}
-    if selected_deck_id not in accessible_deck_ids:
+    selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
+    if not selected_deck_record:
         selected_deck_id = None
     if selected_custom_quiz_id not in accessible_custom_quiz_ids:
         selected_custom_quiz_id = None

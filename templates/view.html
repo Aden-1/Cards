@@ -13,7 +13,7 @@
         <div class="panel-header">
             <div>
                 <h2 class="h4 mb-1">Choose Deck</h2>
-                <p class="muted-copy mb-0">{% if current_user %}Your decks and public decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p>
+                <p class="muted-copy mb-0">{% if current_user %}Your decks{% else %}Find a public deck through search or open a direct link.{% endif %}</p>
             </div>
             {% if selected_deck_id and selected_deck_is_owned %}
             <a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>
@@ -43,7 +43,7 @@
             </div>
         </div>
         {% else %}
-        <div class="empty-card">No public decks are available yet.{% if current_user %} <a href="{{ url_for('edit') }}">Create one</a>.{% else %} <a href="{{ url_for('login') }}">Log in to create one</a>.{% endif %}</div>
+        <div class="empty-card">You do not have any decks yet. <a href="{{ url_for('edit') }}">Create one</a>.</div>
         {% endif %}
     </aside>
     <section class="flash-stage" aria-live="polite">

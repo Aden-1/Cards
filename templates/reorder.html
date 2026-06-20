@@ -10,7 +10,7 @@
 </section>
 <section class="selection-grid fade-in">
     <aside class="selection-panel">
-        <div class="panel-header"><div><h2 class="h4 mb-1">Choose Deck</h2><p class="muted-copy mb-0">{% if current_user %}Sorted decks{% else %}Find a public deck through search or log in to browse from here.{% endif %}</p></div>{% if selected_deck_id and selected_deck_is_owned %}<a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>{% endif %}</div>
+        <div class="panel-header"><div><h2 class="h4 mb-1">Choose Deck</h2><p class="muted-copy mb-0">{% if current_user %}Your sorted decks{% else %}Find a public deck through search or open a direct link.{% endif %}</p></div>{% if selected_deck_id and selected_deck_is_owned %}<a class="btn-surface" href="{{ url_for('edit', deck_id=selected_deck_id) }}">Edit</a>{% endif %}</div>
         {% if current_user and decks %}
         <form method="get" action="{{ url_for('reorder') }}" class="section-stack">
             <div><label class="form-label" for="deck_id">Deck</label><select class="form-select" id="deck_id" name="deck_id" required><option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>{% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}</select></div>
@@ -22,7 +22,7 @@
             <div class="deck-actions"><a class="btn-primary-surface" href="{{ url_for('search') }}">Search Public Decks</a><a class="btn-surface" href="{{ url_for('login', next=url_for('reorder')) }}">Log In</a></div>
         </div>
         {% else %}
-        <div class="empty-card">No sorted decks are available yet.</div>
+        <div class="empty-card">You do not have any sorted decks yet.</div>
         {% endif %}
     </aside>
     <section class="flash-stage" id="reorderSection">

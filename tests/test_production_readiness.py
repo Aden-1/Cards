@@ -62,6 +62,42 @@ class ProductionReadinessTests(unittest.TestCase):
         brotli_response.close()
         gzip_response.close()
 
+    def test_learn_pages_list_only_owned_decks_but_allow_direct_public_links(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('learn_owner', 'password12345', email='learn-owner@example.test')
+            other = cards_app.create_user('learn_other', 'password12345', email='learn-other@example.test')
+            owned = cards_app.create_deck(owner.user_id, 'Owned Learn Deck', sortable=True)
+            public = cards_app.create_deck(other.user_id, 'Public Direct Deck', sortable=True, is_public=True)
+            private = cards_app.create_deck(other.user_id, 'Foreign Private Deck', sortable=True)
+            public_card = Card(deck_id=public.deck_id, question='Public direct question?', position=1)
+            db.session.add(public_card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=public_card.card_id, answer='Public answer'))
+            db.session.commit()
+            owner_id = owner.user_id
+            public_id = public.deck_id
+            private_id = private.deck_id
+
+        self._login_session(owner_id)
+        for path in ('/view', '/match', '/reorder', '/master', '/quiz'):
+            page = self.client.get(path).get_data(as_text=True)
+            self.assertIn('Owned Learn Deck', page, path)
+            self.assertNotIn('Public Direct Deck', page, path)
+            self.assertNotIn('Foreign Private Deck', page, path)
+
+        direct_public_page = self.client.get(f'/view?deck_id={public_id}').get_data(as_text=True)
+        blocked_private_page = self.client.get(f'/view?deck_id={private_id}').get_data(as_text=True)
+        public_detail_page = self.client.get(f'/public_deck?deck_id={public_id}').get_data(as_text=True)
+
+        self.assertIn('Public Direct Deck', direct_public_page)
+        self.assertNotIn('Foreign Private Deck', blocked_private_page)
+        self.assertIn('Public Direct Deck', public_detail_page)
+
+        with self.client.session_transaction() as current_session:
+            current_session.clear()
+        guest_learn_page = self.client.get('/view').get_data(as_text=True)
+        self.assertNotIn('Public Direct Deck', guest_learn_page)
+
     def test_trusted_hosts_reject_unexpected_hostname(self):
         previous_hosts = cards_app.app.config.get('TRUSTED_HOSTS')
         cards_app.app.config['TRUSTED_HOSTS'] = ['cards.example.test']
