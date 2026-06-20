@@ -1,5 +1,8 @@
 import os
+import gzip
 import unittest
+
+import brotli
 
 
 os.environ['APP_ENV'] = 'testing'
@@ -46,6 +49,18 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(response.get_json(), {'status': 'ok'})
         self.assertIn('Content-Security-Policy', response.headers)
         self.assertEqual(response.headers['X-Frame-Options'], 'DENY')
+
+    def test_responses_support_brotli_and_gzip_compression(self):
+        brotli_response = self.client.get('/', headers={'Accept-Encoding': 'br'})
+        gzip_response = self.client.get('/', headers={'Accept-Encoding': 'gzip'})
+
+        self.assertEqual(brotli_response.headers.get('Content-Encoding'), 'br')
+        self.assertEqual(gzip_response.headers.get('Content-Encoding'), 'gzip')
+        self.assertIn('Accept-Encoding', brotli_response.headers.get('Vary', ''))
+        self.assertIn(b'CARDS', brotli.decompress(brotli_response.data))
+        self.assertIn(b'CARDS', gzip.decompress(gzip_response.data))
+        brotli_response.close()
+        gzip_response.close()
 
     def test_trusted_hosts_reject_unexpected_hostname(self):
         previous_hosts = cards_app.app.config.get('TRUSTED_HOSTS')

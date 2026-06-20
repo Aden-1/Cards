@@ -15,6 +15,7 @@ from email.message import EmailMessage
 
 import click
 from flask import Flask
+from flask_compress import Compress
 from flask_migrate import Migrate
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import text
@@ -127,6 +128,10 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=_env_int('SESSION_LIFE
 app.config['IS_PRODUCTION'] = is_production
 app.config['PREFERRED_URL_SCHEME'] = 'https' if is_production else 'http'
 app.config['MAX_CONTENT_LENGTH'] = _env_int('MAX_CONTENT_LENGTH', 2 * 1024 * 1024)
+app.config['COMPRESS_ALGORITHM'] = ['br', 'gzip']
+app.config['COMPRESS_ALGORITHM_STREAMING'] = ['br', 'gzip']
+app.config['COMPRESS_BR_LEVEL'] = _env_int('COMPRESS_BR_LEVEL', 6)
+app.config['COMPRESS_MIN_SIZE'] = _env_int('COMPRESS_MIN_SIZE', 500)
 app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] = _env_int('PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS', 3600)
 app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
     'PUBLIC_REGISTRATION_ENABLED',
@@ -149,6 +154,8 @@ if is_production and not trusted_hosts:
 app.config['TRUSTED_HOSTS'] = trusted_hosts
 if is_production:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+compress = Compress(app)
 
 # Database configuration.
 # Use DATABASE_URL in deployed environments with local SQLite fallback.
