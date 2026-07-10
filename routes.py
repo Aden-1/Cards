@@ -1,11 +1,10 @@
 import re
 import secrets
-import time
-from collections import defaultdict, deque
 from functools import wraps
-from threading import Lock
 
 from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 
@@ -111,51 +110,39 @@ def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_
     return None
 
 
-# Request-throttling helpers.
-_rate_limit_buckets = defaultdict(deque)
-_rate_limit_lock = Lock()
-_RATE_LIMITS = {
-    'login': (10, 15 * 60),
-    'register': (5, 60 * 60),
-    'forgot_password': (5, 60 * 60),
-    'reset_password': (10, 60 * 60),
-    'account': (10, 60 * 60),
-    'delete_account': (3, 60 * 60),
-    'admin_users': (30, 60 * 60),
-    'start_quiz': (10, 60),
-}
-
-
-def _rate_limit_key(endpoint):
-    client = request.remote_addr or 'unknown'
-    if endpoint in ('login', 'register'):
-        return f'{endpoint}:{client}'
+# Shared request-throttling helpers. In production the configured Redis
+# backend is required; Flask-Limiter expires fixed-window keys automatically.
+def _rate_limit_key():
     user_id = session.get('user_id')
-    return f'{endpoint}:{user_id or client}'
+    if user_id:
+        return f'user:{user_id}'
+    return f'ip:{get_remote_address() or "unknown"}'
 
 
-def _apply_rate_limits():
-    if request.method != 'POST' or request.endpoint not in _RATE_LIMITS:
-        return None
+limiter = Limiter(key_func=_rate_limit_key)
 
-    limit, window_seconds = _RATE_LIMITS[request.endpoint]
-    now = time.monotonic()
-    key = _rate_limit_key(request.endpoint)
-    with _rate_limit_lock:
-        attempts = _rate_limit_buckets[key]
-        while attempts and now - attempts[0] >= window_seconds:
-            attempts.popleft()
-        if len(attempts) >= limit:
-            retry_after = max(1, int(window_seconds - (now - attempts[0])))
-            if _wants_json():
-                response = jsonify({'error': 'Too many requests. Please try again later.'})
-            else:
-                response = current_app.response_class('Too many requests. Please try again later.', status=429)
-            response.status_code = 429
-            response.headers['Retry-After'] = str(retry_after)
-            return response
-        attempts.append(now)
-    return None
+
+def _configured_limit(policy_name):
+    """Resolve a policy at request time so environment-backed config is testable."""
+    return lambda: current_app.config['RATE_LIMITS'][policy_name]
+
+
+def _limit(view_func, policy_name, methods):
+    return limiter.limit(_configured_limit(policy_name), methods=methods)(view_func)
+
+
+def _rate_limit_response(error):
+    message = 'Too many requests. Please try again later.'
+    original_response = error.get_response()
+    retry_after = original_response.headers.get('Retry-After')
+    if _wants_json():
+        response = jsonify({'error': message})
+    else:
+        response = current_app.response_class(message, status=429, mimetype='text/plain')
+    response.status_code = 429
+    if retry_after:
+        response.headers['Retry-After'] = retry_after
+    return response
 
 
 def _prepare_security_request():
@@ -395,10 +382,8 @@ def login():
 
 def forgot_password():
     from app import (
-        build_password_reset_url,
-        generate_password_reset_token,
+        enqueue_password_reset_email,
         get_user_by_email,
-        send_password_reset_email,
     )
 
     success_message = 'If that email matches an active account, a password reset link has been sent.'
@@ -421,18 +406,20 @@ def forgot_password():
 
     user = get_user_by_email(email)
     if user and user.is_active and email_delivery_available:
-        token = generate_password_reset_token(user)
-        reset_url = build_password_reset_url(token) or url_for('reset_password', token=token, _external=True)
+        request_id = secrets.token_hex(12)
         try:
-            send_password_reset_email(user, reset_url)
-        except Exception:
-            current_app.logger.exception('password_reset_email_failed user_id=%s', user.user_id)
-            return render_template(
-                'forgot_password.html',
-                error='Password reset email delivery is temporarily unavailable. Please try again later.',
-                email_delivery_available=email_delivery_available,
-            ), 503
-        current_app.logger.info('password_reset_requested user_id=%s', user.user_id)
+            enqueue_password_reset_email(user.user_id, request_id)
+        except Exception as exc:
+            current_app.logger.error(
+                'password_reset_queue_enqueue_failed request_id=%s user_id=%s failure_class=%s',
+                request_id,
+                user.user_id,
+                type(exc).__name__,
+            )
+        else:
+            current_app.logger.info(
+                'password_reset_queued request_id=%s user_id=%s', request_id, user.user_id
+            )
 
     return render_template(
         'forgot_password.html',
@@ -1839,10 +1826,11 @@ def edit_quiz_question_route():
 # Route registration.
 # Register every route on the Flask app.
 def register_routes(app):
+    limiter.init_app(app)
     app.before_request(_prepare_security_request)
-    app.before_request(_apply_rate_limits)
     app.before_request(_validate_csrf)
     app.after_request(_set_security_headers)
+    app.register_error_handler(429, _rate_limit_response)
 
     @app.context_processor
     def inject_security_context():
@@ -1861,56 +1849,56 @@ def register_routes(app):
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
-    app.add_url_rule('/register', endpoint='register', view_func=register, methods=['GET', 'POST'])
-    app.add_url_rule('/login', endpoint='login', view_func=login, methods=['GET', 'POST'])
-    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=forgot_password, methods=['GET', 'POST'])
-    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=reset_password, methods=['GET', 'POST'])
+    app.add_url_rule('/register', endpoint='register', view_func=_limit(register, 'register', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/login', endpoint='login', view_func=_limit(login, 'login', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=_limit(forgot_password, 'forgot_password', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=_limit(reset_password, 'reset_password', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
-    app.add_url_rule('/account', endpoint='account', view_func=account, methods=['GET', 'POST'])
-    app.add_url_rule('/account/delete', endpoint='delete_account', view_func=delete_account, methods=['POST'])
+    app.add_url_rule('/account', endpoint='account', view_func=_limit(account, 'account', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/account/delete', endpoint='delete_account', view_func=_limit(delete_account, 'delete_account', ['POST']), methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=update_theme_route, methods=['POST'])
-    app.add_url_rule('/admin/users', endpoint='admin_users', view_func=admin_users, methods=['GET', 'POST'])
+    app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/master', endpoint='master', view_func=master, methods=['GET'])
     app.add_url_rule('/match', endpoint='match', view_func=match)
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
-    app.add_url_rule('/search', endpoint='search', view_func=search_route)
+    app.add_url_rule('/search', endpoint='search', view_func=_limit(search_route, 'search', ['GET']))
     app.add_url_rule('/public_deck', endpoint='public_deck', view_func=public_deck_route, methods=['GET'])
-    app.add_url_rule('/copy_public_deck', endpoint='copy_public_deck', view_func=copy_public_deck_route, methods=['POST'])
+    app.add_url_rule('/copy_public_deck', endpoint='copy_public_deck', view_func=_limit(copy_public_deck_route, 'public_copy', ['POST']), methods=['POST'])
     app.add_url_rule('/public_quiz', endpoint='public_quiz', view_func=public_quiz_route, methods=['GET'])
-    app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=copy_public_quiz_route, methods=['POST'])
+    app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=_limit(copy_public_quiz_route, 'public_copy', ['POST']), methods=['POST'])
     app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
-    app.add_url_rule('/quiz/start', endpoint='start_quiz', view_func=start_quiz_route, methods=['POST'])
+    app.add_url_rule('/quiz/start', endpoint='start_quiz', view_func=_limit(start_quiz_route, 'start_quiz', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_quiz', endpoint='edit_quiz_route', view_func=edit_quiz_route, methods=['GET'])
     
     # Custom Quiz operations
-    app.add_url_rule('/create_custom_quiz', endpoint='create_custom_quiz', view_func=create_custom_quiz_route, methods=['POST'])
-    app.add_url_rule('/edit_custom_quiz', endpoint='edit_custom_quiz', view_func=edit_custom_quiz_metadata_route, methods=['POST'])
-    app.add_url_rule('/delete_custom_quiz', endpoint='delete_custom_quiz', view_func=delete_custom_quiz_route, methods=['POST'])
-    app.add_url_rule('/add_quiz_question', endpoint='add_quiz_question', view_func=add_quiz_question_route, methods=['POST'])
-    app.add_url_rule('/edit_quiz_question', endpoint='edit_quiz_question', view_func=edit_quiz_question_route, methods=['POST'])
-    app.add_url_rule('/delete_quiz_question', endpoint='delete_quiz_question', view_func=delete_quiz_question_route, methods=['POST'])
-    app.add_url_rule('/score_quiz', endpoint='score_quiz', view_func=score_quiz_route, methods=['POST'])
-    app.add_url_rule('/master/rate', endpoint='master_rate', view_func=master_rate_route, methods=['POST'])
-    app.add_url_rule('/master/reset', endpoint='master_reset', view_func=master_reset_route, methods=['POST'])
+    app.add_url_rule('/create_custom_quiz', endpoint='create_custom_quiz', view_func=_limit(create_custom_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/edit_custom_quiz', endpoint='edit_custom_quiz', view_func=_limit(edit_custom_quiz_metadata_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/delete_custom_quiz', endpoint='delete_custom_quiz', view_func=_limit(delete_custom_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/add_quiz_question', endpoint='add_quiz_question', view_func=_limit(add_quiz_question_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/edit_quiz_question', endpoint='edit_quiz_question', view_func=_limit(edit_quiz_question_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/delete_quiz_question', endpoint='delete_quiz_question', view_func=_limit(delete_quiz_question_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/score_quiz', endpoint='score_quiz', view_func=_limit(score_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/master/rate', endpoint='master_rate', view_func=_limit(master_rate_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/master/reset', endpoint='master_reset', view_func=_limit(master_reset_route, 'content_mutation', ['POST']), methods=['POST'])
 
     # Deck operations
-    app.add_url_rule('/create_deck', endpoint='create_deck', view_func=create_deck_route, methods=['POST'])
-    app.add_url_rule('/import_deck', endpoint='import_deck', view_func=import_deck_route, methods=['POST'])
+    app.add_url_rule('/create_deck', endpoint='create_deck', view_func=_limit(create_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/import_deck', endpoint='import_deck', view_func=_limit(import_deck_route, 'import_deck', ['POST']), methods=['POST'])
     app.add_url_rule('/get_decks', endpoint='get_decks', view_func=get_deck_list_route, methods=['POST'])
-    app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=delete_deck_route, methods=['POST'])
-    app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=edit_deck_route, methods=['POST'])
+    app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=_limit(delete_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=_limit(edit_deck_route, 'content_mutation', ['POST']), methods=['POST'])
 
     # Card operations
-    app.add_url_rule('/add_card', endpoint='add_card', view_func=add_card_route, methods=['POST'])
-    app.add_url_rule('/delete_card', endpoint='delete_card', view_func=delete_card_route, methods=['POST'])
+    app.add_url_rule('/add_card', endpoint='add_card', view_func=_limit(add_card_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/delete_card', endpoint='delete_card', view_func=_limit(delete_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/match_answer', endpoint='match_answer', view_func=match_answer_route, methods=['POST'])
     app.add_url_rule('/match_attempt', endpoint='match_attempt', view_func=match_attempt_route, methods=['POST'])
-    app.add_url_rule('/delete_answer', endpoint='delete_answer', view_func=delete_answer_route, methods=['POST'])
+    app.add_url_rule('/delete_answer', endpoint='delete_answer', view_func=_limit(delete_answer_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/list_cards', endpoint='list_cards', view_func=list_cards_route, methods=['POST'])
     app.add_url_rule('/get_card', endpoint='get_card', view_func=get_card_route, methods=['POST'])
-    app.add_url_rule('/edit_card', endpoint='edit_card', view_func=edit_card_route, methods=['POST'])
-    app.add_url_rule('/move_card', endpoint='move_card', view_func=move_card_route, methods=['POST'])
-    app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=swap_cards_route, methods=['POST'])
+    app.add_url_rule('/edit_card', endpoint='edit_card', view_func=_limit(edit_card_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/move_card', endpoint='move_card', view_func=_limit(move_card_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=_limit(swap_cards_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=check_reorder_route, methods=['POST'])

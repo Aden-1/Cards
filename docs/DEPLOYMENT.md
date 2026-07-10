@@ -10,14 +10,17 @@ Set these for both staging and production:
 - `SECRET_KEY` as a long random secret
 - `DATABASE_URL` pointing at a PostgreSQL database
 - `TRUSTED_HOSTS` as a comma-separated list of the app's public hostnames
+- `RATELIMIT_STORAGE_URI` as a shared `redis://` or `rediss://` URL
 - `PUBLIC_REGISTRATION_ENABLED=false` for the initial production rollout
 - `MAX_CONTENT_LENGTH=2097152` to bound JSON/form/import request bodies
 - `SESSION_LIFETIME_DAYS=7` unless a different authenticated-session policy is chosen
 - `MAIL_SERVER`, `MAIL_PORT`, and `MAIL_DEFAULT_SENDER` so password reset emails can be delivered
+- `PASSWORD_RESET_QUEUE_URL` as a `redis://` or `rediss://` URL for RQ (it may use the same Redis service as `RATELIMIT_STORAGE_URI`)
+- `PASSWORD_RESET_URL_BASE` as the public `/reset-password` URL base (required with email in production)
 
 Recommended connection/runtime settings:
 
-- `WEB_CONCURRENCY=1` until rate limiting is backed by Redis or equivalent edge controls
+- Set `WEB_CONCURRENCY` based on capacity after Redis-backed rate limiting is configured; it is no longer constrained to one worker
 - `GUNICORN_TIMEOUT=25`
 - `GUNICORN_GRACEFUL_TIMEOUT=25`
 - `DB_POOL_SIZE=5`
@@ -26,6 +29,8 @@ Recommended connection/runtime settings:
 - `DB_POOL_RECYCLE=300`
 - `MAIL_USE_TLS=true`
 - `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS=3600`
+- `PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS=2`
+- `PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS=10`
 - `QUIZ_ATTEMPT_MAX_AGE_SECONDS=7200`
 - `MAX_ACTIVE_QUIZ_ATTEMPTS=5`
 - `MAX_QUIZ_QUESTIONS=50`
@@ -40,9 +45,20 @@ The [Procfile](C:/Users/adent/PycharmProjects/Cards/Procfile:1) keeps the migrat
 ```text
 release: python -m flask db upgrade
 web: gunicorn app:app ...
+worker: rq worker password-reset-email --url ${PASSWORD_RESET_QUEUE_URL:-$RATELIMIT_STORAGE_URI} --serializer rq.serializers.JSONSerializer --with-scheduler
 ```
 
 That means each deploy should run migrations before the web process starts serving traffic.
+
+## Password-Reset Worker
+
+Run one or more worker processes in every environment where password recovery is enabled. The worker uses the same Redis service as rate limiting by default, but `PASSWORD_RESET_QUEUE_URL` can point to a dedicated Redis database. It must use `--with-scheduler` so the 30-second, 2-minute, and 5-minute retries execute.
+
+```powershell
+rq worker password-reset-email --url $env:PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler
+```
+
+The queue stores only the user ID and a random monitoring correlation ID. The worker generates the signed reset token immediately before delivery. SMTP socket operations use the bounded `PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS` value (1-30 seconds), and a failed job is retained for 24 hours for monitoring after its three retries are exhausted.
 
 ## Staging
 
@@ -82,6 +98,8 @@ These steps still need to be performed in your hosting platform:
 8. Perform the production smoke checklist and explicitly decide when to set `PUBLIC_REGISTRATION_ENABLED=true`.
 9. Rehearse launch and rollback procedures from [docs/OPERATIONS.md](C:/Users/adent/PycharmProjects/Cards/docs/OPERATIONS.md:1).
 
-## Platform Limitations To Resolve Before Scale-Out
+## Shared Abuse Protection
 
-The current login and mutation rate limiter is stored in each web process. The default `WEB_CONCURRENCY=1` preserves consistent limits for an initial single-process rollout, but it is not a distributed control. Before raising worker count, scaling to multiple web processes, or treating it as abuse protection, replace it with a shared Redis-backed rate limiter or edge/WAF rule set.
+Production startup requires `RATELIMIT_STORAGE_URI` with a Redis scheme. Flask-Limiter stores bounded fixed-window counters in Redis, which shares limits across web workers and expires keys when their windows end. Configure `RATELIMIT_KEY_PREFIX` when Redis is shared with another application, and configure individual `RATE_LIMIT_*` variables to tune the endpoint policies without a code change.
+
+The application trusts exactly one proxy hop in production (`ProxyFix(x_for=1, x_proto=1, x_host=1)`). Keep that setting aligned with the deployment topology; do not expose the app directly behind untrusted clients that can inject forwarded headers.

@@ -63,7 +63,7 @@ Fields:
 
 Response:
 - `GET`: rendered HTML reset-request page.
-- `POST`: rendered HTML page with a generic success message, or an error if email delivery is unavailable.
+- `POST`: for a syntactically valid email, always renders the same generic success page whether an account exists or the queue/provider is unavailable. Delivery is asynchronous and is never reflected in the public response.
 
 ### Reset Password
 **GET, POST** `/reset-password`

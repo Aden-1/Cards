@@ -107,7 +107,9 @@ python -m flask db upgrade
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
 - Responses include a nonce-based Content Security Policy and standard browser security headers
-- Login, registration, account updates, and administrative changes are rate limited per web process
+- Flask-Limiter applies user/IP-aware limits to authentication, recovery, search, quiz starts, imports, public copies, and expensive content mutations
+- Development and tests use an in-memory limiter; production requires Redis so all workers share limits
+- Password-reset delivery runs in an RQ worker on Redis; valid requests receive a uniform response and reset tokens are generated only by the worker
 - New passwords must be at least 12 characters and contain a letter and a number
 - Public registration always creates standard accounts; provision the initial administrator with `flask provision-admin --username <name> --email <email>`
 - Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
@@ -117,8 +119,9 @@ python -m flask db upgrade
 
 - Set `APP_ENV=production` and `SECRET_KEY` in production
 - Production sessions automatically use secure cookies over HTTPS
-- Keep `WEB_CONCURRENCY=1` while rate limiting is still process-local; only raise it after moving limits to a shared store or edge control
+- Set `RATELIMIT_STORAGE_URI` to a shared `redis://` or `rediss://` URL before production startup; `WEB_CONCURRENCY` can then be sized independently of rate limiting
 - Configure `MAIL_SERVER`, `MAIL_PORT`, `MAIL_DEFAULT_SENDER`, and related mail settings before enabling password recovery for users
+- Run `rq worker password-reset-email --url $PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler` wherever password recovery is enabled
 
 ## Related Docs
 

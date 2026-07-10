@@ -13,7 +13,7 @@ Recommended launch sequence:
 
 1. Deploy production with `PUBLIC_REGISTRATION_ENABLED=false`.
 2. Confirm `TRUSTED_HOSTS` includes every serving hostname before directing user traffic.
-3. Keep `WEB_CONCURRENCY=1` until shared rate limiting or an equivalent edge rule set is configured.
+3. Set `RATELIMIT_STORAGE_URI` to the shared Redis service and verify a rate-limit response before scaling workers.
 4. Create the first administrator with `flask provision-admin`.
 5. Run smoke checks for HTTPS, auth, content creation, sharing, search, health endpoints, and monitoring.
 6. Enable public registration only after those checks pass.
@@ -75,6 +75,31 @@ python -m flask cleanup-quiz-attempts
 5. Run staging smoke checks.
 6. Promote or deploy to production.
 7. Keep registration disabled until production smoke checks pass.
+
+## Rate-Limit Operations
+
+Production will not start without `RATELIMIT_STORAGE_URI=redis://...` or `rediss://...`. Redis is the source of truth for all workers; rate-limit keys expire with their fixed windows and therefore do not require a manual cleanup job. The limiter uses an authenticated user's ID when available and otherwise uses the client IP after the configured trusted proxy hop.
+
+Tune named `RATE_LIMIT_*` variables deliberately, then verify both browser and JSON clients receive `429` with `Retry-After` when a policy is exceeded. If the Redis service is unavailable, requests fail closed rather than silently reverting to per-process limits.
+
+## Password-Reset Delivery Operations
+
+Password-reset requests return the same generic response for existing and nonexistent accounts. Do not infer account existence from the response; investigate only the structured worker events using `request_id` and `user_id`. Logs deliberately exclude reset tokens, email addresses, SMTP credentials, and provider exception text.
+
+Run the RQ worker with its scheduler enabled so retries occur:
+
+```powershell
+rq worker password-reset-email --url $env:PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler
+```
+
+On Heroku, set `PASSWORD_RESET_QUEUE_URL` to the same value as `RATELIMIT_STORAGE_URI` (or use a dedicated Redis URL) and scale it after each deploy:
+
+```powershell
+heroku ps:scale worker=1 -a your-cards-production
+heroku logs --tail -a your-cards-production
+```
+
+Alert on `password_reset_queue_enqueue_failed` and terminal `password_reset_delivery_failed` events. RQ retries SMTP failures after 30 seconds, 2 minutes, and 5 minutes; its job timeout is the configured SMTP timeout plus five seconds. Failed jobs are retained for 24 hours for inspection. Restrict Redis access to trusted application and worker processes because RQ job serialization is an execution boundary.
 
 ## Rollback Procedure
 

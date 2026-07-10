@@ -66,6 +66,16 @@ def _env_list(name):
     return values or None
 
 
+def _rate_limit_storage_uri(is_production):
+    """Return the safe limiter backend for this runtime environment."""
+    storage_uri = _env_str('RATELIMIT_STORAGE_URI')
+    if is_production and not storage_uri:
+        raise RuntimeError('RATELIMIT_STORAGE_URI must be set to a shared Redis URL in production.')
+    if is_production and not storage_uri.startswith(('redis://', 'rediss://')):
+        raise RuntimeError('RATELIMIT_STORAGE_URI must use redis:// or rediss:// in production.')
+    return storage_uri or 'memory://'
+
+
 def _normalize_database_url(url, require_ssl=False):
     if url.startswith('postgres://'):
         url = url.replace('postgres://', 'postgresql+psycopg://', 1)
@@ -160,6 +170,59 @@ app.config['PASSWORD_RESET_URL_BASE'] = _env_str('PASSWORD_RESET_URL_BASE')
 app.config['PASSWORD_RESET_EMAILS_ENABLED'] = bool(
     app.config['MAIL_SERVER'] and app.config['MAIL_DEFAULT_SENDER']
 )
+app.config['PASSWORD_RESET_QUEUE_URL'] = _env_str('PASSWORD_RESET_QUEUE_URL')
+app.config['PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS'] = _env_int(
+    'PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS', 2
+)
+app.config['PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS'] = _env_int(
+    'PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS', 10
+)
+for password_reset_timeout_name, maximum in (
+    ('PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS', 5),
+    ('PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS', 30),
+):
+    timeout_value = app.config[password_reset_timeout_name]
+    if not 1 <= timeout_value <= maximum:
+        raise RuntimeError(f'{password_reset_timeout_name} must be between 1 and {maximum}.')
+
+# Flask-Limiter uses expiring Redis keys in production so request counters are
+# shared by every web worker and do not accumulate indefinitely.  Memory is
+# deliberately limited to non-production environments, where it makes local
+# development and tests self-contained.
+rate_limit_storage_uri = _rate_limit_storage_uri(is_production)
+app.config['RATELIMIT_STORAGE_URI'] = rate_limit_storage_uri
+app.config['RATELIMIT_KEY_PREFIX'] = _env_str('RATELIMIT_KEY_PREFIX', 'cards')
+app.config['RATELIMIT_HEADERS_ENABLED'] = True
+app.config['RATELIMIT_HEADER_RETRY_AFTER_VALUE'] = 'delta-seconds'
+app.config['RATELIMIT_STRATEGY'] = 'fixed-window'
+app.config['RATELIMIT_SWALLOW_ERRORS'] = False
+app.config['RATE_LIMITS'] = {
+    'login': _env_str('RATE_LIMIT_LOGIN', '10 per 15 minutes'),
+    'register': _env_str('RATE_LIMIT_REGISTER', '5 per hour'),
+    'forgot_password': _env_str('RATE_LIMIT_FORGOT_PASSWORD', '5 per hour'),
+    'reset_password': _env_str('RATE_LIMIT_RESET_PASSWORD', '10 per hour'),
+    'account': _env_str('RATE_LIMIT_ACCOUNT', '10 per hour'),
+    'delete_account': _env_str('RATE_LIMIT_DELETE_ACCOUNT', '3 per hour'),
+    'admin_users': _env_str('RATE_LIMIT_ADMIN_USERS', '30 per hour'),
+    'start_quiz': _env_str('RATE_LIMIT_START_QUIZ', '10 per minute'),
+    'search': _env_str('RATE_LIMIT_SEARCH', '60 per minute'),
+    'import_deck': _env_str('RATE_LIMIT_IMPORT_DECK', '10 per hour'),
+    'public_copy': _env_str('RATE_LIMIT_PUBLIC_COPY', '20 per hour'),
+    'content_mutation': _env_str('RATE_LIMIT_CONTENT_MUTATION', '120 per hour'),
+}
+if (
+    not app.config['PASSWORD_RESET_QUEUE_URL']
+    and rate_limit_storage_uri.startswith(('redis://', 'rediss://'))
+):
+    app.config['PASSWORD_RESET_QUEUE_URL'] = rate_limit_storage_uri
+if app.config['PASSWORD_RESET_EMAILS_ENABLED'] and not app.config['PASSWORD_RESET_QUEUE_URL']:
+    raise RuntimeError('PASSWORD_RESET_QUEUE_URL or RATELIMIT_STORAGE_URI must be set when email is enabled.')
+if is_production and app.config['PASSWORD_RESET_EMAILS_ENABLED'] and not app.config['PASSWORD_RESET_URL_BASE']:
+    raise RuntimeError('PASSWORD_RESET_URL_BASE must be set when email is enabled in production.')
+if app.config['PASSWORD_RESET_QUEUE_URL'] and not app.config['PASSWORD_RESET_QUEUE_URL'].startswith(
+    ('redis://', 'rediss://')
+):
+    raise RuntimeError('PASSWORD_RESET_QUEUE_URL must use redis:// or rediss://.')
 trusted_hosts = _env_list('TRUSTED_HOSTS')
 if is_production and not trusted_hosts:
     raise RuntimeError('TRUSTED_HOSTS must be set in production.')
@@ -856,6 +919,13 @@ def build_password_reset_url(token):
     return None
 
 
+def enqueue_password_reset_email(user_id, request_id):
+    """Queue reset delivery without serializing a reset token or email address."""
+    from jobs import enqueue_password_reset_email as enqueue_job
+
+    return enqueue_job(user_id, request_id)
+
+
 def send_password_reset_email(user, reset_url):
     message = EmailMessage()
     message['Subject'] = 'Reset your Cards password'
@@ -879,7 +949,11 @@ def send_password_reset_email(user, reset_url):
     use_tls = app.config.get('MAIL_USE_TLS')
 
     smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
-    with smtp_class(smtp_host, smtp_port, timeout=10) as smtp:
+    with smtp_class(
+        smtp_host,
+        smtp_port,
+        timeout=app.config['PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS'],
+    ) as smtp:
         if not use_ssl and use_tls:
             smtp.starttls()
         if smtp_username:

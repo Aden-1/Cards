@@ -1,7 +1,9 @@
 import os
 import gzip
+import re
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import brotli
 from sqlalchemy import event, text
@@ -23,8 +25,9 @@ class ProductionReadinessTests(unittest.TestCase):
             PUBLIC_REGISTRATION_ENABLED=True,
             PASSWORD_RESET_EMAILS_ENABLED=True,
             MAIL_DEFAULT_SENDER='noreply@example.test',
+            PASSWORD_RESET_URL_BASE='https://cards.example.test/reset-password',
         )
-        routes._rate_limit_buckets.clear()
+        routes.limiter.reset()
         self.client = cards_app.app.test_client()
         with cards_app.app.app_context():
             db.drop_all()
@@ -401,9 +404,9 @@ class ProductionReadinessTests(unittest.TestCase):
             db.session.commit()
             deck_id = deck.deck_id
 
-        previous_limit = routes._RATE_LIMITS['start_quiz']
-        routes._RATE_LIMITS['start_quiz'] = (2, 60)
-        routes._rate_limit_buckets.clear()
+        previous_limit = cards_app.app.config['RATE_LIMITS']['start_quiz']
+        cards_app.app.config['RATE_LIMITS']['start_quiz'] = '2 per minute'
+        routes.limiter.reset()
         try:
             self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
             self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
@@ -411,8 +414,104 @@ class ProductionReadinessTests(unittest.TestCase):
             self.assertEqual(limited_response.status_code, 429)
             self.assertIn('Retry-After', limited_response.headers)
         finally:
-            routes._RATE_LIMITS['start_quiz'] = previous_limit
-            routes._rate_limit_buckets.clear()
+            cards_app.app.config['RATE_LIMITS']['start_quiz'] = previous_limit
+            routes.limiter.reset()
+
+    def test_limiter_shares_ip_limits_between_clients_and_returns_json_429(self):
+        previous_limit = cards_app.app.config['RATE_LIMITS']['login']
+        cards_app.app.config['RATE_LIMITS']['login'] = '2 per hour'
+        routes.limiter.reset()
+        try:
+            first_client = cards_app.app.test_client()
+            second_client = cards_app.app.test_client()
+            for client in (first_client, second_client):
+                with client.session_transaction() as current_session:
+                    current_session['csrf_token'] = 'csrf-test-token'
+
+            first = first_client.post(
+                '/login',
+                json={'username': 'unknown', 'password': 'invalid'},
+                headers={'X-CSRFToken': 'csrf-test-token'},
+            )
+            second = second_client.post(
+                '/login',
+                json={'username': 'unknown', 'password': 'invalid'},
+                headers={'X-CSRFToken': 'csrf-test-token'},
+            )
+            limited = second_client.post(
+                '/login',
+                json={'username': 'unknown', 'password': 'invalid'},
+                headers={'X-CSRFToken': 'csrf-test-token'},
+            )
+
+            self.assertEqual(first.status_code, 401)
+            self.assertEqual(second.status_code, 401)
+            self.assertEqual(limited.status_code, 429)
+            self.assertEqual(limited.get_json(), {'error': 'Too many requests. Please try again later.'})
+            self.assertIn('Retry-After', limited.headers)
+            self.assertEqual(cards_app.app.config['RATELIMIT_STORAGE_URI'], 'memory://')
+        finally:
+            cards_app.app.config['RATE_LIMITS']['login'] = previous_limit
+            routes.limiter.reset()
+
+    def test_search_limit_is_endpoint_specific_and_returns_html_429(self):
+        previous_login_limit = cards_app.app.config['RATE_LIMITS']['login']
+        previous_search_limit = cards_app.app.config['RATE_LIMITS']['search']
+        cards_app.app.config['RATE_LIMITS']['login'] = '1 per hour'
+        cards_app.app.config['RATE_LIMITS']['search'] = '1 per hour'
+        routes.limiter.reset()
+        try:
+            self._csrf()
+            login_response = self.client.post(
+                '/login',
+                data={
+                    'csrf_token': 'csrf-test-token',
+                    'username': 'unknown',
+                    'password': 'invalid',
+                },
+            )
+            search_response = self.client.get('/search?q=term')
+            limited_search = self.client.get('/search?q=term')
+
+            self.assertEqual(login_response.status_code, 401)
+            self.assertEqual(search_response.status_code, 200)
+            self.assertEqual(limited_search.status_code, 429)
+            self.assertEqual(limited_search.mimetype, 'text/plain')
+            self.assertIn('Retry-After', limited_search.headers)
+        finally:
+            cards_app.app.config['RATE_LIMITS']['login'] = previous_login_limit
+            cards_app.app.config['RATE_LIMITS']['search'] = previous_search_limit
+            routes.limiter.reset()
+
+    def test_required_expensive_endpoints_have_limiter_wrappers(self):
+        protected_endpoints = (
+            'login', 'register', 'forgot_password', 'reset_password', 'start_quiz',
+            'search', 'import_deck', 'copy_public_deck', 'copy_public_quiz',
+            'create_deck', 'create_custom_quiz', 'add_card', 'add_quiz_question',
+        )
+
+        for endpoint in protected_endpoints:
+            view_func = cards_app.app.view_functions[endpoint]
+            self.assertTrue(hasattr(view_func, '__wrapped__'), endpoint)
+
+    def test_production_requires_redis_limiter_storage(self):
+        with mock.patch.dict(os.environ, {'RATELIMIT_STORAGE_URI': 'memory://'}):
+            with self.assertRaisesRegex(RuntimeError, 'redis'):
+                cards_app._rate_limit_storage_uri(True)
+
+        with mock.patch.dict(os.environ, {'RATELIMIT_STORAGE_URI': 'rediss://redis.example.test/0'}):
+            self.assertEqual(
+                cards_app._rate_limit_storage_uri(True),
+                'rediss://redis.example.test/0',
+            )
+
+    def test_limiter_key_prefers_authenticated_user_over_ip(self):
+        with cards_app.app.test_request_context('/', environ_base={'REMOTE_ADDR': '198.51.100.20'}):
+            routes.session['user_id'] = 42
+            self.assertEqual(routes._rate_limit_key(), 'user:42')
+
+        with cards_app.app.test_request_context('/', environ_base={'REMOTE_ADDR': '198.51.100.20'}):
+            self.assertEqual(routes._rate_limit_key(), 'ip:198.51.100.20')
 
     def test_zero_result_search_does_not_rebuild_or_write(self):
         with cards_app.app.app_context():
@@ -577,12 +676,20 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(len(content_selects), 3)
 
     def test_password_reset_flow_updates_password_with_signed_token(self):
+        import jobs
+
+        queued_jobs = []
         sent_urls = []
+        original_enqueue = cards_app.enqueue_password_reset_email
         original_send = cards_app.send_password_reset_email
+
+        def fake_enqueue(user_id, request_id):
+            queued_jobs.append((user_id, request_id))
 
         def fake_send(user, reset_url):
             sent_urls.append(reset_url)
 
+        cards_app.enqueue_password_reset_email = fake_enqueue
         cards_app.send_password_reset_email = fake_send
         try:
             with cards_app.app.app_context():
@@ -597,6 +704,9 @@ class ProductionReadinessTests(unittest.TestCase):
                 },
             )
             self.assertEqual(request_response.status_code, 200)
+            self.assertEqual(len(queued_jobs), 1)
+            self.assertEqual(sent_urls, [])
+            jobs.deliver_password_reset_email(*queued_jobs[0])
             self.assertEqual(len(sent_urls), 1)
             token = sent_urls[0].split('token=', 1)[1]
 
@@ -632,7 +742,90 @@ class ProductionReadinessTests(unittest.TestCase):
                 self.assertTrue(user.check_password('newpassword123'))
                 self.assertFalse(user.check_password('reusedpassword123'))
         finally:
+            cards_app.enqueue_password_reset_email = original_enqueue
             cards_app.send_password_reset_email = original_send
+
+    def test_password_reset_request_has_uniform_public_response_when_delivery_fails(self):
+        import jobs
+
+        queued_jobs = []
+        original_enqueue = cards_app.enqueue_password_reset_email
+
+        def successful_enqueue(user_id, request_id):
+            queued_jobs.append((user_id, request_id))
+
+        def post_reset_request(email):
+            self._csrf()
+            return self.client.post(
+                '/forgot-password',
+                data={'csrf_token': 'csrf-test-token', 'email': email},
+            )
+
+        def public_body(response):
+            return re.sub(r'nonce="[^"]+"', 'nonce="<nonce>"', response.get_data(as_text=True))
+
+        try:
+            with cards_app.app.app_context():
+                cards_app.create_user('uniform_reset', 'password12345', email='uniform@example.test')
+
+            cards_app.enqueue_password_reset_email = successful_enqueue
+            existing_response = post_reset_request('uniform@example.test')
+            missing_response = post_reset_request('missing@example.test')
+
+            def failed_enqueue(_user_id, _request_id):
+                raise ConnectionError('Redis endpoint unavailable')
+
+            cards_app.enqueue_password_reset_email = failed_enqueue
+            with self.assertLogs(cards_app.app.logger, level='ERROR') as queue_logs:
+                queue_failure_response = post_reset_request('uniform@example.test')
+
+            self.assertEqual(existing_response.status_code, 200)
+            self.assertEqual(missing_response.status_code, 200)
+            self.assertEqual(queue_failure_response.status_code, 200)
+            self.assertEqual(public_body(existing_response), public_body(missing_response))
+            self.assertEqual(public_body(existing_response), public_body(queue_failure_response))
+            self.assertEqual(existing_response.headers.get('Location'), missing_response.headers.get('Location'))
+            self.assertEqual(existing_response.headers.get('Location'), queue_failure_response.headers.get('Location'))
+            self.assertIn('If that email matches an active account', existing_response.get_data(as_text=True))
+            self.assertIn('password_reset_queue_enqueue_failed', '\n'.join(queue_logs.output))
+            self.assertNotIn('uniform@example.test', '\n'.join(queue_logs.output))
+
+            cards_app.enqueue_password_reset_email = successful_enqueue
+            provider_response = post_reset_request('uniform@example.test')
+            with mock.patch.object(
+                cards_app,
+                'send_password_reset_email',
+                side_effect=RuntimeError('provider rejected uniform@example.test password=secret'),
+            ):
+                with self.assertLogs(cards_app.app.logger, level='ERROR') as provider_logs:
+                    with self.assertRaises(jobs.PasswordResetDeliveryError):
+                        jobs.deliver_password_reset_email(*queued_jobs[-1])
+
+            self.assertEqual(provider_response.status_code, 200)
+            self.assertEqual(public_body(existing_response), public_body(provider_response))
+            logged_provider_failure = '\n'.join(provider_logs.output)
+            self.assertIn('password_reset_delivery_failed', logged_provider_failure)
+            self.assertNotIn('uniform@example.test', logged_provider_failure)
+            self.assertNotIn('secret', logged_provider_failure)
+        finally:
+            cards_app.enqueue_password_reset_email = original_enqueue
+
+    def test_password_reset_queue_job_uses_only_safe_arguments_and_retries(self):
+        import jobs
+
+        fake_queue = mock.Mock()
+        fake_queue.enqueue.return_value.id = 'job-123'
+        with mock.patch('jobs._password_reset_queue', return_value=fake_queue):
+            job_id = jobs.enqueue_password_reset_email(42, 'request-123')
+
+        self.assertEqual(job_id, 'job-123')
+        positional_args, keyword_args = fake_queue.enqueue.call_args
+        self.assertEqual(positional_args, ('jobs.deliver_password_reset_email', 42, 'request-123'))
+        self.assertEqual(keyword_args['job_timeout'], 15)
+        self.assertEqual(keyword_args['result_ttl'], 0)
+        self.assertEqual(keyword_args['failure_ttl'], 86400)
+        self.assertEqual(keyword_args['retry'].max, 3)
+        self.assertEqual(keyword_args['retry'].intervals, [30, 120, 300])
 
     def test_password_change_revokes_other_sessions(self):
         with cards_app.app.app_context():
