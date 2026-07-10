@@ -20,6 +20,8 @@ from flask_migrate import Migrate
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
+from werkzeug.security import generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, QuizAttempt, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
@@ -133,6 +135,16 @@ app.config['COMPRESS_ALGORITHM_STREAMING'] = ['br', 'gzip']
 app.config['COMPRESS_BR_LEVEL'] = _env_int('COMPRESS_BR_LEVEL', 6)
 app.config['COMPRESS_MIN_SIZE'] = _env_int('COMPRESS_MIN_SIZE', 500)
 app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] = _env_int('PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS', 3600)
+app.config['QUIZ_ATTEMPT_MAX_AGE_SECONDS'] = _env_int('QUIZ_ATTEMPT_MAX_AGE_SECONDS', 7200)
+app.config['MAX_ACTIVE_QUIZ_ATTEMPTS'] = _env_int('MAX_ACTIVE_QUIZ_ATTEMPTS', 5)
+app.config['MAX_QUIZ_QUESTIONS'] = _env_int('MAX_QUIZ_QUESTIONS', 50)
+for quiz_limit_name in (
+    'QUIZ_ATTEMPT_MAX_AGE_SECONDS',
+    'MAX_ACTIVE_QUIZ_ATTEMPTS',
+    'MAX_QUIZ_QUESTIONS',
+):
+    if app.config[quiz_limit_name] < 1:
+        raise RuntimeError(f'{quiz_limit_name} must be greater than zero.')
 app.config['PUBLIC_REGISTRATION_ENABLED'] = _env_bool(
     'PUBLIC_REGISTRATION_ENABLED',
     default=not is_production,
@@ -452,13 +464,45 @@ def export_deck_as_text(deck):
 
 
 # Custom quiz helpers.
+def _attach_quiz_question_counts(quiz_rows):
+    quizzes = []
+    for quiz, question_count in quiz_rows:
+        quiz.question_count = int(question_count or 0)
+        quizzes.append(quiz)
+    return quizzes
+
+
+def _quiz_query_with_question_counts():
+    return (
+        db.session.query(Quiz)
+        .outerjoin(QuizQuestion, QuizQuestion.quiz_id == Quiz.quiz_id)
+        .group_by(Quiz.quiz_id)
+        .add_columns(db.func.count(QuizQuestion.question_id).label('question_count'))
+    )
+
+
+def _quiz_query_with_content():
+    return Quiz.query.options(
+        selectinload(Quiz.questions).selectinload(QuizQuestion.options)
+    )
+
+
+def get_quiz_with_content(quiz_id):
+    return _quiz_query_with_content().filter(Quiz.quiz_id == quiz_id).first()
+
+
 def get_accessible_custom_quizzes(user_id=None):
+    query = _quiz_query_with_question_counts()
     if user_id is None:
-        return Quiz.query.filter(Quiz.is_public == True).all()
-    return Quiz.query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
+        return _attach_quiz_question_counts(query.filter(Quiz.is_public == True).all())
+    return _attach_quiz_question_counts(
+        query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
+    )
 
 def get_user_custom_quizzes(user_id):
-    return Quiz.query.filter_by(owned_by=user_id).all()
+    return _attach_quiz_question_counts(
+        _quiz_query_with_question_counts().filter(Quiz.owned_by == user_id).all()
+    )
 
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
     title, description, tags = _validate_quiz_metadata(title, description, tags)
@@ -498,7 +542,7 @@ def delete_custom_quiz(quiz_id):
 
 
 def copy_public_quiz_to_user(source_quiz_id, user_id):
-    source_quiz = Quiz.query.get(source_quiz_id)
+    source_quiz = get_quiz_with_content(source_quiz_id)
     if not source_quiz or not source_quiz.is_public:
         return None
 
@@ -534,7 +578,7 @@ def copy_public_quiz_to_user(source_quiz_id, user_id):
 
 
 def copy_public_deck_to_user(source_deck_id, user_id):
-    source_deck = Deck.query.get(source_deck_id)
+    source_deck = get_deck_with_content(source_deck_id)
     if not source_deck or not source_deck.is_public:
         return None
 
@@ -697,6 +741,13 @@ def rebuild_public_search_index_command():
     app.logger.info('public_search_index_rebuilt backend=%s', _search_backend_name())
     click.echo(f"Rebuilt public search index for {_search_backend_name()}.")
 
+
+@app.cli.command('cleanup-quiz-attempts')
+def cleanup_quiz_attempts_command():
+    """Delete expired server-side quiz attempts."""
+    deleted_rows = delete_expired_quiz_attempts()
+    click.echo(f'Deleted {deleted_rows} expired quiz attempt(s).')
+
 def get_user(username):
     return User.query.filter_by(username=username).first()
 
@@ -719,6 +770,7 @@ def update_user_account(user_id, username, email=None, password=None):
     user.email = email or None
     if password:
         user.set_password(password)
+        user.auth_version += 1
     db.session.commit()
     return user
 
@@ -729,12 +781,18 @@ def _account_token_serializer():
 
 def generate_password_reset_token(user):
     serializer = _account_token_serializer()
-    return serializer.dumps({'user_id': user.user_id, 'email': user.email, 'purpose': 'password_reset'})
+    return serializer.dumps({
+        'user_id': user.user_id,
+        'email': user.email,
+        'auth_version': user.auth_version,
+        'purpose': 'password_reset',
+    })
 
 
-def get_user_by_password_reset_token(token, max_age_seconds=None):
+def _load_password_reset_token_payload(token, max_age_seconds=None):
     serializer = _account_token_serializer()
-    max_age_seconds = max_age_seconds or app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS']
+    if max_age_seconds is None:
+        max_age_seconds = app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS']
     try:
         payload = serializer.loads(token, max_age=max_age_seconds)
     except (BadSignature, BadTimeSignature, SignatureExpired):
@@ -744,12 +802,51 @@ def get_user_by_password_reset_token(token, max_age_seconds=None):
         return None
     user_id = payload.get('user_id')
     email = payload.get('email')
-    if not user_id or not email:
+    auth_version = payload.get('auth_version')
+    if not user_id or not email or type(auth_version) is not int or auth_version < 0:
         return None
-    user = db.session.get(User, user_id)
-    if not user or not user.is_active or user.email != email:
+    return payload
+
+
+def get_user_by_password_reset_token(token, max_age_seconds=None):
+    payload = _load_password_reset_token_payload(token, max_age_seconds=max_age_seconds)
+    if not payload:
+        return None
+    user = db.session.get(User, payload['user_id'])
+    if (
+        not user
+        or not user.is_active
+        or user.email != payload['email']
+        or user.auth_version != payload['auth_version']
+    ):
         return None
     return user
+
+
+def reset_user_password_with_token(token, password, max_age_seconds=None):
+    """Atomically consume a reset token and revoke the user's existing sessions."""
+    payload = _load_password_reset_token_payload(token, max_age_seconds=max_age_seconds)
+    if not payload:
+        return None
+
+    updated_rows = User.query.filter(
+        User.user_id == payload['user_id'],
+        User.email == payload['email'],
+        User.is_active.is_(True),
+        User.auth_version == payload['auth_version'],
+    ).update(
+        {
+            User.password_hash: generate_password_hash(password),
+            User.auth_version: User.auth_version + 1,
+        },
+        synchronize_session=False,
+    )
+    if updated_rows != 1:
+        db.session.rollback()
+        return None
+
+    db.session.commit()
+    return payload['user_id']
 
 
 def build_password_reset_url(token):
@@ -860,6 +957,16 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
         'line_count': parsed['line_count'],
     }
 
+def _deck_query_with_content():
+    return Deck.query.options(
+        selectinload(Deck.cards).selectinload(Card.answers)
+    )
+
+
+def get_deck_with_content(deck_id):
+    return _deck_query_with_content().filter(Deck.deck_id == deck_id).first()
+
+
 def get_user_decks(user_id):
     return _attach_deck_card_counts(
         _deck_query_with_card_counts()
@@ -939,7 +1046,7 @@ def get_homepage_public_data(featured_limit=3, tag_limit=5):
 
 
 def get_deck(deck_id):
-    return Deck.query.get(deck_id)
+    return get_deck_with_content(deck_id)
 
 
 def delete_deck(deck_id):
@@ -989,14 +1096,16 @@ def search_public_quizzes(query_text):
         return []
 
     search_term = f"%{query_text}%"
-    quizzes = Quiz.query.filter(
-        Quiz.is_public == True,
-        db.or_(
-            Quiz.title.ilike(search_term),
-            Quiz.description.ilike(search_term),
-            Quiz.tags.ilike(search_term)
-        )
-    ).all()
+    quizzes = _attach_quiz_question_counts(
+        _quiz_query_with_question_counts().filter(
+            Quiz.is_public == True,
+            db.or_(
+                Quiz.title.ilike(search_term),
+                Quiz.description.ilike(search_term),
+                Quiz.tags.ilike(search_term)
+            )
+        ).all()
+    )
     return quizzes
 
 
@@ -1252,14 +1361,16 @@ def _fallback_search_public_content(query_text):
             )
         ).all()
     )
-    quizzes = Quiz.query.filter(
-        Quiz.is_public == True,
-        db.or_(
-            Quiz.title.ilike(search_term),
-            Quiz.description.ilike(search_term),
-            Quiz.tags.ilike(search_term)
-        )
-    ).all()
+    quizzes = _attach_quiz_question_counts(
+        _quiz_query_with_question_counts().filter(
+            Quiz.is_public == True,
+            db.or_(
+                Quiz.title.ilike(search_term),
+                Quiz.description.ilike(search_term),
+                Quiz.tags.ilike(search_term)
+            )
+        ).all()
+    )
     return decks, quizzes
 
 
@@ -1277,7 +1388,6 @@ def search_public_content(query_text, limit=50, user_id=None):
     has_exact_match = False
 
     try:
-        _ensure_content_fts_index()
         if _is_sqlite_backend():
             # SQLite FTS5 path with bm25 ranking and snippets.
             results = db.session.execute(
@@ -1317,47 +1427,6 @@ def search_public_content(query_text, limit=50, user_id=None):
                 """),
                 {'query_text': query_text, 'limit': int(limit)}
             ).fetchall()
-
-        if not results:
-            # Rebuild if the index is empty or stale.
-            _rebuild_content_fts_index()
-            if _is_sqlite_backend():
-                results = db.session.execute(
-                    text("""
-                        SELECT
-                            item_type,
-                            item_id,
-                            bm25(public_content_fts, 1.0, 0.7, 0.9) AS rank,
-                            snippet(public_content_fts, 0, '[', ']', '...', 10) AS title_snippet,
-                            snippet(public_content_fts, 1, '[', ']', '...', 12) AS description_snippet,
-                            snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
-                        FROM public_content_fts
-                        WHERE public_content_fts MATCH :match_query
-                        ORDER BY rank
-                        LIMIT :limit
-                    """),
-                    {'match_query': fts_query, 'limit': int(limit)}
-                ).fetchall()
-            else:
-                results = db.session.execute(
-                    text("""
-                        SELECT
-                            item_type,
-                            item_id,
-                            ts_rank_cd(
-                                search_vector,
-                                websearch_to_tsquery('english', :query_text)
-                            ) AS rank,
-                            ts_headline('english', title, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS title_snippet,
-                            ts_headline('english', description, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=12,MinWords=3') AS description_snippet,
-                            ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
-                        FROM public_content_search
-                        WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
-                        ORDER BY rank DESC
-                        LIMIT :limit
-                    """),
-                    {'query_text': query_text, 'limit': int(limit)}
-                ).fetchall()
 
         deck_ids = [int(row[1]) for row in results if row[0] == 'deck']
         quiz_ids = [int(row[1]) for row in results if row[0] == 'quiz']
@@ -1481,7 +1550,7 @@ def search_public_content(query_text, limit=50, user_id=None):
             'tags': deck.tags,
             'sortable': deck.sortable,
             'is_public': deck.is_public,
-            'card_count': getattr(deck, 'card_count', len(deck.cards)),
+            'card_count': int(getattr(deck, 'card_count', 0) or 0),
             'score': 0.0,
             'match_reasons': ['fallback match'],
         } for deck in decks]
@@ -1493,7 +1562,7 @@ def search_public_content(query_text, limit=50, user_id=None):
             'description': quiz.description,
             'tags': quiz.tags,
             'is_public': quiz.is_public,
-            'question_count': len(quiz.questions),
+            'question_count': int(getattr(quiz, 'question_count', 0) or 0),
             'score': 0.0,
             'match_reasons': ['fallback match'],
         } for quiz in quizzes]
@@ -1592,7 +1661,9 @@ def edit_card(card_id, question, answers):
 
 
 def get_card_from_deck(card_id, detailed=False):
-    card = Card.query.get(card_id)
+    card = Card.query.options(selectinload(Card.answers)).filter(
+        Card.card_id == card_id
+    ).first()
     if card:
         if detailed:
             return _serialize_card(card, detailed=True)
@@ -1607,7 +1678,7 @@ def get_card_from_deck(card_id, detailed=False):
 
 
 def get_deck_study_data(deck_id, shuffle=True):
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck:
         return None
 
@@ -1692,7 +1763,7 @@ def _build_match_question_order(cards, strategy):
 
 
 def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck:
         return None
 
@@ -1778,7 +1849,9 @@ def record_match_attempt(user_id, answer_id, is_correct):
 
 def check_deck_order(deck_id, ordered_card_ids):
     """Validate a user-submitted card order against stored card positions."""
-    deck = Deck.query.get(deck_id)
+    deck = Deck.query.options(selectinload(Deck.cards)).filter(
+        Deck.deck_id == deck_id
+    ).first()
     if not deck:
         return {'valid': False, 'error': 'Deck not found'}
     if not deck.sortable:
@@ -1859,14 +1932,14 @@ def swap_cards_in_deck(card_id, target_card_id):
 
 # Read-only deck access helpers.
 def list_cards_from_deck(deck_id, detailed=False, shuffle=False):
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck:
         return []
     return _serialize_deck(deck, detailed_cards=detailed, shuffle_cards=shuffle, shuffle_answers=False)['cards']
 
 
 def get_deck_details(deck_id, shuffle_cards=False, shuffle_answers=False):
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck:
         return None
     return _serialize_deck(deck, detailed_cards=True, shuffle_cards=shuffle_cards, shuffle_answers=shuffle_answers)
@@ -2012,7 +2085,7 @@ def order_mastery_cards(card_payloads, strategy, deck_sortable=False):
 
 
 def get_mastery_snapshot(user_id, deck_id, strategy='spaced'):
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck:
         return None
 
@@ -2154,10 +2227,61 @@ def reset_mastery_progress(user_id, deck_id):
     return deleted_rows
 
 
-def create_quiz_attempt(user_id, quiz_questions):
-    """Persist server-held correctness data while sending display-only options to the browser."""
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+def _quiz_attempt_cutoff(max_age_seconds=None):
+    if max_age_seconds is None:
+        max_age_seconds = app.config['QUIZ_ATTEMPT_MAX_AGE_SECONDS']
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=max_age_seconds)
+
+
+def delete_expired_quiz_attempts(max_age_seconds=None):
+    cutoff = _quiz_attempt_cutoff(max_age_seconds=max_age_seconds)
+    deleted_rows = QuizAttempt.query.filter(
+        QuizAttempt.created_at < cutoff
+    ).delete(synchronize_session=False)
+    db.session.commit()
+    return deleted_rows
+
+
+def create_quiz_attempt(user_id, session_id, quiz_questions):
+    """Create one bounded attempt and return browser-safe questions."""
+    if user_id is None and not session_id:
+        raise ValueError('Anonymous quiz attempts require a session identifier.')
+    max_questions = max(1, app.config['MAX_QUIZ_QUESTIONS'])
+    max_active_attempts = max(1, app.config['MAX_ACTIVE_QUIZ_ATTEMPTS'])
+    quiz_questions = list(quiz_questions)
+    if len(quiz_questions) > max_questions:
+        quiz_questions = random.sample(quiz_questions, max_questions)
+    if not quiz_questions:
+        return None, [], []
+
+    cutoff = _quiz_attempt_cutoff()
     QuizAttempt.query.filter(QuizAttempt.created_at < cutoff).delete(synchronize_session=False)
+
+    if user_id is not None:
+        owner_query = QuizAttempt.query.filter(QuizAttempt.user_id == user_id)
+    else:
+        owner_query = QuizAttempt.query.filter(
+            QuizAttempt.user_id.is_(None),
+            QuizAttempt.session_id == session_id,
+        )
+
+    keep_count = max_active_attempts - 1
+    kept_tokens = []
+    if keep_count:
+        kept_tokens = [
+            token
+            for (token,) in owner_query.with_entities(QuizAttempt.attempt_token)
+            .order_by(QuizAttempt.created_at.desc(), QuizAttempt.attempt_token.desc())
+            .limit(keep_count)
+            .all()
+        ]
+
+    displaced_query = owner_query
+    if kept_tokens:
+        displaced_query = displaced_query.filter(
+            ~QuizAttempt.attempt_token.in_(kept_tokens)
+        )
+    displaced_query.delete(synchronize_session=False)
 
     correct_answers = {
         str(question['id']): [
@@ -2168,6 +2292,7 @@ def create_quiz_attempt(user_id, quiz_questions):
     attempt = QuizAttempt(
         attempt_token=secrets.token_urlsafe(32),
         user_id=user_id,
+        session_id=session_id,
         correct_answers_json=json.dumps(correct_answers),
         question_count=len(quiz_questions),
     )
@@ -2182,13 +2307,20 @@ def create_quiz_attempt(user_id, quiz_questions):
         }
         for question in quiz_questions
     ]
-    return attempt.attempt_token, display_questions
+    active_tokens = list(reversed(kept_tokens)) + [attempt.attempt_token]
+    return attempt.attempt_token, display_questions, active_tokens
 
 
-def score_quiz_attempt(attempt_token, user_id, submitted_answers):
+def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
     """Consume one rendered quiz attempt and calculate its result from server-held data."""
     attempt = db.session.get(QuizAttempt, attempt_token)
     if not attempt or attempt.user_id != user_id:
+        return None
+    if user_id is None and attempt.session_id != session_id:
+        return None
+    if attempt.created_at < _quiz_attempt_cutoff():
+        db.session.delete(attempt)
+        db.session.commit()
         return None
 
     correct_answers = json.loads(attempt.correct_answers_json)
@@ -2219,11 +2351,9 @@ def score_quiz_attempt(attempt_token, user_id, submitted_answers):
 
 def _generate_deck_quiz_questions(deck_id):
     """Build multiple-choice questions from one deck's cards and answers."""
-    from models import CardAnswer
-
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     cards = list(deck.cards) if deck else []
-    deck_answers = [answer.answer for answer in CardAnswer.query.join(Card).filter(Card.deck_id == deck_id).all()]
+    deck_answers = [answer.answer for card in cards for answer in card.answers]
     if not deck_answers:
         deck_answers = ['Option A', 'Option B', 'Option C', 'Option D', 'No other answers available']
 
@@ -2257,7 +2387,7 @@ def _generate_deck_quiz_questions(deck_id):
 
 def _generate_custom_quiz_questions(custom_quiz_id):
     """Build either static or dynamic multiple-choice questions from a saved custom quiz."""
-    quiz = Quiz.query.get(custom_quiz_id)
+    quiz = get_quiz_with_content(custom_quiz_id)
     if not quiz:
         return []
 

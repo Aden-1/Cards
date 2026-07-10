@@ -12,6 +12,7 @@ class User(db.Model):
     username = db.Column(db.String(100), nullable=False, unique=True)
     email = db.Column(db.String(255), nullable=True, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    auth_version = db.Column(db.Integer, nullable=False, default=0)
     role = db.Column(db.String(20), nullable=False, default='standard')
     theme_preference = db.Column(db.String(10), nullable=False, default='dark')
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
@@ -131,6 +132,7 @@ class QuizOption(db.Model):
 class QuizAttempt(db.Model):
     attempt_token = db.Column(db.String(64), primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)
+    session_id = db.Column(db.String(64), nullable=True, index=True)
     correct_answers_json = db.Column(db.Text, nullable=False)
     question_count = db.Column(db.Integer, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)

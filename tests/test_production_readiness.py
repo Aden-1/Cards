@@ -1,8 +1,10 @@
 import os
 import gzip
 import unittest
+from datetime import datetime, timedelta, timezone
 
 import brotli
+from sqlalchemy import event, text
 
 
 os.environ['APP_ENV'] = 'testing'
@@ -38,9 +40,22 @@ class ProductionReadinessTests(unittest.TestCase):
             current_session['csrf_token'] = 'csrf-test-token'
 
     def _login_session(self, user_id):
+        with cards_app.app.app_context():
+            auth_version = db.session.get(User, user_id).auth_version
         with self.client.session_transaction() as current_session:
             current_session['user_id'] = user_id
+            current_session['auth_version'] = auth_version
             current_session['csrf_token'] = 'csrf-test-token'
+
+    def _start_quiz(self, quiz_source):
+        self._csrf()
+        return self.client.post(
+            '/quiz/start',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'quiz_source': quiz_source,
+            },
+        )
 
     def test_health_and_browser_security_headers_are_enabled(self):
         response = self.client.get('/healthz')
@@ -167,6 +182,12 @@ class ProductionReadinessTests(unittest.TestCase):
 
         page = self.client.get(f'/quiz?deck_id={deck_id}')
         self.assertEqual(page.status_code, 200)
+        self.assertIn('Start Quiz', page.get_data(as_text=True))
+        with cards_app.app.app_context():
+            self.assertEqual(QuizAttempt.query.count(), 0)
+
+        page = self._start_quiz(f'deck:{deck_id}')
+        self.assertEqual(page.status_code, 200)
         self.assertNotIn('"is_correct":', page.get_data(as_text=True))
         with self.client.session_transaction() as current_session:
             attempt_token = current_session['quiz_attempt_tokens'][-1]
@@ -235,7 +256,7 @@ class ProductionReadinessTests(unittest.TestCase):
             db.session.commit()
             deck_id = deck.deck_id
 
-        response = self.client.get(f'/quiz?deck_id={deck_id}')
+        response = self._start_quiz(f'deck:{deck_id}')
         page = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
@@ -265,13 +286,295 @@ class ProductionReadinessTests(unittest.TestCase):
             db.session.commit()
             quiz_id = quiz.quiz_id
 
-        response = self.client.get(f'/quiz?custom_quiz_id={quiz_id}')
+        response = self._start_quiz(f'custom:{quiz_id}')
         page = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('Capital of Japan?', page)
         self.assertIn('submitQuiz', page)
         self.assertIn('Tokyo', page)
+
+    def test_quiz_attempts_are_capped_and_displaced_rows_are_deleted(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('attempt_cap_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Attempt Cap Deck', is_public=True)
+            card = Card(deck_id=deck.deck_id, question='Bounded?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer='Yes'))
+            db.session.commit()
+            deck_id = deck.deck_id
+
+        previous_limit = cards_app.app.config['MAX_ACTIVE_QUIZ_ATTEMPTS']
+        cards_app.app.config['MAX_ACTIVE_QUIZ_ATTEMPTS'] = 3
+        try:
+            for _ in range(5):
+                self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
+
+            with self.client.session_transaction() as current_session:
+                active_tokens = list(current_session['quiz_attempt_tokens'])
+                quiz_session_id = current_session['quiz_session_id']
+            self.assertEqual(len(active_tokens), 3)
+
+            with cards_app.app.app_context():
+                attempts = QuizAttempt.query.filter_by(session_id=quiz_session_id).all()
+                self.assertEqual(len(attempts), 3)
+                self.assertEqual(
+                    {attempt.attempt_token for attempt in attempts},
+                    set(active_tokens),
+                )
+        finally:
+            cards_app.app.config['MAX_ACTIVE_QUIZ_ATTEMPTS'] = previous_limit
+
+    def test_quiz_attempt_question_count_is_bounded(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('question_cap_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Question Cap Deck', is_public=True)
+            for index in range(5):
+                card = Card(
+                    deck_id=deck.deck_id,
+                    question=f'Question {index}?',
+                    position=index + 1,
+                )
+                db.session.add(card)
+                db.session.flush()
+                db.session.add(CardAnswer(card_id=card.card_id, answer=f'Answer {index}'))
+            db.session.commit()
+            deck_id = deck.deck_id
+
+        previous_limit = cards_app.app.config['MAX_QUIZ_QUESTIONS']
+        cards_app.app.config['MAX_QUIZ_QUESTIONS'] = 2
+        try:
+            response = self._start_quiz(f'deck:{deck_id}')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.get_data(as_text=True).count('class="quiz-question-shell'),
+                2,
+            )
+            with self.client.session_transaction() as current_session:
+                attempt_token = current_session['quiz_attempt_tokens'][-1]
+            with cards_app.app.app_context():
+                self.assertEqual(db.session.get(QuizAttempt, attempt_token).question_count, 2)
+        finally:
+            cards_app.app.config['MAX_QUIZ_QUESTIONS'] = previous_limit
+
+    def test_expired_quiz_attempt_is_rejected_and_deleted(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('expired_attempt_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Expired Attempt Deck', is_public=True)
+            card = Card(deck_id=deck.deck_id, question='Still valid?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer='No'))
+            db.session.commit()
+            deck_id = deck.deck_id
+
+        self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
+        with self.client.session_transaction() as current_session:
+            attempt_token = current_session['quiz_attempt_tokens'][-1]
+
+        with cards_app.app.app_context():
+            attempt = db.session.get(QuizAttempt, attempt_token)
+            attempt.created_at = (
+                datetime.now(timezone.utc).replace(tzinfo=None)
+                - timedelta(seconds=cards_app.app.config['QUIZ_ATTEMPT_MAX_AGE_SECONDS'] + 1)
+            )
+            db.session.commit()
+
+        response = self.client.post(
+            '/score_quiz',
+            json={'attempt_token': attempt_token, 'answers': {}},
+            headers={'X-CSRFToken': 'csrf-test-token'},
+        )
+        self.assertEqual(response.status_code, 400)
+        with cards_app.app.app_context():
+            self.assertIsNone(db.session.get(QuizAttempt, attempt_token))
+
+    def test_quiz_start_is_rate_limited(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('start_limit_owner', 'password12345')
+            deck = cards_app.create_deck(owner.user_id, 'Start Limit Deck', is_public=True)
+            card = Card(deck_id=deck.deck_id, question='Limited?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer='Yes'))
+            db.session.commit()
+            deck_id = deck.deck_id
+
+        previous_limit = routes._RATE_LIMITS['start_quiz']
+        routes._RATE_LIMITS['start_quiz'] = (2, 60)
+        routes._rate_limit_buckets.clear()
+        try:
+            self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
+            self.assertEqual(self._start_quiz(f'deck:{deck_id}').status_code, 200)
+            limited_response = self._start_quiz(f'deck:{deck_id}')
+            self.assertEqual(limited_response.status_code, 429)
+            self.assertIn('Retry-After', limited_response.headers)
+        finally:
+            routes._RATE_LIMITS['start_quiz'] = previous_limit
+            routes._rate_limit_buckets.clear()
+
+    def test_zero_result_search_does_not_rebuild_or_write(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('search_miss_owner', 'password12345')
+            cards_app.create_deck(
+                owner.user_id,
+                'Indexed Search Deck',
+                is_public=True,
+                tags='indexed',
+            )
+            indexed_before = db.session.execute(
+                text('SELECT COUNT(*) FROM public_content_fts')
+            ).scalar_one()
+
+            rebuild_calls = []
+            original_rebuild = cards_app._rebuild_content_fts_index
+            statements = []
+
+            def record_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+                statements.append(statement.strip().upper())
+
+            cards_app._rebuild_content_fts_index = lambda: rebuild_calls.append(True)
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                results = cards_app.search_public_content('zzzzzzzznomatch')
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+                cards_app._rebuild_content_fts_index = original_rebuild
+
+            indexed_after = db.session.execute(
+                text('SELECT COUNT(*) FROM public_content_fts')
+            ).scalar_one()
+
+        self.assertEqual(results['decks'], [])
+        self.assertEqual(results['quizzes'], [])
+        self.assertEqual(rebuild_calls, [])
+        self.assertEqual(indexed_after, indexed_before)
+        write_prefixes = ('INSERT ', 'UPDATE ', 'DELETE ', 'CREATE ', 'ALTER ', 'DROP ')
+        self.assertFalse(any(statement.startswith(write_prefixes) for statement in statements))
+
+    def test_deck_summaries_use_one_query_without_lazy_card_loads(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('deck_query_owner', 'password12345')
+            for deck_index in range(10):
+                deck = Deck(owned_by=owner.user_id, description=f'Deck {deck_index}')
+                db.session.add(deck)
+                db.session.flush()
+                card = Card(deck_id=deck.deck_id, question='Question?', position=1)
+                db.session.add(card)
+                db.session.flush()
+                db.session.add(CardAnswer(card_id=card.card_id, answer='Answer'))
+            db.session.commit()
+            owner_id = owner.user_id
+            db.session.remove()
+
+            statements = []
+
+            def record_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+                statements.append(statement.strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                decks = cards_app.get_user_decks(owner_id)
+                summaries = [routes._deck_summary_payload(deck, owner_id) for deck in decks]
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+        select_statements = [statement for statement in statements if statement.startswith('SELECT ')]
+        self.assertEqual(len(summaries), 10)
+        self.assertTrue(all(summary['card_count'] == 1 for summary in summaries))
+        self.assertEqual(len(select_statements), 1)
+
+    def test_deck_content_query_count_is_constant(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('deck_content_owner', 'password12345')
+            deck = Deck(owned_by=owner.user_id, description='Large Deck')
+            db.session.add(deck)
+            db.session.flush()
+            for index in range(25):
+                card = Card(
+                    deck_id=deck.deck_id,
+                    question=f'Question {index}?',
+                    position=index + 1,
+                )
+                db.session.add(card)
+                db.session.flush()
+                db.session.add(CardAnswer(card_id=card.card_id, answer=f'Answer {index}'))
+            db.session.commit()
+            deck_id = deck.deck_id
+            db.session.remove()
+
+            statements = []
+
+            def record_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+                statements.append(statement.strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                payload = cards_app.get_deck_details(deck_id)
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+        select_statements = [statement for statement in statements if statement.startswith('SELECT ')]
+        self.assertEqual(len(payload['cards']), 25)
+        self.assertEqual(len(select_statements), 3)
+
+    def test_quiz_counts_and_content_have_constant_query_budgets(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('quiz_query_owner', 'password12345')
+            selected_quiz_id = None
+            for quiz_index in range(10):
+                quiz = Quiz(owned_by=owner.user_id, title=f'Quiz {quiz_index}')
+                db.session.add(quiz)
+                db.session.flush()
+                question = QuizQuestion(
+                    quiz_id=quiz.quiz_id,
+                    question=f'Question {quiz_index}?',
+                    type='static',
+                )
+                db.session.add(question)
+                db.session.flush()
+                db.session.add(QuizOption(
+                    question_id=question.question_id,
+                    text='Answer',
+                    is_correct=True,
+                ))
+                selected_quiz_id = quiz.quiz_id
+            db.session.commit()
+            owner_id = owner.user_id
+            db.session.remove()
+
+            count_statements = []
+
+            def record_count_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+                count_statements.append(statement.strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_count_statement)
+            try:
+                quizzes = cards_app.get_user_custom_quizzes(owner_id)
+                question_counts = [quiz.question_count for quiz in quizzes]
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_count_statement)
+
+            db.session.remove()
+            content_statements = []
+
+            def record_content_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+                content_statements.append(statement.strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_content_statement)
+            try:
+                selected_quiz = cards_app.get_quiz_with_content(selected_quiz_id)
+                option_text = selected_quiz.questions[0].options[0].text
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_content_statement)
+
+        count_selects = [statement for statement in count_statements if statement.startswith('SELECT ')]
+        content_selects = [statement for statement in content_statements if statement.startswith('SELECT ')]
+        self.assertEqual(question_counts, [1] * 10)
+        self.assertEqual(option_text, 'Answer')
+        self.assertEqual(len(count_selects), 1)
+        self.assertEqual(len(content_selects), 3)
 
     def test_password_reset_flow_updates_password_with_signed_token(self):
         sent_urls = []
@@ -312,8 +615,94 @@ class ProductionReadinessTests(unittest.TestCase):
             with cards_app.app.app_context():
                 user = cards_app.get_user('recoverable')
                 self.assertTrue(user.check_password('newpassword123'))
+
+            self._csrf()
+            reused_response = self.client.post(
+                '/reset-password',
+                data={
+                    'csrf_token': 'csrf-test-token',
+                    'token': token,
+                    'password': 'reusedpassword123',
+                    'confirm_password': 'reusedpassword123',
+                },
+            )
+            self.assertEqual(reused_response.status_code, 400)
+            with cards_app.app.app_context():
+                user = cards_app.get_user('recoverable')
+                self.assertTrue(user.check_password('newpassword123'))
+                self.assertFalse(user.check_password('reusedpassword123'))
         finally:
             cards_app.send_password_reset_email = original_send
+
+    def test_password_change_revokes_other_sessions(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user(
+                'session_revoke',
+                'password12345',
+                email='session-revoke@example.test',
+            )
+            user_id = user.user_id
+            token = cards_app.generate_password_reset_token(user)
+            auth_version = user.auth_version
+
+        other_client = cards_app.app.test_client()
+        with other_client.session_transaction() as other_session:
+            other_session['user_id'] = user_id
+            other_session['auth_version'] = auth_version
+            other_session['csrf_token'] = 'other-csrf-token'
+
+        self._csrf()
+        reset_response = self.client.post(
+            '/reset-password',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'token': token,
+                'password': 'newpassword123',
+                'confirm_password': 'newpassword123',
+            },
+        )
+        self.assertEqual(reset_response.status_code, 302)
+
+        revoked_response = other_client.get('/account')
+        self.assertEqual(revoked_response.status_code, 302)
+        self.assertIn('/login', revoked_response.headers['Location'])
+        with other_client.session_transaction() as other_session:
+            self.assertNotIn('user_id', other_session)
+
+    def test_account_password_change_keeps_current_session_and_revokes_other_sessions(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user(
+                'account_session_revoke',
+                'password12345',
+                email='account-session-revoke@example.test',
+            )
+            user_id = user.user_id
+            auth_version = user.auth_version
+
+        self._login_session(user_id)
+        other_client = cards_app.app.test_client()
+        with other_client.session_transaction() as other_session:
+            other_session['user_id'] = user_id
+            other_session['auth_version'] = auth_version
+            other_session['csrf_token'] = 'other-csrf-token'
+
+        update_response = self.client.post(
+            '/account',
+            data={
+                'csrf_token': 'csrf-test-token',
+                'username': 'account_session_revoke',
+                'email': 'account-session-revoke@example.test',
+                'current_password': 'password12345',
+                'new_password': 'newpassword123',
+                'confirm_password': 'newpassword123',
+            },
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(self.client.get('/account').status_code, 200)
+
+        revoked_response = other_client.get('/account')
+        self.assertEqual(revoked_response.status_code, 302)
+        self.assertIn('/login', revoked_response.headers['Location'])
 
     def test_account_delete_removes_user_and_owned_content(self):
         with cards_app.app.app_context():

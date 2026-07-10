@@ -26,6 +26,9 @@ Recommended connection/runtime settings:
 - `DB_POOL_RECYCLE=300`
 - `MAIL_USE_TLS=true`
 - `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS=3600`
+- `QUIZ_ATTEMPT_MAX_AGE_SECONDS=7200`
+- `MAX_ACTIVE_QUIZ_ATTEMPTS=5`
+- `MAX_QUIZ_QUESTIONS=50`
 
 Production startup rejects non-PostgreSQL databases. PostgreSQL URLs are normalized to the Psycopg 3 driver automatically, and startup appends `sslmode=require` when it is missing.
 Production startup also fails when `TRUSTED_HOSTS` is absent so untrusted host headers cannot influence redirects or generated URLs.

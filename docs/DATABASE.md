@@ -8,7 +8,7 @@ The app supports SQLite and PostgreSQL with SQLAlchemy ORM and Flask-Migrate.
 - PostgreSQL configuration: set `DATABASE_URL=postgresql://user:password@host/database`
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
-- Search index: SQLite uses the `public_content_fts` FTS5 virtual table at runtime; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index
+- Search index: SQLite uses the migration-created `public_content_fts` FTS5 virtual table; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index
 - Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
@@ -30,6 +30,7 @@ class User(db.Model):
     username = db.Column(db.String(100), nullable=False, unique=True)
     email = db.Column(db.String(255), nullable=True, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    auth_version = db.Column(db.Integer, nullable=False, default=0)
     role = db.Column(db.String(20), nullable=False, default='standard')
     theme_preference = db.Column(db.String(10), nullable=False, default='dark')
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
@@ -147,6 +148,7 @@ class QuizOption(db.Model):
 class QuizAttempt(db.Model):
     attempt_token = db.Column(db.String(64), primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True, index=True)
+    session_id = db.Column(db.String(64), nullable=True, index=True)
     correct_answers_json = db.Column(db.Text, nullable=False)
     question_count = db.Column(db.Integer, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
@@ -172,16 +174,21 @@ class QuizAttempt(db.Model):
 - Removing the last `CardAnswer` deletes the parent `Card`.
 - Editing a card replaces its full answer set.
 - Public decks and quizzes are mirrored into the backend-specific full-text index for search.
+- Search requests never create or rebuild indexes. Use `flask rebuild-public-search-index`
+  explicitly after a restore or when index health checks identify drift.
 - The search index stores title, description, and tags only.
 - PostgreSQL search schema and lookup indexes are owned by Alembic migrations rather than web-request startup code.
 - Passwords are stored as Werkzeug password hashes, not plaintext.
+- Password reset tokens include the user's authentication version and are consumed
+  atomically. Password changes increment that version, invalidating outstanding
+  reset links and previously issued authenticated sessions.
 - Public registration creates `standard` users; the initial administrator is created through the `flask provision-admin` CLI command.
 - `CardMasteryProgress` is unique per `(user_id, card_id)`.
 - `MatchPairProgress` is unique per `(user_id, answer_id)`.
 - User records persist theme, match strategy, and mastery strategy preferences.
 - The app includes lightweight startup self-healing for newer SQLite columns and the match progress table; migrations provide the same schema on PostgreSQL.
 - Imported decks and user-authored search content are bounded to keep oversized rows and batches out of the production database.
-- Quiz correctness is held in a one-time server-side `QuizAttempt` record instead of trusting submitted browser data; abandoned attempts older than one day are cleaned up when new attempts are generated.
+- Quiz correctness is held in a one-time server-side `QuizAttempt` record instead of trusting submitted browser data. Attempts are created only by the explicit start action, are capped per user or guest session, and expire after the configured lifetime.
 
 ## Usage
 

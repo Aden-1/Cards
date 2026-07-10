@@ -28,7 +28,7 @@
                 <div class="panel-header"><h3 class="h5 mb-0">{{ q.title }}</h3><span class="status-chip {{ 'public' if q.is_public else 'private' }}">{{ 'Public' if q.is_public else 'Private' }}</span></div>
                 {% if q.tags %}<div class="card-rail">{% for tag in q.tags.split(',') %}{% if tag.strip() %}<span class="tag-chip">{{ tag.strip() }}</span>{% endif %}{% endfor %}</div>{% endif %}
                 {% if q.description %}<p class="muted-copy mb-0">{{ q.description[:110] }}{{ '...' if q.description|length > 110 else '' }}</p>{% endif %}
-                <div class="score-chip">{{ q.questions|length }} Question{% if q.questions|length != 1 %}s{% endif %}</div>
+                <div class="score-chip">{{ q.question_count }} Question{% if q.question_count != 1 %}s{% endif %}</div>
                 <div class="deck-actions mt-auto">
                     <a class="btn-primary-surface" href="{{ url_for('edit_quiz_route', quiz_id=q.quiz_id) }}#quiz-editor">Edit</a>
                     <details class="delete-confirm">

@@ -51,7 +51,20 @@ Recommended recovery drill:
 python -m flask rebuild-public-search-index
 ```
 
+Normal zero-result searches do not invoke this command or perform automatic
+repair. Rebuild only after a restore or when monitoring confirms index drift.
+
 5. Verify decks, quizzes, users, and progress records.
+
+## Quiz Attempt Cleanup
+
+Quiz attempts are bounded during creation and rejected after their configured
+lifetime. Schedule this command as a low-frequency maintenance job so expired
+attempts are removed even during periods with no new quiz activity:
+
+```powershell
+python -m flask cleanup-quiz-attempts
+```
 
 ## Deployment Procedure
 

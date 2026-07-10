@@ -13,15 +13,16 @@
         <span class="page-kicker">Deck Source</span>
         <h2 class="h3 mb-3">Generate from a deck</h2>
         {% if current_user %}
-        <form method="get" action="{{ url_for('quiz') }}" class="section-stack">
+        <form method="post" action="{{ url_for('start_quiz') }}" class="section-stack">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
             <div>
-                <label class="form-label" for="deck_id">Deck</label>
-                <select class="form-select" id="deck_id" name="deck_id">
+                <label class="form-label" for="deck_quiz_source">Deck</label>
+                <select class="form-select" id="deck_quiz_source" name="quiz_source" required>
                     <option value="">Choose a deck...</option>
-                    {% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}
+                    {% for deck in decks %}<option value="deck:{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}
                 </select>
             </div>
-            <div class="form-actions"><button class="btn-primary-surface" type="submit">Generate Deck Quiz</button></div>
+            <div class="form-actions"><button class="btn-primary-surface" type="submit">Start Deck Quiz</button></div>
         </form>
         {% else %}
         <div class="section-stack">
@@ -37,12 +38,13 @@
         <span class="page-kicker">Custom Source</span>
         <h2 class="h3 mb-3">Open a custom quiz</h2>
         {% if current_user %}
-        <form method="get" action="{{ url_for('quiz') }}" class="section-stack">
+        <form method="post" action="{{ url_for('start_quiz') }}" class="section-stack">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
             <div>
-                <label class="form-label" for="custom_quiz_id">Custom Quiz</label>
-                <select class="form-select" id="custom_quiz_id" name="custom_quiz_id">
+                <label class="form-label" for="custom_quiz_source">Custom Quiz</label>
+                <select class="form-select" id="custom_quiz_source" name="quiz_source" required>
                     <option value="">Choose a custom quiz...</option>
-                    {% for cq in custom_quizzes %}<option value="{{ cq.quiz_id }}" {% if selected_custom_quiz_id == cq.quiz_id %}selected{% endif %}>{{ cq.title }} ({{ cq.questions|length }} Qs)</option>{% endfor %}
+                    {% for cq in custom_quizzes %}<option value="custom:{{ cq.quiz_id }}" {% if selected_custom_quiz_id == cq.quiz_id %}selected{% endif %}>{{ cq.title }} ({{ cq.question_count }} Qs)</option>{% endfor %}
                 </select>
             </div>
             <div class="form-actions"><button class="btn-surface" type="submit">Take Custom Quiz</button></div>
@@ -59,6 +61,21 @@
         {% endif %}
     </article>
 </section>
+{% if quiz_error %}
+<div class="feedback-message error mt-4" role="alert">{{ quiz_error }}</div>
+{% endif %}
+{% if selected_source and not quiz_data and not quiz_error %}
+<section class="surface p-4 fade-in mt-4">
+    <span class="page-kicker">Ready</span>
+    <h2 class="h3 mb-2">Start this quiz when you are ready.</h2>
+    <p class="muted-copy">Opening a quiz link does not create an attempt until you press Start.</p>
+    <form method="post" action="{{ url_for('start_quiz') }}" class="form-actions">
+        <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+        <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+        <button class="btn-primary-surface" type="submit">Start Quiz</button>
+    </form>
+</section>
+{% endif %}
 {% if quiz_data %}
 <section class="surface p-4 fade-in mt-4" id="quizGameSection">
     <div class="panel-header mb-3">
@@ -82,7 +99,11 @@
         <div id="quizScore"></div>
         <div class="quiz-actions mt-2">
             <button id="submitQuiz" class="btn-primary-surface" type="button">Submit Quiz</button>
-            <button id="retakeQuiz" type="button" class="btn-surface" style="display:none;">Retake Quiz</button>
+            <form id="retakeQuizForm" method="post" action="{{ url_for('start_quiz') }}" style="display:none;">
+                <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+                <button type="submit" class="btn-surface">Retake Quiz</button>
+            </form>
         </div>
     </div>
 </section>
@@ -139,10 +160,9 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
             }
         });
         document.getElementById('submitQuiz').style.display = 'none';
-        document.getElementById('retakeQuiz').style.display = 'inline-flex';
+        document.getElementById('retakeQuizForm').style.display = 'inline-flex';
     });
 });
-document.getElementById('retakeQuiz')?.addEventListener('click', () => window.location.reload());
 </script>
 {% endif %}
 {% endblock %}

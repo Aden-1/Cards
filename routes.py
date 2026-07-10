@@ -33,6 +33,11 @@ def _as_bool(value):
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _deck_card_count(deck):
+    card_count = getattr(deck, 'card_count', None)
+    return int(card_count) if card_count is not None else len(deck.cards)
+
+
 def _deck_summary_payload(deck, user_id):
     """Build the common deck summary payload used across deck-oriented pages."""
     return {
@@ -44,7 +49,7 @@ def _deck_summary_payload(deck, user_id):
         'is_public': deck.is_public,
         'is_featured': deck.is_featured,
         'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': getattr(deck, 'card_count', len(deck.cards)),
+        'card_count': _deck_card_count(deck),
     }
 
 
@@ -54,7 +59,7 @@ def _quiz_launcher_deck_payload(deck, user_id):
         'deck_id': deck.deck_id,
         'description': deck.description,
         'is_owned': bool(user_id is not None and deck.owned_by == user_id),
-        'card_count': getattr(deck, 'card_count', len(deck.cards)),
+        'card_count': _deck_card_count(deck),
     }
 
 
@@ -117,6 +122,7 @@ _RATE_LIMITS = {
     'account': (10, 60 * 60),
     'delete_account': (3, 60 * 60),
     'admin_users': (30, 60 * 60),
+    'start_quiz': (10, 60),
 }
 
 
@@ -191,6 +197,14 @@ def _current_user():
     if not user or not user.is_active:
         session.clear()
         return None
+    session_auth_version = session.get('auth_version')
+    if session_auth_version is None and user.auth_version == 0:
+        # Preserve sessions created before auth versioning was deployed. Once
+        # the password changes, auth_version increments and these are revoked.
+        session['auth_version'] = 0
+    elif session_auth_version != user.auth_version:
+        session.clear()
+        return None
     return user
 
 
@@ -255,6 +269,7 @@ def _page_needs_csrf_token(user=None):
         'match',
         'reorder',
         'quiz',
+        'start_quiz',
     }
 
 
@@ -352,6 +367,7 @@ def register():
     session.clear()
     session.permanent = True
     session['user_id'] = user.user_id
+    session['auth_version'] = user.auth_version
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(url_for('edit', notice='Account created', level='success'))
 
@@ -372,6 +388,7 @@ def login():
     session.clear()
     session.permanent = True
     session['user_id'] = user.user_id
+    session['auth_version'] = user.auth_version
     session['csrf_token'] = secrets.token_urlsafe(32)
     return redirect(_safe_next_url(data.get('next')))
 
@@ -425,7 +442,7 @@ def forgot_password():
 
 
 def reset_password():
-    from app import get_user_by_password_reset_token, update_user_account
+    from app import get_user_by_password_reset_token, reset_user_password_with_token
 
     token = (request.args.get('token') if request.method == 'GET' else _request_data().get('token') or '').strip()
     user = get_user_by_password_reset_token(token)
@@ -456,8 +473,15 @@ def reset_password():
             error='Passwords do not match.',
         ), 400
 
-    update_user_account(user.user_id, username=user.username, email=user.email, password=password)
-    current_app.logger.info('password_reset_completed user_id=%s', user.user_id)
+    reset_user_id = reset_user_password_with_token(token, password)
+    if not reset_user_id:
+        return render_template(
+            'reset_password.html',
+            token=token,
+            token_valid=False,
+            error='This password reset link is invalid or has expired.',
+        ), 400
+    current_app.logger.info('password_reset_completed user_id=%s', reset_user_id)
     return redirect(url_for('login', notice='Password updated. You can log in now.', level='success'))
 
 
@@ -509,6 +533,7 @@ def account():
         session.clear()
         session.permanent = True
         session['user_id'] = updated_user.user_id
+        session['auth_version'] = updated_user.auth_version
         session['csrf_token'] = secrets.token_urlsafe(32)
     return render_template('account.html', user=updated_user, success='Account updated.')
 
@@ -961,7 +986,7 @@ def get_deck_list_route():
             'deck_id': d.deck_id,
             'description': d.description,
             'sortable': d.sortable,
-            'card_count': getattr(d, 'card_count', len(d.cards)),
+            'card_count': _deck_card_count(d),
         } for d in decks]
         return jsonify({'success': True, 'decks': decks_data})
     else:
@@ -1451,14 +1476,14 @@ def search_route():
 
 # Public quiz detail (read-only).
 def public_quiz_route():
-    from models import Quiz
+    from app import get_quiz_with_content
 
     user_id = _current_user_id()
     quiz_id = _int_value(request.args.get('quiz_id'))
     if not quiz_id:
         return redirect(url_for('search'))
 
-    quiz = Quiz.query.get(quiz_id)
+    quiz = get_quiz_with_content(quiz_id)
     if not quiz or (not quiz.is_public and quiz.owned_by != user_id):
         return redirect(url_for('search'))
 
@@ -1491,14 +1516,14 @@ def copy_public_quiz_route():
 
 # Public deck detail (read-only).
 def public_deck_route():
-    from models import Deck
+    from app import get_deck_with_content
 
     user_id = _current_user_id()
     deck_id = _int_value(request.args.get('deck_id'))
     if not deck_id:
         return redirect(url_for('search'))
 
-    deck = Deck.query.get(deck_id)
+    deck = get_deck_with_content(deck_id)
     if not deck or (not deck.is_public and deck.owned_by != user_id):
         return redirect(url_for('search'))
 
@@ -1529,19 +1554,20 @@ def copy_public_deck_route():
     )
 
 
-# Render the quiz launcher and quiz data.
-def quiz_route():
-    from app import create_quiz_attempt, get_accessible_custom_quizzes, generate_quiz_data, get_user_decks
+# Resolve the quiz launcher selection without creating an attempt.
+def _quiz_launcher_context(source_data):
+    from app import get_accessible_custom_quizzes, get_user_decks
+
     user_id = _current_user_id()
     decks = get_user_decks(user_id) if user_id is not None else []
     deck_data = [_quiz_launcher_deck_payload(deck, user_id) for deck in decks]
-    
+
     custom_quizzes = get_accessible_custom_quizzes(user_id)
     accessible_custom_quiz_ids = {quiz.quiz_id for quiz in custom_quizzes}
 
     selected_deck_id = None
     selected_custom_quiz_id = None
-    selected_source = request.args.get('quiz_source', '').strip()
+    selected_source = (source_data.get('quiz_source') or '').strip()
 
     if selected_source.startswith('deck:'):
         selected_deck_id = _int_value(selected_source.split(':', 1)[1])
@@ -1549,8 +1575,8 @@ def quiz_route():
         selected_custom_quiz_id = _int_value(selected_source.split(':', 1)[1])
     else:
         # Keep older deck/custom_quiz links working.
-        selected_deck_id = _int_value(request.args.get('deck_id'))
-        selected_custom_quiz_id = _int_value(request.args.get('custom_quiz_id'))
+        selected_deck_id = _int_value(source_data.get('deck_id'))
+        selected_custom_quiz_id = _int_value(source_data.get('custom_quiz_id'))
         if selected_deck_id and selected_custom_quiz_id:
             # Prefer a single source.
             selected_custom_quiz_id = None
@@ -1562,28 +1588,83 @@ def quiz_route():
     selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
     if not selected_deck_record:
         selected_deck_id = None
+        if selected_source.startswith('deck:'):
+            selected_source = ''
     if selected_custom_quiz_id not in accessible_custom_quiz_ids:
         selected_custom_quiz_id = None
-    
-    quiz_data = None
-    attempt_token = None
-    
-    if selected_deck_id:
-        quiz_data = generate_quiz_data(deck_id=selected_deck_id)
-    elif selected_custom_quiz_id:
-        quiz_data = generate_quiz_data(custom_quiz_id=selected_custom_quiz_id)
-    if quiz_data:
-        attempt_token, quiz_data = create_quiz_attempt(user_id, quiz_data)
-        active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
-        active_attempt_tokens.append(attempt_token)
-        session['quiz_attempt_tokens'] = active_attempt_tokens[-5:]
-        
-    return render_template('quiz.html', decks=deck_data, custom_quizzes=custom_quizzes, 
-                           selected_deck_id=selected_deck_id, 
-                           selected_custom_quiz_id=selected_custom_quiz_id, 
-                           selected_source=selected_source,
-                           quiz_data=quiz_data,
-                           attempt_token=attempt_token)
+        if selected_source.startswith('custom:'):
+            selected_source = ''
+
+    return {
+        'user_id': user_id,
+        'decks': deck_data,
+        'custom_quizzes': custom_quizzes,
+        'selected_deck_id': selected_deck_id,
+        'selected_custom_quiz_id': selected_custom_quiz_id,
+        'selected_source': selected_source,
+    }
+
+
+# Render the quiz launcher. GET requests never create server-side attempts.
+def quiz_route():
+    context = _quiz_launcher_context(request.args)
+    return render_template(
+        'quiz.html',
+        **context,
+        quiz_data=None,
+        attempt_token=None,
+        quiz_error=None,
+    )
+
+
+def start_quiz_route():
+    from app import create_quiz_attempt, generate_quiz_data
+
+    context = _quiz_launcher_context(_request_data())
+    if not context['selected_source']:
+        return render_template(
+            'quiz.html',
+            **context,
+            quiz_data=None,
+            attempt_token=None,
+            quiz_error='That quiz source is unavailable.',
+        ), 404
+
+    if context['selected_deck_id']:
+        quiz_questions = generate_quiz_data(deck_id=context['selected_deck_id'])
+    else:
+        quiz_questions = generate_quiz_data(
+            custom_quiz_id=context['selected_custom_quiz_id']
+        )
+    if not quiz_questions:
+        return render_template(
+            'quiz.html',
+            **context,
+            quiz_data=None,
+            attempt_token=None,
+            quiz_error='This source does not contain any quiz questions yet.',
+        ), 400
+
+    quiz_session_id = session.get('quiz_session_id')
+    if not quiz_session_id:
+        quiz_session_id = secrets.token_urlsafe(24)
+        session['quiz_session_id'] = quiz_session_id
+
+    attempt_token, display_questions, active_tokens = create_quiz_attempt(
+        context['user_id'],
+        quiz_session_id,
+        quiz_questions,
+    )
+    session['quiz_attempt_tokens'] = active_tokens
+    response = current_app.make_response(render_template(
+        'quiz.html',
+        **context,
+        quiz_data=display_questions,
+        attempt_token=attempt_token,
+        quiz_error=None,
+    ))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 # Score a submitted quiz.
@@ -1604,8 +1685,16 @@ def score_quiz_route():
     if not attempt_token or attempt_token not in active_attempt_tokens or not answer_payload_valid:
         return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
 
-    result = score_quiz_attempt(attempt_token, _current_user_id(), submitted_answers)
+    result = score_quiz_attempt(
+        attempt_token,
+        _current_user_id(),
+        session.get('quiz_session_id'),
+        submitted_answers,
+    )
     if not result:
+        if attempt_token in active_attempt_tokens:
+            active_attempt_tokens.remove(attempt_token)
+            session['quiz_attempt_tokens'] = active_attempt_tokens
         return jsonify({'error': 'Quiz attempt is missing or expired.'}), 400
 
     active_attempt_tokens.remove(attempt_token)
@@ -1616,15 +1705,14 @@ def score_quiz_route():
 def edit_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import get_user_custom_quizzes
-    from models import Quiz
+    from app import get_quiz_with_content, get_user_custom_quizzes
     user_id = _current_user_id()
     quizzes = get_user_custom_quizzes(user_id)
     
     selected_quiz_id = _int_value(request.args.get('quiz_id'))
     selected_quiz = None
     if selected_quiz_id:
-        selected_quiz = Quiz.query.get(selected_quiz_id)
+        selected_quiz = get_quiz_with_content(selected_quiz_id)
         if selected_quiz and selected_quiz.owned_by != user_id:
             selected_quiz = None
             
@@ -1793,6 +1881,7 @@ def register_routes(app):
     app.add_url_rule('/public_quiz', endpoint='public_quiz', view_func=public_quiz_route, methods=['GET'])
     app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=copy_public_quiz_route, methods=['POST'])
     app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
+    app.add_url_rule('/quiz/start', endpoint='start_quiz', view_func=start_quiz_route, methods=['POST'])
     app.add_url_rule('/edit_quiz', endpoint='edit_quiz_route', view_func=edit_quiz_route, methods=['GET'])
     
     # Custom Quiz operations
