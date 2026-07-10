@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Reorder{% endblock %}
 
@@ -16,6 +17,7 @@
             <div><label class="form-label" for="deck_id">Deck</label><select class="form-select" id="deck_id" name="deck_id" required><option value="" {% if not selected_deck_id %}selected{% endif %}>Choose a deck...</option>{% for deck in decks %}<option value="{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}</select></div>
             <div class="deck-actions"><button class="btn-primary-surface" type="submit">Memorize Order</button></div>
         </form>
+        {{ controls(deck_page, pagination_endpoint, pagination_args) }}
         {% elif not current_user %}
         <div class="section-stack">
             <div class="small-muted">Guests can still open a public deck directly from the library and practice its order.</div>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Admin Users{% endblock %}
 
@@ -12,7 +13,7 @@
     <div class="panel-header mb-3">
         <div>
             <h2 class="h3 mb-1">Accounts</h2>
-            <p class="muted-copy mb-0">{{ users|length }} total account{{ '' if users|length == 1 else 's' }}</p>
+            <p class="muted-copy mb-0">{{ users|length }} account{{ '' if users|length == 1 else 's' }} on this page</p>
         </div>
     </div>
     {% if users %}
@@ -79,6 +80,7 @@
             </tbody>
         </table>
     </div>
+    {{ controls(pagination, pagination_endpoint, pagination_args) }}
     {% else %}
     <div class="empty-card">No users found.</div>
     {% endif %}

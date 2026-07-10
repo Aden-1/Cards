@@ -128,12 +128,12 @@ POST fields:
 - `action` one of `promote_admin`, `promote_moderator`, `demote_standard`, or `delete`
 
 Response:
-- `GET`: rendered HTML admin user list.
+- `GET`: rendered, paginated HTML admin user list. `page` and `page_size` are accepted; page size is capped at 50.
 - `POST`: redirect back to `/admin/users` with a notice describing the result.
 
 ### Deck Editor
 **GET** `/edit`
-- Query params: `deck_id`
+- Query params: `deck_id`, `page`, `page_size` (maximum 50)
 
 Response:
 - Rendered HTML page.
@@ -170,7 +170,7 @@ Response:
 
 ### Search
 **GET** `/search`
-- Query params: `q`
+- Query params: `q`, `page`, `page_size` (maximum 50)
 
 Response:
 - Rendered HTML search results page.
@@ -197,6 +197,7 @@ Response:
   - `quiz_source=deck:<deck_id>`
   - `quiz_source=custom:<quiz_id>`
   - Legacy fallback: `deck_id` or `custom_quiz_id`
+  - `page`, `page_size` (maximum 50)
 
 Response:
 - Rendered HTML launcher page. Selecting or opening a source does not create a
@@ -219,7 +220,7 @@ Notes:
 
 ### Custom Quiz Editor
 **GET** `/edit_quiz`
-- Query params: `quiz_id`
+- Query params: `quiz_id`, `page`, `page_size` (maximum 50)
 
 Response:
 - Rendered HTML page.
@@ -251,6 +252,7 @@ Fields:
 
 Notes:
 - Returns decks owned by the currently signed-in user.
+- Accepts `page` and `page_size`; responses include pagination metadata and never return more than 50 decks.
 
 Response:
 ```json
@@ -565,6 +567,7 @@ Response:
 - Searches public decks and public quizzes.
 - Uses the full-text index when available.
 - Falls back to `LIKE` matching if the index cannot be used.
+- Both paths use the requested bounded result page with stable ordering; fallback results list decks before quizzes and then by ID.
 
 ### Search Result Fields
 - Deck results include `description`, `detailed_description`, `tags`, `sortable`, `is_public`, `card_count`, `score`, and `match_reasons`.

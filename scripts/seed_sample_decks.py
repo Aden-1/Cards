@@ -13,7 +13,7 @@ import argparse
 import secrets
 
 from app import _rebuild_content_fts_index, app
-from models import Card, CardAnswer, Deck, User, db
+from models import Card, CardAnswer, Deck, DeckTag, User, db
 from sample_decks import SAMPLE_DECKS
 
 
@@ -72,6 +72,13 @@ def seed_sample_decks(*, replace=False):
         )
         db.session.add(deck)
         db.session.flush()
+        seen_tags = set()
+        for raw_tag in (deck.tags or "").split(","):
+            display = raw_tag.strip()
+            normalized = display.casefold()
+            if display and normalized not in seen_tags:
+                seen_tags.add(normalized)
+                db.session.add(DeckTag(deck_id=deck.deck_id, tag_normalized=normalized, tag_display=display))
 
         for position, (question, answers) in enumerate(definition["cards"], start=1):
             card = Card(deck_id=deck.deck_id, question=question, position=position)

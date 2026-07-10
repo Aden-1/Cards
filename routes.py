@@ -1,5 +1,6 @@
 import re
 import secrets
+import hashlib
 from functools import wraps
 
 from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
@@ -19,6 +20,35 @@ def _int_value(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _requested_page():
+    return max(1, _int_value(request.args.get('page')) or 1)
+
+
+def _requested_page_size():
+    return min(50, max(1, _int_value(request.args.get('page_size')) or 20))
+
+
+def _pagination_context(endpoint):
+    """Preserve the current selection/search term while changing only page."""
+    values = request.args.to_dict(flat=True)
+    values.pop('page', None)
+    values.pop('page_size', None)
+    return {'pagination_endpoint': endpoint, 'pagination_args': values}
+
+
+def _include_selected_deck(items, selected_deck, user_id):
+    """Keep a direct selection available without rendering more than one page."""
+    if not selected_deck or any(deck['deck_id'] == selected_deck.deck_id for deck in items):
+        return items
+    return [_deck_summary_payload(selected_deck, user_id)] + items[:-1]
+
+
+def _include_selected_quiz(items, selected_quiz):
+    if not selected_quiz or any(quiz.quiz_id == selected_quiz.quiz_id for quiz in items):
+        return items
+    return [selected_quiz] + items[:-1]
 
 
 def _redirect_with_fragment(endpoint, fragment=None, **values):
@@ -112,11 +142,41 @@ def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_
 
 # Shared request-throttling helpers. In production the configured Redis
 # backend is required; Flask-Limiter expires fixed-window keys automatically.
+def _client_ip_key():
+    return f'ip:{get_remote_address() or "unknown"}'
+
+
 def _rate_limit_key():
     user_id = session.get('user_id')
     if user_id:
         return f'user:{user_id}'
-    return f'ip:{get_remote_address() or "unknown"}'
+    return _client_ip_key()
+
+
+def _target_key(field, namespace):
+    """Use a stable, non-reversible key for anonymous account targets."""
+    value = _request_data().get(field)
+    if value is None or not str(value).strip():
+        return f'target:{namespace}:missing:{_client_ip_key()}'
+    normalized = str(value).strip().lower()[:512]
+    digest = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    return f'target:{namespace}:{digest}'
+
+
+def _login_target_key():
+    return _target_key('username', 'login')
+
+
+def _registration_target_key():
+    return _target_key('username', 'registration')
+
+
+def _recovery_target_key():
+    return _target_key('email', 'password-recovery')
+
+
+def _reset_target_key():
+    return _target_key('token', 'password-reset')
 
 
 limiter = Limiter(key_func=_rate_limit_key)
@@ -124,11 +184,37 @@ limiter = Limiter(key_func=_rate_limit_key)
 
 def _configured_limit(policy_name):
     """Resolve a policy at request time so environment-backed config is testable."""
-    return lambda: current_app.config['RATE_LIMITS'][policy_name]
+    def configured_limit():
+        from app import _validate_rate_limit
+        return _validate_rate_limit(
+            f'RATE_LIMIT_{policy_name.upper()}',
+            current_app.config['RATE_LIMITS'][policy_name],
+        )
+    return configured_limit
 
 
-def _limit(view_func, policy_name, methods):
-    return limiter.limit(_configured_limit(policy_name), methods=methods)(view_func)
+def _limit(view_func, policy_name, methods, key_func=None):
+    return limiter.limit(
+        _configured_limit(policy_name), methods=methods, key_func=key_func
+    )(view_func)
+
+
+def _anonymous_sensitive_limit(view_func, policy_name, methods, target_key_func):
+    """Apply independent IP and account-target budgets to anonymous flows."""
+    limited = _limit(view_func, policy_name, methods, key_func=_client_ip_key)
+    return _limit(limited, policy_name, methods, key_func=target_key_func)
+
+
+def verify_limiter_backend():
+    """Raise during production startup when the shared limiter backend is down."""
+    if not current_app.config.get('IS_PRODUCTION'):
+        return
+    try:
+        available = limiter.storage.check()
+    except Exception as exc:
+        raise RuntimeError('Shared Redis rate-limit backend is unavailable.') from exc
+    if not available:
+        raise RuntimeError('Shared Redis rate-limit backend is unavailable.')
 
 
 def _rate_limit_response(error):
@@ -576,8 +662,16 @@ def admin_users():
     from models import User, db
 
     if request.method == 'GET':
-        users = User.query.order_by(User.user_id).all()
-        return render_template('admin_users.html', users=users)
+        page = _requested_page()
+        per_page = _requested_page_size()
+        users = User.query.order_by(User.user_id.asc()).limit(per_page + 1).offset((page - 1) * per_page).all()
+        has_next = len(users) > per_page
+        users = users[:per_page]
+        pagination = {
+            'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+            'prev_page': page - 1 if page > 1 else None, 'next_page': page + 1 if has_next else None,
+        }
+        return render_template('admin_users.html', users=users, pagination=pagination, **_pagination_context('admin_users'))
 
     data = _request_data()
     action = (data.get('action') or 'promote_admin').strip().lower()
@@ -682,9 +776,10 @@ def edit():
     if not _current_user():
         return _login_required_response()
     user_id = _current_user_id()
-    from app import get_user_decks, get_deck_details
+    from app import get_user_decks_page, get_deck_details
 
-    decks = get_user_decks(user_id)
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size())
+    decks = deck_page['items']
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
@@ -700,6 +795,8 @@ def edit():
             selected_deck_export_text = export_deck_as_text(selected_deck_record) if selected_deck_record else ''
         else:
             selected_deck = None
+    selected_deck_record = _owned_deck(selected_deck_id, user_id) if selected_deck_id else None
+    deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
 
     return render_template(
         'edit.html',
@@ -709,6 +806,8 @@ def edit():
         selected_cards=selected_cards,
         selected_deck_id=selected_deck_id,
         selected_deck_export_text=selected_deck_export_text,
+        deck_page=deck_page,
+        **_pagination_context('edit'),
     )
 
 
@@ -716,19 +815,21 @@ def edit():
 # Render the study page.
 def view():
     user_id = _current_user_id()
-    from app import get_deck_details, get_user_decks
+    from app import get_deck_details, get_user_decks_page
 
-    decks = get_user_decks(user_id) if user_id is not None else []
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
+    decks = deck_page['items'] if deck_page else []
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
     if not selected_deck_record:
         selected_deck_id = None
+    deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
     study_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False) if selected_deck_id else None
     selected_deck_is_owned = bool(selected_deck_record and selected_deck_record.owned_by == user_id)
 
-    return render_template('view.html', user_id=user_id, decks=deck_data, study_deck=study_deck, selected_deck_id=selected_deck_id, selected_deck_is_owned=selected_deck_is_owned)
+    return render_template('view.html', user_id=user_id, decks=deck_data, study_deck=study_deck, selected_deck_id=selected_deck_id, selected_deck_is_owned=selected_deck_is_owned, deck_page=deck_page, **_pagination_context('view'))
 
 
 # Matching game.
@@ -736,9 +837,10 @@ def view():
 def match():
     user = _current_user()
     user_id = user.user_id if user else None
-    from app import get_match_game_data, get_match_strategy_catalog, get_user_decks, normalize_match_strategy
+    from app import get_match_game_data, get_match_strategy_catalog, get_user_decks_page, normalize_match_strategy
 
-    decks = get_user_decks(user_id) if user_id is not None else []
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
+    decks = deck_page['items'] if deck_page else []
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
@@ -747,6 +849,7 @@ def match():
     selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
     if not selected_deck_record:
         selected_deck_id = None
+    deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
     match_strategy_catalog = get_match_strategy_catalog(include_account_only=bool(user))
     selected_strategy = normalize_match_strategy(
         request.args.get('strategy') or (user.match_strategy_preference if user else None),
@@ -766,23 +869,25 @@ def match():
         error_message=error_message,
         selected_strategy=selected_strategy,
         match_strategy_catalog=match_strategy_catalog,
+        deck_page=deck_page,
+        **_pagination_context('match'),
     )
 
 
 # Render the reorder game page.
 def reorder():
     user_id = _current_user_id()
-    from app import get_deck_details, get_user_decks
+    from app import get_deck_details, get_user_decks_page
 
-    decks = get_user_decks(user_id) if user_id is not None else []
-    # Only sortable decks can enter this game.
-    sortable_decks = [deck for deck in decks if deck.sortable]
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size(), sortable_only=True) if user_id is not None else None
+    sortable_decks = deck_page['items'] if deck_page else []
     deck_data = [_deck_summary_payload(deck, user_id) for deck in sortable_decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
     if not selected_deck_record or not selected_deck_record.sortable:
         selected_deck_id = None
+    deck_data = _include_selected_deck(deck_data, selected_deck_record if selected_deck_record and selected_deck_record.sortable else None, user_id)
 
     # Start each round with a shuffled card list.
     reorder_deck = get_deck_details(selected_deck_id, shuffle_cards=True, shuffle_answers=False) if selected_deck_id else None
@@ -795,23 +900,27 @@ def reorder():
         reorder_deck=reorder_deck,
         selected_deck_id=selected_deck_id,
         selected_deck_is_owned=selected_deck_is_owned,
+        deck_page=deck_page,
+        **_pagination_context('reorder'),
     )
 
 
 # Mastery mode page (spaced repetition-style practice).
 @login_required
 def master():
-    from app import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks, normalize_mastery_strategy
+    from app import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks_page, normalize_mastery_strategy
 
     user = _current_user()
     user_id = user.user_id if user else None
-    decks = get_user_decks(user_id)
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size())
+    decks = deck_page['items']
     deck_data = [_deck_summary_payload(deck, user_id) for deck in decks]
 
     selected_deck_id = _int_value(request.args.get('deck_id'))
     selected_deck_record = _directly_accessible_deck(selected_deck_id, user_id)
     if not selected_deck_record:
         selected_deck_id = None
+    deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
 
     selected_deck_meta = next((deck for deck in deck_data if deck['deck_id'] == selected_deck_id), None)
     if not selected_deck_meta and selected_deck_record:
@@ -856,6 +965,8 @@ def master():
         round_restarted=round_restarted,
         selected_strategy=selected_strategy,
         mastery_strategy_catalog=get_mastery_strategy_catalog(),
+        deck_page=deck_page,
+        **_pagination_context('master'),
     )
 
 
@@ -960,24 +1071,21 @@ def create_deck_route():
 def get_deck_list_route():
     if not _current_user():
         return _login_required_response()
-    from app import get_user_decks
+    from app import get_user_decks_page
 
     user_id = _current_user_id()
 
     if not user_id:
         return jsonify({'error': 'User ID is required'}), 400
     
-    decks = get_user_decks(user_id)
-    if decks:
-        decks_data = [{
+    deck_page = get_user_decks_page(user_id, _int_value(request.values.get('page')) or 1, _int_value(request.values.get('page_size')) or 20)
+    decks_data = [{
             'deck_id': d.deck_id,
             'description': d.description,
             'sortable': d.sortable,
             'card_count': _deck_card_count(d),
-        } for d in decks]
-        return jsonify({'success': True, 'decks': decks_data})
-    else:
-        return jsonify({'success': True, 'decks': []})
+        } for d in deck_page['items']]
+    return jsonify({'success': True, 'decks': decks_data, 'pagination': {key: deck_page[key] for key in ('page', 'per_page', 'has_prev', 'has_next', 'prev_page', 'next_page')}})
 
 
 # Delete a deck.
@@ -1442,12 +1550,13 @@ def search_route():
 
     query = request.args.get('q', '')
     user_id = _current_user_id()
-    results = search_public_content(query, user_id=user_id) if query else {
+    results = search_public_content(query, page=_requested_page(), limit=_requested_page_size(), user_id=user_id) if query else {
         'decks': [],
         'quizzes': [],
         'has_exact_match': False,
         'query_tokens': [],
         'expanded_tokens': [],
+        'pagination': {'page': _requested_page(), 'per_page': _requested_page_size(), 'has_prev': False, 'has_next': False, 'prev_page': None, 'next_page': None},
     }
 
     return render_template(
@@ -1458,6 +1567,8 @@ def search_route():
         has_exact_match=results['has_exact_match'],
         query_tokens=results['query_tokens'],
         expanded_tokens=results['expanded_tokens'],
+        pagination=results['pagination'],
+        **_pagination_context('search'),
     )
 
 
@@ -1543,14 +1654,15 @@ def copy_public_deck_route():
 
 # Resolve the quiz launcher selection without creating an attempt.
 def _quiz_launcher_context(source_data):
-    from app import get_accessible_custom_quizzes, get_user_decks
+    from app import get_accessible_custom_quizzes_page, get_user_decks_page
 
     user_id = _current_user_id()
-    decks = get_user_decks(user_id) if user_id is not None else []
+    deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
+    decks = deck_page['items'] if deck_page else []
     deck_data = [_quiz_launcher_deck_payload(deck, user_id) for deck in decks]
 
-    custom_quizzes = get_accessible_custom_quizzes(user_id)
-    accessible_custom_quiz_ids = {quiz.quiz_id for quiz in custom_quizzes}
+    quiz_page = get_accessible_custom_quizzes_page(user_id, _requested_page(), _requested_page_size())
+    custom_quizzes = quiz_page['items']
 
     selected_deck_id = None
     selected_custom_quiz_id = None
@@ -1577,11 +1689,15 @@ def _quiz_launcher_context(source_data):
         selected_deck_id = None
         if selected_source.startswith('deck:'):
             selected_source = ''
-    if selected_custom_quiz_id not in accessible_custom_quiz_ids:
+    from models import Quiz, db
+    selected_quiz_record = db.session.get(Quiz, selected_custom_quiz_id) if selected_custom_quiz_id else None
+    if not selected_quiz_record or (not selected_quiz_record.is_public and selected_quiz_record.owned_by != user_id):
         selected_custom_quiz_id = None
         if selected_source.startswith('custom:'):
             selected_source = ''
 
+    deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
+    custom_quizzes = _include_selected_quiz(custom_quizzes, selected_quiz_record if selected_custom_quiz_id else None)
     return {
         'user_id': user_id,
         'decks': deck_data,
@@ -1589,6 +1705,9 @@ def _quiz_launcher_context(source_data):
         'selected_deck_id': selected_deck_id,
         'selected_custom_quiz_id': selected_custom_quiz_id,
         'selected_source': selected_source,
+        'deck_page': deck_page,
+        'quiz_page': quiz_page,
+        **_pagination_context('quiz'),
     }
 
 
@@ -1692,9 +1811,10 @@ def score_quiz_route():
 def edit_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import get_quiz_with_content, get_user_custom_quizzes
+    from app import get_quiz_with_content, get_user_custom_quizzes_page
     user_id = _current_user_id()
-    quizzes = get_user_custom_quizzes(user_id)
+    quiz_page = get_user_custom_quizzes_page(user_id, _requested_page(), _requested_page_size())
+    quizzes = quiz_page['items']
     
     selected_quiz_id = _int_value(request.args.get('quiz_id'))
     selected_quiz = None
@@ -1702,8 +1822,9 @@ def edit_quiz_route():
         selected_quiz = get_quiz_with_content(selected_quiz_id)
         if selected_quiz and selected_quiz.owned_by != user_id:
             selected_quiz = None
+    quizzes = _include_selected_quiz(quizzes, selected_quiz)
             
-    return render_template('edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz)
+    return render_template('edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz, quiz_page=quiz_page, **_pagination_context('edit_quiz_route'))
 
 # Create a custom quiz.
 def create_custom_quiz_route():
@@ -1849,14 +1970,14 @@ def register_routes(app):
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
-    app.add_url_rule('/register', endpoint='register', view_func=_limit(register, 'register', ['POST']), methods=['GET', 'POST'])
-    app.add_url_rule('/login', endpoint='login', view_func=_limit(login, 'login', ['POST']), methods=['GET', 'POST'])
-    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=_limit(forgot_password, 'forgot_password', ['POST']), methods=['GET', 'POST'])
-    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=_limit(reset_password, 'reset_password', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/login', endpoint='login', view_func=_anonymous_sensitive_limit(login, 'login', ['POST'], _login_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=_anonymous_sensitive_limit(forgot_password, 'forgot_password', ['POST'], _recovery_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/reset-password', endpoint='reset_password', view_func=_anonymous_sensitive_limit(reset_password, 'reset_password', ['POST'], _reset_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=_limit(account, 'account', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/account/delete', endpoint='delete_account', view_func=_limit(delete_account, 'delete_account', ['POST']), methods=['POST'])
-    app.add_url_rule('/theme', endpoint='update_theme', view_func=update_theme_route, methods=['POST'])
+    app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
@@ -1886,19 +2007,19 @@ def register_routes(app):
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=_limit(create_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/import_deck', endpoint='import_deck', view_func=_limit(import_deck_route, 'import_deck', ['POST']), methods=['POST'])
-    app.add_url_rule('/get_decks', endpoint='get_decks', view_func=get_deck_list_route, methods=['POST'])
+    app.add_url_rule('/get_decks', endpoint='get_decks', view_func=_limit(get_deck_list_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=_limit(delete_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=_limit(edit_deck_route, 'content_mutation', ['POST']), methods=['POST'])
 
     # Card operations
     app.add_url_rule('/add_card', endpoint='add_card', view_func=_limit(add_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/delete_card', endpoint='delete_card', view_func=_limit(delete_card_route, 'content_mutation', ['POST']), methods=['POST'])
-    app.add_url_rule('/match_answer', endpoint='match_answer', view_func=match_answer_route, methods=['POST'])
-    app.add_url_rule('/match_attempt', endpoint='match_attempt', view_func=match_attempt_route, methods=['POST'])
+    app.add_url_rule('/match_answer', endpoint='match_answer', view_func=_limit(match_answer_route, 'api', ['POST']), methods=['POST'])
+    app.add_url_rule('/match_attempt', endpoint='match_attempt', view_func=_limit(match_attempt_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/delete_answer', endpoint='delete_answer', view_func=_limit(delete_answer_route, 'content_mutation', ['POST']), methods=['POST'])
-    app.add_url_rule('/list_cards', endpoint='list_cards', view_func=list_cards_route, methods=['POST'])
-    app.add_url_rule('/get_card', endpoint='get_card', view_func=get_card_route, methods=['POST'])
+    app.add_url_rule('/list_cards', endpoint='list_cards', view_func=_limit(list_cards_route, 'api', ['POST']), methods=['POST'])
+    app.add_url_rule('/get_card', endpoint='get_card', view_func=_limit(get_card_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_card', endpoint='edit_card', view_func=_limit(edit_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/move_card', endpoint='move_card', view_func=_limit(move_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=_limit(swap_cards_route, 'content_mutation', ['POST']), methods=['POST'])
-    app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=check_reorder_route, methods=['POST'])
+    app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=_limit(check_reorder_route, 'api', ['POST']), methods=['POST'])

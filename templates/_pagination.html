@@ -1,0 +1,19 @@
+{% macro controls(pagination, endpoint, params) %}
+{% if pagination and (pagination.has_prev or pagination.has_next) %}
+<nav class="mt-4" aria-label="Collection pages">
+    <div class="toolbar-row">
+        {% if pagination.has_prev %}
+        <a class="btn-surface" href="{{ url_for(endpoint, page=pagination.prev_page, page_size=pagination.per_page, **params) }}" rel="prev">Previous page</a>
+        {% else %}
+        <span class="small-muted" aria-disabled="true">Previous page</span>
+        {% endif %}
+        <span class="small-muted" aria-live="polite">Page {{ pagination.page }}</span>
+        {% if pagination.has_next %}
+        <a class="btn-surface" href="{{ url_for(endpoint, page=pagination.next_page, page_size=pagination.per_page, **params) }}" rel="next">Next page</a>
+        {% else %}
+        <span class="small-muted" aria-disabled="true">Next page</span>
+        {% endif %}
+    </div>
+</nav>
+{% endif %}
+{% endmacro %}

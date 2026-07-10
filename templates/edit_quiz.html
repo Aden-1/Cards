@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Manage Quizzes{% endblock %}
 
@@ -20,7 +21,7 @@
     </article>
 
     <article class="surface p-4" id="quizzes-section">
-        <div class="panel-header mb-3"><div><span class="page-kicker">Library</span><h2 class="h3 mb-1">Your custom quizzes</h2><p class="muted-copy mb-0">{{ quizzes|length }} total quiz{% if quizzes|length != 1 %}zes{% endif %}</p></div></div>
+        <div class="panel-header mb-3"><div><span class="page-kicker">Library</span><h2 class="h3 mb-1">Your custom quizzes</h2><p class="muted-copy mb-0">{{ quizzes|length }} quiz{% if quizzes|length != 1 %}zes{% endif %} on this page</p></div></div>
         {% if quizzes %}
         <div class="deck-grid stagger">
             {% for q in quizzes %}
@@ -48,6 +49,7 @@
             </article>
             {% endfor %}
         </div>
+        {{ controls(quiz_page, pagination_endpoint, pagination_args) }}
         {% else %}
         <div class="empty-card">No custom quizzes yet. Create one to get started.</div>
         {% endif %}

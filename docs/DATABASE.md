@@ -9,6 +9,7 @@ The app supports SQLite and PostgreSQL with SQLAlchemy ORM and Flask-Migrate.
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
 - Search index: SQLite uses the migration-created `public_content_fts` FTS5 virtual table; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index
+- Homepage tags: `deck_tag` stores one case-normalized tag per deck. The homepage aggregates only public rows in SQL, avoiding a full deck scan in the request path.
 - Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
 
 ## Migration Commands
@@ -56,6 +57,11 @@ class Deck(db.Model):
     is_public = db.Column(db.Boolean, default=False)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
 ```
+
+`DeckTag` has a composite primary key of `(deck_id, tag_normalized)` and a
+`(tag_normalized, deck_id)` index. It is backfilled by migration and maintained
+when deck metadata is created or edited. `deck` also has a
+`(is_public, is_featured, deck_id)` index for the bounded featured-deck lookup.
 
 ### Card
 ```python
@@ -174,6 +180,7 @@ class QuizAttempt(db.Model):
 - Removing the last `CardAnswer` deletes the parent `Card`.
 - Editing a card replaces its full answer set.
 - Public decks and quizzes are mirrored into the backend-specific full-text index for search.
+- User-facing collections use stable `*_id` ordering and capped, look-ahead pagination (20 by default, 50 maximum). Featured decks are selected from a daily rotating, bounded public-featured query.
 - Search requests never create or rebuild indexes. Use `flask rebuild-public-search-index`
   explicitly after a restore or when index health checks identify drift.
 - The search index stores title, description, and tags only.

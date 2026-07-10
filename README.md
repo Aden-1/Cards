@@ -31,9 +31,8 @@ This project targets Python `3.13`.
 py -3.13 -m venv .venv
 .\.venv\Scripts\activate
 
-# Install dependencies
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+# Install verified dependencies
+python -m pip install --require-hashes -r requirements-dev.txt
 
 # Initialize database
 python -m flask db upgrade
@@ -51,6 +50,13 @@ python -m ruff check .
 python -m unittest
 python -m flask db upgrade
 ```
+
+## Dependency Updates
+
+Install the checked-in hash-locked files with `--require-hashes`. The reviewed
+dependency inputs, exact lockfile regeneration commands, SBOM, audit, and
+GPL-3.0 license policy are documented in
+[docs/DEPENDENCY_MANAGEMENT.md](docs/DEPENDENCY_MANAGEMENT.md).
 
 ## Usage
 

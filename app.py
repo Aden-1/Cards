@@ -9,7 +9,6 @@ import logging
 import secrets
 import smtplib
 import sys
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -18,19 +17,26 @@ from flask import Flask
 from flask_compress import Compress
 from flask_migrate import Migrate
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
+from limits import parse_many
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from werkzeug.security import generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-from models import db, User, Deck, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, QuizAttempt, CardMasteryProgress, MatchPairProgress
+from models import db, User, Deck, DeckTag, Card, CardAnswer, Quiz, QuizQuestion, QuizOption, QuizAttempt, CardMasteryProgress, MatchPairProgress
 from routes import register_routes
 
 app = Flask(__name__, instance_relative_config=True)
 
+# List endpoints intentionally share a conservative ceiling so a crafted query
+# string cannot turn a page render into an unbounded database or response cost.
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 50
+
 # Application environment and runtime configuration.
 environment_name = os.environ.get('APP_ENV', os.environ.get('FLASK_ENV', 'development')).lower()
 is_production = environment_name == 'production'
+allows_in_memory_rate_limits = environment_name in ('development', 'testing')
 
 
 def _env_bool(name, default=False):
@@ -66,14 +72,39 @@ def _env_list(name):
     return values or None
 
 
-def _rate_limit_storage_uri(is_production):
+def _rate_limit_storage_uri(require_shared_store):
     """Return the safe limiter backend for this runtime environment."""
     storage_uri = _env_str('RATELIMIT_STORAGE_URI')
-    if is_production and not storage_uri:
-        raise RuntimeError('RATELIMIT_STORAGE_URI must be set to a shared Redis URL in production.')
-    if is_production and not storage_uri.startswith(('redis://', 'rediss://')):
-        raise RuntimeError('RATELIMIT_STORAGE_URI must use redis:// or rediss:// in production.')
+    if require_shared_store and not storage_uri:
+        raise RuntimeError('RATELIMIT_STORAGE_URI must be set to a shared Redis URL outside development/testing.')
+    if require_shared_store and not storage_uri.startswith(('redis://', 'rediss://')):
+        raise RuntimeError('RATELIMIT_STORAGE_URI must use redis:// or rediss:// outside development/testing.')
     return storage_uri or 'memory://'
+
+
+def _validate_rate_limit(name, value):
+    """Accept one bounded limits expression and reject surprising policies early."""
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f'{name} must be a non-empty rate limit expression.')
+    try:
+        items = parse_many(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f'{name} is not a valid rate limit expression.') from exc
+    if len(items) != 1:
+        raise RuntimeError(f'{name} must contain exactly one rate limit expression.')
+    item = items[0]
+    if not 1 <= item.amount <= 10_000 or not 1 <= item.get_expiry() <= 86_400:
+        raise RuntimeError(
+            f'{name} must allow 1-10000 requests over a window from 1 second to 24 hours.'
+        )
+    return value.strip()
+
+
+def _validate_rate_limits(rate_limits):
+    return {
+        name: _validate_rate_limit(f'RATE_LIMIT_{name.upper()}', value)
+        for name, value in rate_limits.items()
+    }
 
 
 def _normalize_database_url(url, require_ssl=False):
@@ -189,9 +220,11 @@ for password_reset_timeout_name, maximum in (
 # shared by every web worker and do not accumulate indefinitely.  Memory is
 # deliberately limited to non-production environments, where it makes local
 # development and tests self-contained.
-rate_limit_storage_uri = _rate_limit_storage_uri(is_production)
+rate_limit_storage_uri = _rate_limit_storage_uri(not allows_in_memory_rate_limits)
 app.config['RATELIMIT_STORAGE_URI'] = rate_limit_storage_uri
 app.config['RATELIMIT_KEY_PREFIX'] = _env_str('RATELIMIT_KEY_PREFIX', 'cards')
+if not re.fullmatch(r'[A-Za-z0-9:_-]{1,64}', app.config['RATELIMIT_KEY_PREFIX']):
+    raise RuntimeError('RATELIMIT_KEY_PREFIX must be 1-64 letters, numbers, colons, underscores, or dashes.')
 app.config['RATELIMIT_HEADERS_ENABLED'] = True
 app.config['RATELIMIT_HEADER_RETRY_AFTER_VALUE'] = 'delta-seconds'
 app.config['RATELIMIT_STRATEGY'] = 'fixed-window'
@@ -209,7 +242,9 @@ app.config['RATE_LIMITS'] = {
     'import_deck': _env_str('RATE_LIMIT_IMPORT_DECK', '10 per hour'),
     'public_copy': _env_str('RATE_LIMIT_PUBLIC_COPY', '20 per hour'),
     'content_mutation': _env_str('RATE_LIMIT_CONTENT_MUTATION', '120 per hour'),
+    'api': _env_str('RATE_LIMIT_API', '120 per minute'),
 }
+app.config['RATE_LIMITS'] = _validate_rate_limits(app.config['RATE_LIMITS'])
 if (
     not app.config['PASSWORD_RESET_QUEUE_URL']
     and rate_limit_storage_uri.startswith(('redis://', 'rediss://'))
@@ -227,8 +262,15 @@ trusted_hosts = _env_list('TRUSTED_HOSTS')
 if is_production and not trusted_hosts:
     raise RuntimeError('TRUSTED_HOSTS must be set in production.')
 app.config['TRUSTED_HOSTS'] = trusted_hosts
-if is_production:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+proxy_hops = _env_int('TRUST_PROXY_HOPS', 0)
+if not 0 <= proxy_hops <= 5:
+    raise RuntimeError('TRUST_PROXY_HOPS must be between 0 and 5.')
+app.config['TRUST_PROXY_HOPS'] = proxy_hops
+# Forwarded headers are ignored unless the deployment explicitly declares how
+# many directly-connected, trusted proxy hops sit in front of this process.
+# This leaves direct development and direct production deployments unspoofable.
+if proxy_hops:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops)
 
 compress = Compress(app)
 
@@ -535,6 +577,37 @@ def _attach_quiz_question_counts(quiz_rows):
     return quizzes
 
 
+def _bounded_page(page=1, per_page=DEFAULT_PAGE_SIZE):
+    """Normalize page input for all collection queries, including API callers."""
+    try:
+        page = max(1, int(page))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = max(1, min(int(per_page), MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        per_page = DEFAULT_PAGE_SIZE
+    return page, per_page
+
+
+def _page_rows(query, attach_counts, page=1, per_page=DEFAULT_PAGE_SIZE):
+    """Fetch at most one page plus a look-ahead row, with stable metadata."""
+    page, per_page = _bounded_page(page, per_page)
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    if has_next:
+        rows = rows[:per_page]
+    return {
+        'items': attach_counts(rows),
+        'page': page,
+        'per_page': per_page,
+        'has_prev': page > 1,
+        'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+
+
 def _quiz_query_with_question_counts():
     return (
         db.session.query(Quiz)
@@ -555,17 +628,26 @@ def get_quiz_with_content(quiz_id):
 
 
 def get_accessible_custom_quizzes(user_id=None):
-    query = _quiz_query_with_question_counts()
-    if user_id is None:
-        return _attach_quiz_question_counts(query.filter(Quiz.is_public == True).all())
-    return _attach_quiz_question_counts(
-        query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True)).all()
-    )
+    # Kept for non-page callers; it is still capped to avoid accidental wide reads.
+    return get_accessible_custom_quizzes_page(user_id)['items']
+
 
 def get_user_custom_quizzes(user_id):
-    return _attach_quiz_question_counts(
-        _quiz_query_with_question_counts().filter(Quiz.owned_by == user_id).all()
-    )
+    return get_user_custom_quizzes_page(user_id)['items']
+
+
+def get_accessible_custom_quizzes_page(user_id=None, page=1, per_page=DEFAULT_PAGE_SIZE):
+    query = _quiz_query_with_question_counts()
+    if user_id is None:
+        query = query.filter(Quiz.is_public == True)
+    else:
+        query = query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True))
+    return _page_rows(query.order_by(Quiz.quiz_id.asc()), _attach_quiz_question_counts, page, per_page)
+
+
+def get_user_custom_quizzes_page(user_id, page=1, per_page=DEFAULT_PAGE_SIZE):
+    query = _quiz_query_with_question_counts().filter(Quiz.owned_by == user_id).order_by(Quiz.quiz_id.asc())
+    return _page_rows(query, _attach_quiz_question_counts, page, per_page)
 
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
     title, description, tags = _validate_quiz_metadata(title, description, tags)
@@ -655,6 +737,7 @@ def copy_public_deck_to_user(source_deck_id, user_id):
     )
     db.session.add(copied_deck)
     db.session.flush()
+    _replace_deck_tags(copied_deck, copied_deck.tags)
 
     ordered_cards = sorted(list(source_deck.cards), key=lambda c: c.position)
     for source_card in ordered_cards:
@@ -991,6 +1074,8 @@ def create_deck(user_id, description, sortable=False, is_public=False, is_featur
         tags=tags
     )
     db.session.add(deck)
+    db.session.flush()
+    _replace_deck_tags(deck, tags)
     db.session.commit()
     _sync_content_fts_index_for_deck(deck)
     return deck
@@ -1012,6 +1097,7 @@ def import_deck(user_id, description, raw_text, sortable=False, is_public=False,
     )
     db.session.add(deck)
     db.session.flush()
+    _replace_deck_tags(deck, tags)
 
     next_position = 1
     for card_data in cards:
@@ -1042,11 +1128,7 @@ def get_deck_with_content(deck_id):
 
 
 def get_user_decks(user_id):
-    return _attach_deck_card_counts(
-        _deck_query_with_card_counts()
-        .filter(Deck.owned_by == user_id)
-        .all()
-    )
+    return get_user_decks_page(user_id)['items']
 
 
 def _attach_deck_card_counts(deck_rows):
@@ -1069,40 +1151,77 @@ def _deck_query_with_card_counts():
 def get_accessible_decks(user_id=None):
     query = _deck_query_with_card_counts()
     if user_id is None:
-        return _attach_deck_card_counts(query.filter(Deck.is_public == True).all())
-    return _attach_deck_card_counts(
-        query.filter((Deck.owned_by == user_id) | (Deck.is_public == True)).all()
-    )
+        query = query.filter(Deck.is_public == True)
+    else:
+        query = query.filter((Deck.owned_by == user_id) | (Deck.is_public == True))
+    return _page_rows(query.order_by(Deck.deck_id.asc()), _attach_deck_card_counts)['items']
+
+
+def get_user_decks_page(user_id, page=1, per_page=DEFAULT_PAGE_SIZE, sortable_only=False):
+    query = _deck_query_with_card_counts().filter(Deck.owned_by == user_id)
+    if sortable_only:
+        query = query.filter(Deck.sortable == True)
+    return _page_rows(query.order_by(Deck.deck_id.asc()), _attach_deck_card_counts, page, per_page)
+
+
+def _normalized_tag_rows(tags):
+    seen = set()
+    for raw_tag in (tags or '').split(','):
+        display = raw_tag.strip()
+        normalized = display.casefold()
+        if display and normalized not in seen:
+            seen.add(normalized)
+            yield normalized, display
+
+
+def _replace_deck_tags(deck, tags):
+    """Keep normalized tag rows in the same transaction as deck metadata."""
+    DeckTag.query.filter_by(deck_id=deck.deck_id).delete(synchronize_session=False)
+    for normalized, display in _normalized_tag_rows(tags):
+        db.session.add(DeckTag(deck_id=deck.deck_id, tag_normalized=normalized, tag_display=display))
 
 
 def get_homepage_public_data(featured_limit=3, tag_limit=5):
-    public_decks = get_accessible_decks(None)
-    eligible_featured_decks = [deck for deck in public_decks if deck.is_featured]
-    featured_limit = max(0, int(featured_limit))
-    tag_limit = max(0, int(tag_limit))
+    try:
+        featured_limit = max(0, min(int(featured_limit), MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        featured_limit = 3
+    try:
+        tag_limit = max(0, min(int(tag_limit), MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        tag_limit = 5
+    featured_query = Deck.query.filter(
+        Deck.is_public == True, Deck.is_featured == True
+    ).order_by(Deck.deck_id.asc())
+    featured_count = featured_query.count() if featured_limit else 0
+    featured_limit = min(featured_limit, featured_count)
+    offset = datetime.now().date().toordinal() % featured_count if featured_count else 0
+    featured_decks = featured_query.limit(featured_limit).offset(offset).all() if featured_count else []
+    # Wrap around without ever reading more than the requested feature limit.
+    if len(featured_decks) < featured_limit and featured_count > len(featured_decks):
+        featured_decks += featured_query.limit(featured_limit - len(featured_decks)).all()
+    featured_ids = [deck.deck_id for deck in featured_decks]
+    if featured_ids:
+        counted_decks = _attach_deck_card_counts(
+            _deck_query_with_card_counts().filter(Deck.deck_id.in_(featured_ids)).all()
+        )
+        by_id = {deck.deck_id: deck for deck in counted_decks}
+        featured_decks = [by_id[deck_id] for deck_id in featured_ids]
 
-    featured_decks = []
-    if eligible_featured_decks and featured_limit > 0:
-        day_seed = datetime.now().date().isoformat()
-        daily_rng = random.Random(day_seed)
-        featured_pool = sorted(eligible_featured_decks, key=lambda deck: deck.deck_id)
-        featured_decks = daily_rng.sample(featured_pool, min(featured_limit, len(featured_pool)))
-
-    tag_counter = Counter()
-    for deck in public_decks:
-        seen_tags = set()
-        for raw_tag in (deck.tags or '').split(','):
-            cleaned_tag = raw_tag.strip()
-            normalized_tag = cleaned_tag.lower()
-            if not cleaned_tag or normalized_tag in seen_tags:
-                continue
-            seen_tags.add(normalized_tag)
-            tag_counter[cleaned_tag] += 1
-
-    featured_tags = [
-        {'tag': tag, 'count': count}
-        for tag, count in sorted(tag_counter.items(), key=lambda item: (-item[1], item[0].lower()))[:tag_limit]
-    ]
+    tag_rows = (
+        db.session.query(
+            DeckTag.tag_normalized,
+            db.func.min(DeckTag.tag_display).label('tag'),
+            db.func.count(DeckTag.deck_id).label('count'),
+        )
+        .join(Deck, Deck.deck_id == DeckTag.deck_id)
+        .filter(Deck.is_public == True)
+        .group_by(DeckTag.tag_normalized)
+        .order_by(db.func.count(DeckTag.deck_id).desc(), DeckTag.tag_normalized.asc())
+        .limit(tag_limit)
+        .all()
+    )
+    featured_tags = [{'tag': row.tag, 'count': int(row.count)} for row in tag_rows]
 
     return {
         'featured_decks': [
@@ -1142,6 +1261,7 @@ def edit_deck(deck_id, description, sortable=False, is_public=False, is_featured
         deck.is_featured = is_featured
         deck.detailed_description = detailed_description
         deck.tags = tags
+        _replace_deck_tags(deck, tags)
         db.session.commit()
         _sync_content_fts_index_for_deck(deck)
         return deck
@@ -1161,7 +1281,7 @@ def search_public_decks(query_text):
             Deck.detailed_description.ilike(search_term),
             Deck.tags.ilike(search_term)
         )
-    ).all()
+    ).order_by(Deck.deck_id.asc()).limit(MAX_PAGE_SIZE).all()
     return decks
 
 
@@ -1178,7 +1298,7 @@ def search_public_quizzes(query_text):
                 Quiz.description.ilike(search_term),
                 Quiz.tags.ilike(search_term)
             )
-        ).all()
+        ).order_by(Quiz.quiz_id.asc()).limit(MAX_PAGE_SIZE).all()
     )
     return quizzes
 
@@ -1423,39 +1543,42 @@ def _rebuild_content_fts_index():
     db.session.commit()
 
 
-def _fallback_search_public_content(query_text):
+def _fallback_search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, offset=0):
     search_term = f"%{query_text}%"
-    decks = _attach_deck_card_counts(
-        _deck_query_with_card_counts().filter(
-            Deck.is_public == True,
-            db.or_(
-                Deck.description.ilike(search_term),
-                Deck.detailed_description.ilike(search_term),
-                Deck.tags.ilike(search_term)
-            )
-        ).all()
-    )
-    quizzes = _attach_quiz_question_counts(
-        _quiz_query_with_question_counts().filter(
-            Quiz.is_public == True,
-            db.or_(
-                Quiz.title.ilike(search_term),
-                Quiz.description.ilike(search_term),
-                Quiz.tags.ilike(search_term)
-            )
-        ).all()
-    )
-    return decks, quizzes
+    deck_query = _deck_query_with_card_counts().filter(
+        Deck.is_public == True,
+        db.or_(Deck.description.ilike(search_term), Deck.detailed_description.ilike(search_term), Deck.tags.ilike(search_term)),
+    ).order_by(Deck.deck_id.asc())
+    quiz_query = _quiz_query_with_question_counts().filter(
+        Quiz.is_public == True,
+        db.or_(Quiz.title.ilike(search_term), Quiz.description.ilike(search_term), Quiz.tags.ilike(search_term)),
+    ).order_by(Quiz.quiz_id.asc())
+    deck_count = deck_query.count()
+    quiz_count = quiz_query.count()
+    total = deck_count + quiz_count
+    rows_remaining = limit
+    deck_rows = []
+    quiz_rows = []
+    if offset < deck_count:
+        deck_rows = deck_query.limit(rows_remaining).offset(offset).all()
+        rows_remaining -= len(deck_rows)
+        if rows_remaining:
+            quiz_rows = quiz_query.limit(rows_remaining).all()
+    else:
+        quiz_rows = quiz_query.limit(rows_remaining).offset(offset - deck_count).all()
+    return _attach_deck_card_counts(deck_rows), _attach_quiz_question_counts(quiz_rows), total > offset + limit
 
 
-def search_public_content(query_text, limit=50, user_id=None):
+def search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, page=1, user_id=None):
     query_text = (query_text or '').strip()
+    page, limit = _bounded_page(page, limit)
+    offset = (page - 1) * limit
     if not query_text:
-        return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
+        return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': [], 'pagination': _search_pagination(page, limit, False)}
 
     fts_query, query_tokens = _build_fts_query(query_text)
     if not query_tokens:
-        return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': []}
+        return {'decks': [], 'quizzes': [], 'has_exact_match': False, 'query_tokens': [], 'expanded_tokens': [], 'pagination': _search_pagination(page, limit, False)}
 
     deck_results = []
     quiz_results = []
@@ -1475,10 +1598,11 @@ def search_public_content(query_text, limit=50, user_id=None):
                         snippet(public_content_fts, 2, '[', ']', '...', 10) AS tags_snippet
                     FROM public_content_fts
                     WHERE public_content_fts MATCH :match_query
-                    ORDER BY rank
+                    ORDER BY rank ASC, item_type ASC, item_id ASC
                     LIMIT :limit
+                    OFFSET :offset
                 """),
-                {'match_query': fts_query, 'limit': int(limit)}
+                {'match_query': fts_query, 'limit': limit + 1, 'offset': offset}
             ).fetchall()
         else:
             # Postgres full-text path with weighted ranking and highlighted snippets.
@@ -1496,11 +1620,15 @@ def search_public_content(query_text, limit=50, user_id=None):
                         ts_headline('english', tags, websearch_to_tsquery('english', :query_text), 'StartSel=[,StopSel=],MaxWords=10,MinWords=2') AS tags_snippet
                     FROM public_content_search
                     WHERE search_vector @@ websearch_to_tsquery('english', :query_text)
-                    ORDER BY rank DESC
+                    ORDER BY rank DESC, item_type ASC, item_id ASC
                     LIMIT :limit
+                    OFFSET :offset
                 """),
-                {'query_text': query_text, 'limit': int(limit)}
+                {'query_text': query_text, 'limit': limit + 1, 'offset': offset}
             ).fetchall()
+
+        has_next = len(results) > limit
+        results = results[:limit]
 
         deck_ids = [int(row[1]) for row in results if row[0] == 'deck']
         quiz_ids = [int(row[1]) for row in results if row[0] == 'quiz']
@@ -1614,7 +1742,7 @@ def search_public_content(query_text, limit=50, user_id=None):
         db.session.rollback()
         app.logger.exception('public_search_query_failed query=%s', query_text, exc_info=exc)
         # Fall back to simple LIKE search if FTS fails.
-        decks, quizzes = _fallback_search_public_content(query_text)
+        decks, quizzes, has_next = _fallback_search_public_content(query_text, limit=limit, offset=offset)
         deck_results = [{
             'deck_id': deck.deck_id,
             'owned_by': deck.owned_by,
@@ -1648,6 +1776,18 @@ def search_public_content(query_text, limit=50, user_id=None):
         'has_exact_match': has_exact_match,
         'query_tokens': query_tokens,
         'expanded_tokens': [],
+        'pagination': _search_pagination(page, limit, has_next),
+    }
+
+
+def _search_pagination(page, per_page, has_next):
+    return {
+        'page': page,
+        'per_page': per_page,
+        'has_prev': page > 1,
+        'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
     }
 
 # Card and answer helpers.
@@ -2516,6 +2656,13 @@ with app.app_context():
 
 # Route registration lives in routes.py so view handlers stay in one place.
 register_routes(app)
+
+# A configured Redis URL is not enough: fail startup rather than accepting
+# traffic with a limiter whose shared store cannot be reached.
+if is_production:
+    from routes import verify_limiter_backend
+    with app.app_context():
+        verify_limiter_backend()
 
 
 if __name__ == '__main__':

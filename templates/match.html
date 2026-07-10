@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Match{% endblock %}
 
@@ -17,6 +18,7 @@
             <div><label class="form-label" for="matchStrategy">Strategy <span id="matchStrategyHelp" class="status-chip info" title="" aria-label="">?</span></label><select class="form-select" id="matchStrategy" name="strategy">{% for strategy in match_strategy_catalog %}<option value="{{ strategy.value }}" data-description="{{ strategy.description }}" {% if selected_strategy == strategy.value %}selected{% endif %}>{{ strategy.label }}</option>{% endfor %}</select></div>
             <div class="deck-actions"><button class="btn-primary-surface" type="submit">Start Match</button></div>
         </form>
+        {{ controls(deck_page, pagination_endpoint, pagination_args) }}
         {% elif not current_user %}
         <div class="section-stack">
             <div class="small-muted">Guests can still play with a public deck when they open it from the library.</div>

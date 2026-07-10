@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Search{% endblock %}
 
@@ -85,4 +86,5 @@
         {% endif %}
     </article>
 </section>
+{{ controls(pagination, pagination_endpoint, pagination_args) }}
 {% endblock %}

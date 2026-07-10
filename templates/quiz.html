@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Quiz{% endblock %}
 
@@ -21,6 +22,7 @@
                     <option value="">Choose a deck...</option>
                     {% for deck in decks %}<option value="deck:{{ deck.deck_id }}" {% if selected_deck_id == deck.deck_id %}selected{% endif %}>{{ deck.description }} ({{ deck.card_count }} cards)</option>{% endfor %}
                 </select>
+                {{ controls(deck_page, pagination_endpoint, pagination_args) }}
             </div>
             <div class="form-actions"><button class="btn-primary-surface" type="submit">Start Deck Quiz</button></div>
         </form>
@@ -46,6 +48,7 @@
                     <option value="">Choose a custom quiz...</option>
                     {% for cq in custom_quizzes %}<option value="custom:{{ cq.quiz_id }}" {% if selected_custom_quiz_id == cq.quiz_id %}selected{% endif %}>{{ cq.title }} ({{ cq.question_count }} Qs)</option>{% endfor %}
                 </select>
+                {{ controls(quiz_page, pagination_endpoint, pagination_args) }}
             </div>
             <div class="form-actions"><button class="btn-surface" type="submit">Take Custom Quiz</button></div>
         </form>

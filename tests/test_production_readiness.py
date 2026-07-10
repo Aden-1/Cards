@@ -6,7 +6,13 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import brotli
+from flask import Flask
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from limits.storage import MemoryStorage
+from limits.strategies import FixedWindowRateLimiter
 from sqlalchemy import event, text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 os.environ['APP_ENV'] = 'testing'
@@ -15,7 +21,7 @@ os.environ['DATABASE_URL'] = 'sqlite://'
 
 import app as cards_app
 import routes
-from models import Card, CardAnswer, Deck, MatchPairProgress, Quiz, QuizAttempt, QuizOption, QuizQuestion, User, db
+from models import Card, CardAnswer, Deck, DeckTag, MatchPairProgress, Quiz, QuizAttempt, QuizOption, QuizQuestion, User, db
 
 
 class ProductionReadinessTests(unittest.TestCase):
@@ -115,6 +121,100 @@ class ProductionReadinessTests(unittest.TestCase):
             current_session.clear()
         guest_learn_page = self.client.get('/view').get_data(as_text=True)
         self.assertNotIn('Public Direct Deck', guest_learn_page)
+
+    def test_deck_page_is_capped_stable_and_uses_a_constant_query_count(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('paged_owner', 'password12345', email='paged-owner@example.test')
+            db.session.add_all([Deck(owned_by=owner.user_id, description=f'Deck {index:03d}') for index in range(61)])
+            db.session.commit()
+            owner_id = owner.user_id
+            statements = []
+
+            def record_statement(*args):
+                statements.append(args[2].strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                page = cards_app.get_user_decks_page(owner_id, page=2, per_page=500)
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+            self.assertEqual(page['per_page'], 50)
+            self.assertEqual([deck.description for deck in page['items']], [f'Deck {index:03d}' for index in range(50, 61)])
+            self.assertTrue(page['has_prev'])
+            self.assertFalse(page['has_next'])
+            self.assertLessEqual(len(statements), 2)
+            self.assertIn('LIMIT', statements[0])
+
+            self._login_session(owner_id)
+            response_text = self.client.get('/edit?page=2&page_size=500').get_data(as_text=True)
+            self.assertIn('Deck 050', response_text)
+            self.assertNotIn('Deck 000', response_text)
+            self.assertIn('aria-label="Collection pages"', response_text)
+            self.assertIn('Previous page', response_text)
+
+    def test_homepage_uses_bounded_feature_queries_and_normalized_tag_aggregate(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('homepage_owner', 'password12345', email='homepage-owner@example.test')
+            decks = [
+                Deck(owned_by=owner.user_id, description=f'Featured {index:03d}', is_public=True, is_featured=True)
+                for index in range(80)
+            ]
+            db.session.add_all(decks)
+            db.session.flush()
+            db.session.add_all([
+                DeckTag(deck_id=deck.deck_id, tag_normalized='science', tag_display='Science')
+                for deck in decks
+            ] + [DeckTag(deck_id=decks[0].deck_id, tag_normalized='math', tag_display='Math')])
+            db.session.commit()
+            statements = []
+
+            def record_statement(*args):
+                statements.append(args[2].strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                homepage = cards_app.get_homepage_public_data(featured_limit=3, tag_limit=5)
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+            self.assertEqual(len(homepage['featured_decks']), 3)
+            self.assertEqual(homepage['featured_tags'][0], {'tag': 'Science', 'count': 80})
+            self.assertLessEqual(len(statements), 5)
+            self.assertTrue(any('DECK_TAG' in statement and 'GROUP BY' in statement for statement in statements))
+            self.assertTrue(any('LIMIT' in statement for statement in statements))
+
+    def test_fallback_search_enforces_page_limit_and_navigation(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('fallback_owner', 'password12345', email='fallback-owner@example.test')
+            db.session.add_all([
+                Deck(owned_by=owner.user_id, description=f'Fallback topic {index:03d}', is_public=True)
+                for index in range(60)
+            ])
+            db.session.commit()
+            db.session.execute(text('DROP TABLE IF EXISTS public_content_fts'))
+            db.session.commit()
+            statements = []
+
+            def record_statement(*args):
+                statements.append(args[2].strip().upper())
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                with mock.patch.object(cards_app.app.logger, 'exception'):
+                    first_page = cards_app.search_public_content('Fallback topic', limit=500, page=1)
+                    second_page = cards_app.search_public_content('Fallback topic', limit=500, page=2)
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+            self.assertEqual(len(first_page['decks']), 50)
+            self.assertEqual(first_page['pagination']['per_page'], 50)
+            self.assertTrue(first_page['pagination']['has_next'])
+            self.assertEqual(len(second_page['decks']), 10)
+            self.assertTrue(second_page['pagination']['has_prev'])
+            self.assertFalse(second_page['pagination']['has_next'])
+            self.assertEqual([deck['description'] for deck in first_page['decks'][:2]], ['Fallback topic 000', 'Fallback topic 001'])
+            self.assertLessEqual(len(statements), 9)
 
     def test_trusted_hosts_reject_unexpected_hostname(self):
         previous_hosts = cards_app.app.config.get('TRUSTED_HOSTS')
@@ -504,6 +604,117 @@ class ProductionReadinessTests(unittest.TestCase):
                 cards_app._rate_limit_storage_uri(True),
                 'rediss://redis.example.test/0',
             )
+
+    def test_rate_limit_values_are_validated_and_bounded(self):
+        self.assertEqual(cards_app._validate_rate_limit('RATE_LIMIT_TEST', '5 per minute'), '5 per minute')
+        for value in ('invalid', '0 per minute', '10001 per minute', '1 per 2 days', '1/minute; 2/hour'):
+            with self.assertRaises(RuntimeError, msg=value):
+                cards_app._validate_rate_limit('RATE_LIMIT_TEST', value)
+
+    def test_production_limiter_backend_failure_aborts_startup(self):
+        previous_production = cards_app.app.config['IS_PRODUCTION']
+        cards_app.app.config['IS_PRODUCTION'] = True
+        try:
+            with cards_app.app.app_context():
+                with mock.patch.object(routes.limiter.storage, 'check', return_value=False):
+                    with self.assertRaisesRegex(RuntimeError, 'unavailable'):
+                        routes.verify_limiter_backend()
+                with mock.patch.object(routes.limiter.storage, 'check', side_effect=OSError('down')):
+                    with self.assertRaisesRegex(RuntimeError, 'unavailable'):
+                        routes.verify_limiter_backend()
+        finally:
+            cards_app.app.config['IS_PRODUCTION'] = previous_production
+
+    def test_two_limiter_instances_enforce_against_one_shared_store(self):
+        first_app = Flask('first-rate-limit-worker')
+        second_app = Flask('second-rate-limit-worker')
+        first_limiter = Limiter(key_func=get_remote_address, storage_uri='memory://')
+        second_limiter = Limiter(key_func=get_remote_address, storage_uri='memory://')
+        first_limiter.init_app(first_app)
+        second_limiter.init_app(second_app)
+
+        shared_store = MemoryStorage()
+        for limiter_instance in (first_limiter, second_limiter):
+            limiter_instance._storage = shared_store
+            limiter_instance._limiter = FixedWindowRateLimiter(shared_store)
+
+        first_app.add_url_rule('/', view_func=first_limiter.limit('2 per minute')(lambda: 'first'))
+        second_app.add_url_rule('/', view_func=second_limiter.limit('2 per minute')(lambda: 'second'))
+
+        self.assertEqual(first_app.test_client().get('/').status_code, 200)
+        self.assertEqual(second_app.test_client().get('/').status_code, 200)
+        self.assertEqual(second_app.test_client().get('/').status_code, 429)
+
+    def test_forwarded_client_identity_requires_explicit_proxy_configuration(self):
+        direct_app = Flask('direct-client-address')
+
+        @direct_app.get('/')
+        def direct_address():
+            return get_remote_address()
+
+        direct_response = direct_app.test_client().get(
+            '/',
+            environ_base={'REMOTE_ADDR': '10.0.0.8'},
+            headers={'X-Forwarded-For': '198.51.100.20'},
+        )
+        self.assertEqual(direct_response.get_data(as_text=True), '10.0.0.8')
+
+        proxy_app = Flask('proxied-client-address')
+        proxy_app.wsgi_app = ProxyFix(proxy_app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+        @proxy_app.get('/')
+        def proxied_address():
+            return get_remote_address()
+
+        proxied_response = proxy_app.test_client().get(
+            '/',
+            environ_base={'REMOTE_ADDR': '10.0.0.8'},
+            headers={'X-Forwarded-For': '198.51.100.20, 10.0.0.8'},
+        )
+        self.assertEqual(proxied_response.get_data(as_text=True), '10.0.0.8')
+
+    def test_login_target_key_is_hashed_and_independent_of_ip(self):
+        with cards_app.app.test_request_context(
+            '/', method='POST', json={'username': 'TargetUser'},
+            environ_base={'REMOTE_ADDR': '198.51.100.20'},
+        ):
+            first_key = routes._login_target_key()
+        with cards_app.app.test_request_context(
+            '/', method='POST', json={'username': 'targetuser'},
+            environ_base={'REMOTE_ADDR': '203.0.113.9'},
+        ):
+            second_key = routes._login_target_key()
+
+        self.assertEqual(first_key, second_key)
+        self.assertNotIn('TargetUser', first_key)
+
+    def test_login_target_limit_survives_a_client_ip_change(self):
+        previous_limit = cards_app.app.config['RATE_LIMITS']['login']
+        cards_app.app.config['RATE_LIMITS']['login'] = '1 per minute'
+        routes.limiter.reset()
+        try:
+            first_client = cards_app.app.test_client()
+            second_client = cards_app.app.test_client()
+            for client in (first_client, second_client):
+                with client.session_transaction() as current_session:
+                    current_session['csrf_token'] = 'csrf-test-token'
+
+            first = first_client.post(
+                '/login', json={'username': 'targetuser', 'password': 'invalid'},
+                headers={'X-CSRFToken': 'csrf-test-token'},
+                environ_base={'REMOTE_ADDR': '198.51.100.20'},
+            )
+            second = second_client.post(
+                '/login', json={'username': 'targetuser', 'password': 'invalid'},
+                headers={'X-CSRFToken': 'csrf-test-token'},
+                environ_base={'REMOTE_ADDR': '203.0.113.9'},
+            )
+
+            self.assertEqual(first.status_code, 401)
+            self.assertEqual(second.status_code, 429)
+        finally:
+            cards_app.app.config['RATE_LIMITS']['login'] = previous_limit
+            routes.limiter.reset()
 
     def test_limiter_key_prefers_authenticated_user_over_ip(self):
         with cards_app.app.test_request_context('/', environ_base={'REMOTE_ADDR': '198.51.100.20'}):

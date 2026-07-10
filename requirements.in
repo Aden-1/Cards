@@ -1,0 +1,25 @@
+# Runtime dependency source of truth for Python 3.13.
+#
+# Keep the existing compatible package versions unless a reviewed compatibility or
+# security change is required. Compile this file; do not install it directly.
+alembic==1.18.4
+blinker==1.9.0
+Brotli==1.2.0
+click==8.3.1
+colorama==0.4.6
+Flask==3.1.3
+Flask-Compress==1.24
+Flask-Limiter[redis]==4.1.1
+Flask-Migrate==4.1.0
+Flask-SQLAlchemy==3.1.1
+greenlet==3.3.2
+itsdangerous==2.2.0
+Jinja2==3.1.6
+Mako==1.3.12
+MarkupSafe==3.0.3
+SQLAlchemy==2.0.48
+typing_extensions==4.15.0
+Werkzeug==3.1.6
+gunicorn==23.0.0
+psycopg[binary]==3.2.12
+rq==2.10.0

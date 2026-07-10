@@ -78,7 +78,9 @@ python -m flask cleanup-quiz-attempts
 
 ## Rate-Limit Operations
 
-Production will not start without `RATELIMIT_STORAGE_URI=redis://...` or `rediss://...`. Redis is the source of truth for all workers; rate-limit keys expire with their fixed windows and therefore do not require a manual cleanup job. The limiter uses an authenticated user's ID when available and otherwise uses the client IP after the configured trusted proxy hop.
+Production will not start without `RATELIMIT_STORAGE_URI=redis://...` or `rediss://...`, and startup checks that Redis is reachable. Redis is the source of truth for all workers; rate-limit keys expire with their fixed windows and therefore do not require a manual cleanup job. The limiter uses an authenticated user's ID when available and otherwise uses the client IP. Login, registration, and recovery endpoints also apply a separate hashed account-target key, so changing IPs cannot bypass a targeted attack limit.
+
+Set `TRUST_PROXY_HOPS=1` on Heroku or to the exact number of directly-connected trusted reverse proxies in another topology. Leave it at `0` for direct deployments. Never enable it merely because a client sends `X-Forwarded-For`: Flask only trusts the right-most configured proxy hops.
 
 Tune named `RATE_LIMIT_*` variables deliberately, then verify both browser and JSON clients receive `429` with `Retry-After` when a policy is exceeded. If the Redis service is unavailable, requests fail closed rather than silently reverting to per-process limits.
 

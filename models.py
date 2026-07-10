@@ -47,6 +47,22 @@ class Deck(db.Model):
     is_public = db.Column(db.Boolean, default=False, index=True)
     is_featured = db.Column(db.Boolean, default=False, index=True)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
+    tag_rows = db.relationship('DeckTag', backref='deck', lazy=True, cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.Index('ix_deck_public_featured_id', 'is_public', 'is_featured', 'deck_id'),
+    )
+
+
+class DeckTag(db.Model):
+    """One normalized tag per deck, used for public tag aggregation."""
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id'), primary_key=True)
+    tag_normalized = db.Column(db.String(255), primary_key=True)
+    tag_display = db.Column(db.String(255), nullable=False)
+
+    __table_args__ = (
+        db.Index('ix_deck_tag_normalized_deck_id', 'tag_normalized', 'deck_id'),
+    )
 
 
 # Card question plus one or more answers.

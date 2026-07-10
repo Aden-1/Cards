@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Study{% endblock %}
 
@@ -33,7 +34,8 @@
             <div class="deck-actions">
                 <button class="btn-primary-surface" type="submit">Start Studying</button>
             </div>
-        </form>
+            </form>
+            {{ controls(deck_page, pagination_endpoint, pagination_args) }}
         {% elif not current_user %}
         <div class="section-stack">
             <div class="small-muted">Guests can still study a public deck when they open it from the library.</div>

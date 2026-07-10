@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls %}
 
 {% block title %}Cards | Master{% endblock %}
 
@@ -40,7 +41,8 @@
                 <button class="btn-danger-surface" type="submit" form="masterResetForm">Reset Progress</button>
                 {% endif %}
             </div>
-        </form>
+            </form>
+            {{ controls(deck_page, pagination_endpoint, pagination_args) }}
         {% if selected_deck_id %}
         <form method="post" action="{{ url_for('master_reset') }}" data-master-action="true" id="masterResetForm">
             <input type="hidden" name="deck_id" value="{{ selected_deck_id }}">

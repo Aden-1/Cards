@@ -11,6 +11,7 @@ Set these for both staging and production:
 - `DATABASE_URL` pointing at a PostgreSQL database
 - `TRUSTED_HOSTS` as a comma-separated list of the app's public hostnames
 - `RATELIMIT_STORAGE_URI` as a shared `redis://` or `rediss://` URL
+- `TRUST_PROXY_HOPS=1` when deployed behind Heroku's router (use `0` for a direct deployment)
 - `PUBLIC_REGISTRATION_ENABLED=false` for the initial production rollout
 - `MAX_CONTENT_LENGTH=2097152` to bound JSON/form/import request bodies
 - `SESSION_LIFETIME_DAYS=7` unless a different authenticated-session policy is chosen
@@ -100,6 +101,6 @@ These steps still need to be performed in your hosting platform:
 
 ## Shared Abuse Protection
 
-Production startup requires `RATELIMIT_STORAGE_URI` with a Redis scheme. Flask-Limiter stores bounded fixed-window counters in Redis, which shares limits across web workers and expires keys when their windows end. Configure `RATELIMIT_KEY_PREFIX` when Redis is shared with another application, and configure individual `RATE_LIMIT_*` variables to tune the endpoint policies without a code change.
+Production startup requires `RATELIMIT_STORAGE_URI` with a Redis scheme and verifies that the shared store is reachable before serving traffic. Flask-Limiter stores bounded fixed-window counters in Redis, which shares limits across web workers and expires keys when their windows end. Configure `RATELIMIT_KEY_PREFIX` when Redis is shared with another application, and configure individual `RATE_LIMIT_*` variables to tune the endpoint policies without a code change. Each value must be one expression between 1 and 10,000 requests over a 1-second to 24-hour window.
 
-The application trusts exactly one proxy hop in production (`ProxyFix(x_for=1, x_proto=1, x_host=1)`). Keep that setting aligned with the deployment topology; do not expose the app directly behind untrusted clients that can inject forwarded headers.
+The application trusts forwarded headers only when `TRUST_PROXY_HOPS` explicitly names the number of directly-connected trusted proxy hops (`1` on Heroku). At `0`, forwarded headers are ignored and the socket peer is used. Keep this setting aligned with the deployment topology; do not expose the app directly behind untrusted clients that can inject forwarded headers.
