@@ -3,6 +3,7 @@
 # Keep the existing compatible package versions unless a reviewed compatibility or
 # security change is required. Compile this file; do not install it directly.
 alembic==1.18.4
+backports.zstd==1.6.0
 blinker==1.9.0
 Brotli==1.2.0
 click==8.3.1

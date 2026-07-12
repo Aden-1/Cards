@@ -20,8 +20,7 @@ development input:
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install pip-tools==7.5.1
+python -m pip install pip==24.3.1 pip-tools==7.5.1
 pip-compile --resolver=backtracking --allow-unsafe --generate-hashes --output-file requirements.txt requirements.in
 pip-compile --resolver=backtracking --allow-unsafe --generate-hashes --output-file requirements-dev.txt requirements-dev.in
 python -m pip install --require-hashes -r requirements-dev.txt
