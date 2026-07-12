@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import os
 
-from identity import canonical_email, canonical_username
+from cards.identity import canonical_email, canonical_username
 from migrations.offline_safety import require_empty_postgresql_source
 
 

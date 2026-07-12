@@ -3,7 +3,7 @@
 from flask import Flask
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from config import (
+from cards.config import (
     build_engine_options,
     configure_logging,
     load_config,
@@ -12,9 +12,9 @@ from config import (
     validate_rate_limit,
     validate_rate_limits,
 )
-from database import configure_engine
-from extensions import compress, create_limiter, db, limiter, migrate
-from models import (
+from cards.database import configure_engine
+from cards.extensions import compress, create_limiter, db, limiter, migrate
+from cards.models import (
     Card,
     CardAnswer,
     CardMasteryProgress,
@@ -27,7 +27,7 @@ from models import (
     QuizQuestion,
     User,
 )
-from services import register_cli_commands
+from cards.services import register_cli_commands
 
 
 def create_app(config=None):
@@ -59,7 +59,7 @@ def create_app(config=None):
     # apps can opt out of web behavior while still using the same config and
     # extension bindings.
     if flask_app.config.get('REGISTER_ROUTES', True):
-        from routes import register_routes
+        from cards.routes import register_routes
 
         register_routes(flask_app, app_limiter=app_limiter)
     register_cli_commands(flask_app)
@@ -70,7 +70,7 @@ def create_app(config=None):
         with flask_app.app_context():
             verify_limiter_backend()
         if flask_app.config['PASSWORD_RESET_EMAILS_ENABLED']:
-            from jobs import verify_password_reset_queue
+            from cards.workers.jobs import verify_password_reset_queue
 
             with flask_app.app_context():
                 verify_password_reset_queue()
@@ -83,7 +83,7 @@ app = create_app({'_USE_GLOBAL_LIMITER': True})
 
 def __getattr__(name):
     """Keep legacy ``app.<service>`` imports working without app coupling."""
-    import services
+    import cards.services as services
 
     if name == '_validate_rate_limit':
         return validate_rate_limit

@@ -466,7 +466,7 @@ summary.btn-summary.primary {
 }
 
 .metrics-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   margin-top: 1rem;
 }
 
@@ -1302,6 +1302,81 @@ summary::-webkit-details-marker {
   }
 }
 
+/* Keep the header compact across small tablets and narrow browser windows,
+   even when device-pixel scaling reports a viewport wider than a phone. */
+@media (max-width: 1100px) {
+  .site-nav {
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 0.4rem 0;
+  }
+
+  .brand-lockup {
+    gap: 0.6rem;
+  }
+
+  .brand-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: 13px;
+  }
+
+  .brand-subtitle {
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+  }
+
+  .nav-cluster {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, max-content));
+    gap: 0.4rem;
+    width: 100%;
+    justify-content: start;
+  }
+
+  .nav-links,
+  .nav-actions {
+    display: contents;
+  }
+
+  .nav-links > *,
+  .nav-actions > * {
+    min-width: 0;
+  }
+
+  .nav-links > .dropdown,
+  .nav-actions > .dropdown,
+  .nav-links > .nav-chip,
+  .nav-actions > .theme-toggle {
+    width: auto;
+  }
+
+  .nav-links .nav-chip,
+  .nav-actions .nav-chip,
+  .theme-toggle {
+    justify-content: center;
+    width: auto;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+
+  .nav-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex: none;
+    order: initial;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1101px) {
+  .metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
   .selection-grid,
   .master-grid {
@@ -1355,11 +1430,72 @@ summary::-webkit-details-marker {
   .site-nav {
     flex-wrap: wrap;
     align-items: center;
+    padding: 0.4rem 0;
+  }
+
+  .brand-lockup {
+    gap: 0.6rem;
+  }
+
+  .brand-mark {
+    width: 40px;
+    height: 40px;
+    border-radius: 13px;
+  }
+
+  .brand-subtitle {
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
   }
 
   .nav-cluster {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, max-content));
+    gap: 0.4rem;
     width: 100%;
-    justify-content: flex-end;
+    justify-content: start;
+  }
+
+  /* Flatten the two logical nav groups into one compact, keyboard-order-
+     preserving grid. The groups remain semantic containers in the markup. */
+  .nav-links,
+  .nav-actions {
+    display: contents;
+  }
+
+  .nav-links > *,
+  .nav-actions > * {
+    min-width: 0;
+  }
+
+  .nav-links > .dropdown,
+  .nav-actions > .dropdown,
+  .nav-links > .nav-chip,
+  .nav-actions > .theme-toggle {
+    width: auto;
+  }
+
+  .nav-links .nav-chip,
+  .nav-actions .nav-chip,
+  .theme-toggle {
+    justify-content: center;
+    width: auto;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+
+  .nav-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex: none;
+    order: initial;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
   }
 
   .deck-grid,
@@ -1448,29 +1584,17 @@ summary::-webkit-details-marker {
     display: none;
   }
 
-  .site-nav,
-  .nav-cluster {
+  .site-nav {
     gap: 0.5rem;
   }
 
+  /* Use explicit rows so the mobile header does not depend on flex wrapping. */
   .site-header.is-hidden-on-scroll {
     transform: translateY(calc(-100% - 1px));
   }
 
-  .nav-cluster {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-
-  .nav-links,
-  .nav-actions {
-    flex-wrap: wrap;
-  }
-
-  .nav-search {
-    flex: 1 1 100%;
-    min-width: 0;
-    order: 3;
+  .nav-search .form-control {
+    width: 100%;
   }
 
   .page-intro {
@@ -1492,6 +1616,16 @@ summary::-webkit-details-marker {
 
   .display-title {
     font-size: 2.3rem;
+  }
+
+  /* Three narrow columns make the homepage metrics harder to scan than a
+     short vertical list on a phone. */
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-card {
+    padding: 0.9rem 1rem;
   }
 
   .selection-grid,

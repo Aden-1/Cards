@@ -220,5 +220,5 @@ class QuizAttempt(db.Model):
 ## Usage
 
 ```python
-from models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption, QuizAttempt
+from cards.models import db, User, Deck, Card, CardAnswer, CardMasteryProgress, MatchPairProgress, Quiz, QuizQuestion, QuizOption, QuizAttempt
 ```

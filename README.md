@@ -126,6 +126,8 @@ GPL-3.0 license policy are documented in
 
 The application factory and module boundaries are documented in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The repository layout and where new code belongs are documented in
+[docs/SOURCE_LAYOUT.md](docs/SOURCE_LAYOUT.md).
 
 Tests use isolated factory/database helpers and focused API contract coverage;
 see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the architecture-first test

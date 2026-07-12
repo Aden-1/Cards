@@ -13,9 +13,9 @@ import argparse
 import secrets
 
 from app import app
-from models import Deck, User, db
-from sample_decks import SAMPLE_DECKS
-from services.core import _insert_deck_graph, get_user
+from cards.models import Deck, User, db
+from cards.content.sample_decks import SAMPLE_DECKS
+from cards.services.core import _insert_deck_graph, get_user
 
 
 SAMPLE_USERNAME = "cards"

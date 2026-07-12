@@ -275,7 +275,7 @@ def _ensure_indexes():
 
 def _restore_sqlite_search_index():
     bind = op.get_bind()
-    from search_index import install_search_schema
+    from cards.search_index import install_search_schema
 
     install_search_schema(bind)
     bind.execute(sa.text('DELETE FROM public_content_fts'))
