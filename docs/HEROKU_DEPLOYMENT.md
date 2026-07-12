@@ -125,7 +125,6 @@ heroku config:set TRUSTED_HOSTS=your-cards-staging.herokuapp.com -a your-cards-s
 heroku config:set PUBLIC_REGISTRATION_ENABLED=false -a your-cards-staging
 heroku config:set MAX_CONTENT_LENGTH=2097152 -a your-cards-staging
 heroku config:set SESSION_LIFETIME_DAYS=7 -a your-cards-staging
-heroku config:set RATELIMIT_STORAGE_URI=rediss://default:password@redis.example.com:6379/0 -a your-cards-staging
 heroku config:set WEB_CONCURRENCY=2 -a your-cards-staging
 heroku config:set GUNICORN_TIMEOUT=25 -a your-cards-staging
 heroku config:set GUNICORN_GRACEFUL_TIMEOUT=25 -a your-cards-staging
@@ -144,7 +143,6 @@ heroku config:set TRUSTED_HOSTS=your-cards-production.herokuapp.com -a your-card
 heroku config:set PUBLIC_REGISTRATION_ENABLED=false -a your-cards-production
 heroku config:set MAX_CONTENT_LENGTH=2097152 -a your-cards-production
 heroku config:set SESSION_LIFETIME_DAYS=7 -a your-cards-production
-heroku config:set RATELIMIT_STORAGE_URI=rediss://default:password@redis.example.com:6379/0 -a your-cards-production
 heroku config:set WEB_CONCURRENCY=2 -a your-cards-production
 heroku config:set GUNICORN_TIMEOUT=25 -a your-cards-production
 heroku config:set GUNICORN_GRACEFUL_TIMEOUT=25 -a your-cards-production
@@ -156,7 +154,7 @@ heroku config:set DB_POOL_RECYCLE=300 -a your-cards-production
 
 Notes:
 
-- Set `RATELIMIT_STORAGE_URI` from the Redis provider's TLS URL. Limits are shared across workers, so tune `WEB_CONCURRENCY` for capacity rather than rate-limit consistency.
+- Heroku Key-Value Store's `REDIS_URL` is used automatically for rate limiting. Set `RATELIMIT_STORAGE_URI` only to override it or when a third-party provider uses a different config-var name. Limits are shared across workers, so tune `WEB_CONCURRENCY` for capacity rather than rate-limit consistency.
 - Set `TRUST_PROXY_HOPS=1`; this is what allows the application to use Heroku's client address safely instead of trusting arbitrary forwarded headers.
 - If you add a custom domain later, append it to `TRUSTED_HOSTS` as a comma-separated value.
 - Because you are not setting up email yet, leave `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_DEFAULT_SENDER`, and `PASSWORD_RESET_URL_BASE` unset for now. Password reset will remain unavailable, which is acceptable for your alpha.

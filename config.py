@@ -83,9 +83,9 @@ def validate_rate_limits(rate_limits):
 
 def rate_limit_storage_uri(require_shared_store):
     """Compatibility helper for callers that validate storage independently."""
-    configured_uri = _env_str('RATELIMIT_STORAGE_URI')
+    configured_uri = _env_str('RATELIMIT_STORAGE_URI') or _env_str('REDIS_URL')
     if require_shared_store and not configured_uri:
-        raise RuntimeError('RATELIMIT_STORAGE_URI must be set to a shared Redis URL outside development/testing.')
+        raise RuntimeError('RATELIMIT_STORAGE_URI or REDIS_URL must be set to a shared Redis URL outside development/testing.')
     storage_uri = configured_uri or 'memory://'
     if require_shared_store and not storage_uri.startswith(('redis://', 'rediss://')):
         raise RuntimeError('RATELIMIT_STORAGE_URI must use redis:// or rediss:// outside development/testing.')
@@ -150,7 +150,10 @@ def load_config(overrides=None):
     if is_production and not secret_key:
         raise RuntimeError('SECRET_KEY must be set in production.')
 
-    storage_uri = overrides.get('RATELIMIT_STORAGE_URI', _env_str('RATELIMIT_STORAGE_URI'))
+    storage_uri = overrides.get(
+        'RATELIMIT_STORAGE_URI',
+        _env_str('RATELIMIT_STORAGE_URI') or _env_str('REDIS_URL'),
+    )
     if not storage_uri:
         storage_uri = 'memory://'
     if not allows_memory and not storage_uri.startswith(('redis://', 'rediss://')):
