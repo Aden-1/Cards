@@ -82,8 +82,15 @@ def upgrade():
 
     # Add nullable staging columns so both empty and populated legacy tables
     # can be upgraded on SQLite and PostgreSQL without a table-default rewrite.
-    op.add_column('user', sa.Column('canonical_username', sa.String(length=40), nullable=True))
-    op.add_column('user', sa.Column('canonical_email', sa.String(length=255), nullable=True))
+    existing_columns = set()
+    if not context.is_offline_mode():
+        existing_columns = {
+            column['name'] for column in sa.inspect(bind).get_columns('user')
+        }
+    if context.is_offline_mode() or 'canonical_username' not in existing_columns:
+        op.add_column('user', sa.Column('canonical_username', sa.String(length=40), nullable=True))
+    if context.is_offline_mode() or 'canonical_email' not in existing_columns:
+        op.add_column('user', sa.Column('canonical_email', sa.String(length=255), nullable=True))
     for user_id, username, email in backfill:
         bind.execute(
             sa.text(
