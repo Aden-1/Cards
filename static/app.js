@@ -178,6 +178,34 @@
       input.placeholder = placeholderMessages[randomIndex];
     });
 
+    const mobileNavToggle = document.getElementById('mobileNavToggle');
+    const primaryNav = document.getElementById('primaryNav');
+    if (mobileNavToggle && primaryNav) {
+      function setMobileNavOpen(open) {
+        mobileNavToggle.setAttribute('aria-expanded', String(open));
+        mobileNavToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+        primaryNav.classList.toggle('is-open', open);
+      }
+
+      mobileNavToggle.addEventListener('click', function () {
+        const isOpen = mobileNavToggle.getAttribute('aria-expanded') === 'true';
+        setMobileNavOpen(!isOpen);
+      });
+
+      primaryNav.addEventListener('click', function (event) {
+        if (event.target.closest('a')) {
+          setMobileNavOpen(false);
+        }
+      });
+
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && mobileNavToggle.getAttribute('aria-expanded') === 'true') {
+          setMobileNavOpen(false);
+          mobileNavToggle.focus();
+        }
+      });
+    }
+
     document.querySelectorAll('[data-toggle-copy]').forEach((button) => {
       button.addEventListener('click', async function () {
         const target = document.getElementById(button.dataset.toggleCopy);

@@ -19,7 +19,10 @@
                     <span class="brand-subtitle">Focused Learning System</span>
                 </a>
             </div>
-            <div class="nav-cluster">
+            <button id="mobileNavToggle" class="nav-menu-toggle" type="button" aria-controls="primaryNav" aria-expanded="false" aria-label="Open navigation">
+                <span class="nav-menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+            </button>
+            <div id="primaryNav" class="nav-cluster">
                 <nav class="nav-links" aria-label="Primary">
                     <a class="nav-chip {{ 'active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Home</a>
                     <div class="dropdown">

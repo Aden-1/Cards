@@ -193,6 +193,63 @@ main {
   justify-content: flex-end;
 }
 
+.nav-menu-toggle {
+  display: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  place-items: center;
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.nav-menu-toggle:hover,
+.nav-menu-toggle:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(10, 19, 45, 0.08);
+}
+
+.nav-menu-icon,
+.nav-menu-icon span {
+  display: block;
+}
+
+.nav-menu-icon {
+  width: 20px;
+  height: 16px;
+  position: relative;
+}
+
+.nav-menu-icon span {
+  position: absolute;
+  left: 0;
+  width: 20px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
+}
+
+.nav-menu-icon span:nth-child(1) { top: 0; }
+.nav-menu-icon span:nth-child(2) { top: 7px; }
+.nav-menu-icon span:nth-child(3) { top: 14px; }
+
+.nav-menu-toggle[aria-expanded="true"] .nav-menu-icon span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.nav-menu-toggle[aria-expanded="true"] .nav-menu-icon span:nth-child(2) {
+  opacity: 0;
+}
+
+.nav-menu-toggle[aria-expanded="true"] .nav-menu-icon span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
 .nav-links,
 .nav-actions {
   flex: 0 0 auto;
@@ -466,11 +523,12 @@ summary.btn-summary.primary {
 }
 
 .metrics-grid {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 1rem;
 }
 
 .metric-card {
+  min-width: 0;
   padding: 1rem;
   border-radius: var(--radius-sm);
 }
@@ -1302,81 +1360,6 @@ summary::-webkit-details-marker {
   }
 }
 
-/* Keep the header compact across small tablets and narrow browser windows,
-   even when device-pixel scaling reports a viewport wider than a phone. */
-@media (max-width: 1100px) {
-  .site-nav {
-    flex-wrap: wrap;
-    align-items: center;
-    padding: 0.4rem 0;
-  }
-
-  .brand-lockup {
-    gap: 0.6rem;
-  }
-
-  .brand-mark {
-    width: 40px;
-    height: 40px;
-    border-radius: 13px;
-  }
-
-  .brand-subtitle {
-    font-size: 0.68rem;
-    letter-spacing: 0.09em;
-  }
-
-  .nav-cluster {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(76px, max-content));
-    gap: 0.4rem;
-    width: 100%;
-    justify-content: start;
-  }
-
-  .nav-links,
-  .nav-actions {
-    display: contents;
-  }
-
-  .nav-links > *,
-  .nav-actions > * {
-    min-width: 0;
-  }
-
-  .nav-links > .dropdown,
-  .nav-actions > .dropdown,
-  .nav-links > .nav-chip,
-  .nav-actions > .theme-toggle {
-    width: auto;
-  }
-
-  .nav-links .nav-chip,
-  .nav-actions .nav-chip,
-  .theme-toggle {
-    justify-content: center;
-    width: auto;
-    padding: 0.4rem 0.55rem;
-    font-size: 0.9rem;
-    white-space: nowrap;
-  }
-
-  .nav-search {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    flex: none;
-    order: initial;
-    width: 100%;
-    min-width: 0;
-  }
-}
-
-@media (min-width: 1101px) {
-  .metrics-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 960px) {
   .selection-grid,
   .master-grid {
@@ -1428,13 +1411,16 @@ summary::-webkit-details-marker {
   }
 
   .site-nav {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    padding: 0.4rem 0;
+    gap: 0.5rem;
+    padding: 0.45rem 0 0.65rem;
   }
 
   .brand-lockup {
     gap: 0.6rem;
+    min-width: 0;
   }
 
   .brand-mark {
@@ -1448,48 +1434,45 @@ summary::-webkit-details-marker {
     letter-spacing: 0.09em;
   }
 
-  .nav-cluster {
+  .nav-menu-toggle {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(76px, max-content));
-    gap: 0.4rem;
-    width: 100%;
-    justify-content: start;
   }
 
-  /* Flatten the two logical nav groups into one compact, keyboard-order-
-     preserving grid. The groups remain semantic containers in the markup. */
+  .nav-cluster {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+    grid-column: 1 / -1;
+    width: 100%;
+    flex: none;
+  }
+
   .nav-links,
   .nav-actions {
-    display: contents;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.4rem;
   }
 
-  .nav-links > *,
-  .nav-actions > * {
-    min-width: 0;
-  }
-
-  .nav-links > .dropdown,
-  .nav-actions > .dropdown,
-  .nav-links > .nav-chip,
-  .nav-actions > .theme-toggle {
-    width: auto;
+  .nav-cluster:not(.is-open) .nav-links,
+  .nav-cluster:not(.is-open) .nav-actions {
+    display: none;
   }
 
   .nav-links .nav-chip,
   .nav-actions .nav-chip,
   .theme-toggle {
-    justify-content: center;
     width: auto;
-    padding: 0.4rem 0.55rem;
+    padding: 0.4rem 0.6rem;
     font-size: 0.9rem;
     white-space: nowrap;
   }
 
   .nav-search {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    order: 0;
     flex: none;
-    order: initial;
     width: 100%;
     min-width: 0;
   }
