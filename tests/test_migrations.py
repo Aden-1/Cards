@@ -45,6 +45,10 @@ class MigrationPortabilityTests(unittest.TestCase):
         self.assertIn('recovery-email HMAC backfill', output)
         self.assertIn('card-position normalization', output)
         self.assertIn('canonical identity and recovery-digest backfill', output)
+        self.assertIn('SELECT 1 FROM "user" WHERE "user".user_id', output)
+        self.assertIn('UPDATE "user" SET role', output)
+        self.assertNotIn('SELECT 1 FROM user WHERE user.user_id', output)
+        self.assertNotIn('UPDATE user SET', output)
         self.assertIn(
             'Run this revision online with flask db upgrade against the populated PostgreSQL database.',
             output,

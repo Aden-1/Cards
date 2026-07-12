@@ -103,16 +103,16 @@ def _repair_rows(bind):
     # are intentionally explicit because old SQLite databases may have had
     # foreign_keys=OFF and therefore contain orphans.
     statements = (
-        "DELETE FROM match_pair_progress WHERE NOT EXISTS (SELECT 1 FROM user WHERE user.user_id = match_pair_progress.user_id) OR NOT EXISTS (SELECT 1 FROM card_answer WHERE card_answer.answer_id = match_pair_progress.answer_id)",
-        "DELETE FROM card_mastery_progress WHERE NOT EXISTS (SELECT 1 FROM user WHERE user.user_id = card_mastery_progress.user_id) OR NOT EXISTS (SELECT 1 FROM card WHERE card.card_id = card_mastery_progress.card_id)",
+        'DELETE FROM match_pair_progress WHERE NOT EXISTS (SELECT 1 FROM "user" WHERE "user".user_id = match_pair_progress.user_id) OR NOT EXISTS (SELECT 1 FROM card_answer WHERE card_answer.answer_id = match_pair_progress.answer_id)',
+        'DELETE FROM card_mastery_progress WHERE NOT EXISTS (SELECT 1 FROM "user" WHERE "user".user_id = card_mastery_progress.user_id) OR NOT EXISTS (SELECT 1 FROM card WHERE card.card_id = card_mastery_progress.card_id)',
         "DELETE FROM card_answer WHERE NOT EXISTS (SELECT 1 FROM card WHERE card.card_id = card_answer.card_id)",
         "DELETE FROM card WHERE NOT EXISTS (SELECT 1 FROM deck WHERE deck.deck_id = card.deck_id)",
         "DELETE FROM deck_tag WHERE NOT EXISTS (SELECT 1 FROM deck WHERE deck.deck_id = deck_tag.deck_id)",
         "DELETE FROM quiz_option WHERE NOT EXISTS (SELECT 1 FROM quiz_question WHERE quiz_question.question_id = quiz_option.question_id)",
         "DELETE FROM quiz_question WHERE NOT EXISTS (SELECT 1 FROM quiz WHERE quiz.quiz_id = quiz_question.quiz_id)",
-        "DELETE FROM quiz WHERE NOT EXISTS (SELECT 1 FROM user WHERE user.user_id = quiz.owned_by)",
-        "DELETE FROM deck WHERE NOT EXISTS (SELECT 1 FROM user WHERE user.user_id = deck.owned_by)",
-        "UPDATE quiz_attempt SET user_id = NULL WHERE user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM user WHERE user.user_id = quiz_attempt.user_id)",
+        'DELETE FROM quiz WHERE NOT EXISTS (SELECT 1 FROM "user" WHERE "user".user_id = quiz.owned_by)',
+        'DELETE FROM deck WHERE NOT EXISTS (SELECT 1 FROM "user" WHERE "user".user_id = deck.owned_by)',
+        'UPDATE quiz_attempt SET user_id = NULL WHERE user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "user" WHERE "user".user_id = quiz_attempt.user_id)',
     )
     for statement in statements:
         bind.execute(sa.text(statement))
@@ -135,19 +135,19 @@ def _repair_rows(bind):
             )
         """))
 
-    bind.execute(sa.text("UPDATE user SET role = 'standard' WHERE role IS NULL OR role NOT IN ('standard', 'moderator', 'admin')"))
-    bind.execute(sa.text("UPDATE user SET theme_preference = 'dark' WHERE theme_preference IS NULL OR theme_preference NOT IN ('light', 'dark')"))
-    bind.execute(sa.text("UPDATE user SET mastery_strategy_preference = 'spaced' WHERE mastery_strategy_preference IS NULL OR mastery_strategy_preference NOT IN ('linear', 'weakest_first', 'spaced', 'mastery_mix', 'random')"))
-    bind.execute(sa.text("UPDATE user SET match_strategy_preference = 'standard_shuffle' WHERE match_strategy_preference IS NULL OR match_strategy_preference NOT IN ('standard_shuffle', 'retry_misses', 'progressive_build', 'reverse_pressure', 'timed_recovery', 'weakest_first', 'mastery_mix')"))
-    bind.execute(sa.text('UPDATE user SET auth_version = 0 WHERE auth_version IS NULL OR auth_version < 0'))
+    bind.execute(sa.text("UPDATE \"user\" SET role = 'standard' WHERE role IS NULL OR role NOT IN ('standard', 'moderator', 'admin')"))
+    bind.execute(sa.text("UPDATE \"user\" SET theme_preference = 'dark' WHERE theme_preference IS NULL OR theme_preference NOT IN ('light', 'dark')"))
+    bind.execute(sa.text("UPDATE \"user\" SET mastery_strategy_preference = 'spaced' WHERE mastery_strategy_preference IS NULL OR mastery_strategy_preference NOT IN ('linear', 'weakest_first', 'spaced', 'mastery_mix', 'random')"))
+    bind.execute(sa.text("UPDATE \"user\" SET match_strategy_preference = 'standard_shuffle' WHERE match_strategy_preference IS NULL OR match_strategy_preference NOT IN ('standard_shuffle', 'retry_misses', 'progressive_build', 'reverse_pressure', 'timed_recovery', 'weakest_first', 'mastery_mix')"))
+    bind.execute(sa.text('UPDATE "user" SET auth_version = 0 WHERE auth_version IS NULL OR auth_version < 0'))
     if bind.dialect.name.startswith('postgresql'):
-        bind.execute(sa.text('UPDATE user SET is_active = FALSE WHERE is_active IS NULL'))
+        bind.execute(sa.text('UPDATE "user" SET is_active = FALSE WHERE is_active IS NULL'))
         bind.execute(sa.text('UPDATE deck SET sortable = FALSE WHERE sortable IS NULL'))
         bind.execute(sa.text('UPDATE deck SET is_public = FALSE WHERE is_public IS NULL'))
         bind.execute(sa.text('UPDATE deck SET is_featured = FALSE WHERE is_featured IS NULL'))
         bind.execute(sa.text('UPDATE quiz SET is_public = FALSE WHERE is_public IS NULL'))
     else:
-        bind.execute(sa.text('UPDATE user SET is_active = 1 WHERE is_active IS NULL OR is_active NOT IN (0, 1)'))
+        bind.execute(sa.text('UPDATE "user" SET is_active = 1 WHERE is_active IS NULL OR is_active NOT IN (0, 1)'))
         bind.execute(sa.text('UPDATE deck SET sortable = 0 WHERE sortable IS NULL OR sortable NOT IN (0, 1)'))
         bind.execute(sa.text('UPDATE deck SET is_public = 0 WHERE is_public IS NULL OR is_public NOT IN (0, 1)'))
         bind.execute(sa.text('UPDATE deck SET is_featured = 0 WHERE is_featured IS NULL OR is_featured NOT IN (0, 1)'))
