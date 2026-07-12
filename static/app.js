@@ -3,7 +3,13 @@
   const appConfig = window.cardsConfig || {};
   const isAuthenticated = Boolean(appConfig.isAuthenticated);
   const userTheme = typeof appConfig.userTheme === 'string' ? appConfig.userTheme : '';
-  const savedTheme = localStorage.getItem('cards-theme');
+  let savedTheme = '';
+  try {
+    savedTheme = localStorage.getItem('cards-theme') || '';
+  } catch (error) {
+    // Some mobile privacy modes disable local storage. The page still works
+    // with the default theme in that case.
+  }
   const initialTheme = isAuthenticated
     ? (userTheme || 'dark')
     : (savedTheme || 'light');
@@ -34,7 +40,11 @@
         // Keep the UI responsive even if saving the preference fails.
       }
     } else {
-      localStorage.setItem('cards-theme', theme);
+      try {
+        localStorage.setItem('cards-theme', theme);
+      } catch (error) {
+        // The theme remains applied for this session if storage is unavailable.
+      }
     }
     updateThemeButton(theme);
   }
@@ -94,8 +104,25 @@
     }
 
     syncHeaderVisibility();
-    window.addEventListener('scroll', syncHeaderVisibility, { passive: true });
-    mobileHeaderQuery.addEventListener('change', syncHeaderVisibility);
+    let scrollFramePending = false;
+    function scheduleHeaderVisibility() {
+      if (scrollFramePending) {
+        return;
+      }
+      scrollFramePending = true;
+      window.requestAnimationFrame(() => {
+        scrollFramePending = false;
+        syncHeaderVisibility();
+      });
+    }
+
+    window.addEventListener('scroll', scheduleHeaderVisibility, { passive: true });
+    if (typeof mobileHeaderQuery.addEventListener === 'function') {
+      mobileHeaderQuery.addEventListener('change', syncHeaderVisibility);
+    } else if (typeof mobileHeaderQuery.addListener === 'function') {
+      // Safari versions that predate MediaQueryList.addEventListener.
+      mobileHeaderQuery.addListener(syncHeaderVisibility);
+    }
 
     const themeToggle = document.getElementById('themeToggle');
     if (themeToggle) {
