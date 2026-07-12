@@ -20,6 +20,8 @@ class DatabaseSmokeTests(unittest.TestCase):
 
     def tearDown(self):
         db.session.remove()
+        db.drop_all()
+        db.engine.dispose()
         self.context.pop()
 
     def test_can_create_public_deck_and_search_it(self):

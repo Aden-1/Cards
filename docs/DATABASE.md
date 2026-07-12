@@ -8,9 +8,19 @@ The app supports SQLite and PostgreSQL with SQLAlchemy ORM and Flask-Migrate.
 - PostgreSQL configuration: set `DATABASE_URL=postgresql://user:password@host/database`
 - ORM: Flask-SQLAlchemy
 - Migrations: Flask-Migrate / Alembic
-- Search index: SQLite uses the migration-created `public_content_fts` FTS5 virtual table; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index
+- Search index: SQLite uses the migration-created `public_content_fts` FTS5 virtual table; PostgreSQL uses the migration-managed `public_content_search` table with a weighted `tsvector` index. Both are maintained by database triggers in the same transaction as deck/quiz insert, metadata update, visibility transition, and delete.
 - Homepage tags: `deck_tag` stores one case-normalized tag per deck. The homepage aggregates only public rows in SQL, avoiding a full deck scan in the request path.
-- Existing SQLite databases are also patched at startup for a few newer columns/tables when needed
+- Existing databases are upgraded through Alembic; application import and web startup do not patch schema
+- Migration `20260711070000` repairs legacy orphans, invalid enum/preference values, counters, booleans, and card positions before adding checks, foreign-key delete actions, and `uq_card_deck_position`.
+- Migration `20260711080000` adds `canonical_username` and nullable `canonical_email`, backfills them with trim + Unicode NFKC + casefold in ascending `user_id` order, refreshes recovery digests, and aborts with the conflicting IDs if any collision or invalid legacy identity exists. It never merges accounts. The canonical username and email values have unique constraints; email remains nullable.
+- PostgreSQL `flask db upgrade --sql` is supported for an empty schema. Revisions whose backfills require Python Unicode, HMAC, or row-order reconciliation emit a database-time guard; applying that SQL to a populated source table fails with instructions to run the normal online upgrade, rather than silently leaving derived data incomplete.
+- SQLite connections are checked out with `PRAGMA foreign_keys=ON`; an unsafe connection raises immediately. PostgreSQL uses the same named foreign-key actions.
+- Large imports and public copies preflight bounded graphs and commit once.
+  Deck-card IDs are correlated through the new deck's unique positions,
+  keeping a 500-card import to a constant number of SQL batches on both
+  supported databases. Quiz-question correlation uses ordered `RETURNING`
+  and is bounded to 50 questions; SQLite may emit one ordered question insert
+  per row while PostgreSQL retains its multi-row path.
 
 ## Migration Commands
 
@@ -20,6 +30,7 @@ flask db migrate
 flask db upgrade
 flask db downgrade
 flask rebuild-public-search-index
+flask check-public-search-index --limit 100
 ```
 
 ## Models
@@ -28,8 +39,10 @@ flask rebuild-public-search-index
 ```python
 class User(db.Model):
     user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    username = db.Column(db.String(100), nullable=False, unique=True)
+    username = db.Column(db.String(100), nullable=False, unique=True)  # display value; case is preserved
+    canonical_username = db.Column(db.String(40), nullable=False, unique=True)
     email = db.Column(db.String(255), nullable=True, unique=True)
+    canonical_email = db.Column(db.String(255), nullable=True, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     auth_version = db.Column(db.Integer, nullable=False, default=0)
     role = db.Column(db.String(20), nullable=False, default='standard')
@@ -177,23 +190,30 @@ class QuizAttempt(db.Model):
 ## Behavior Notes
 
 - `Card.position` stores the saved deck order for the reorder game.
+- Card positions are positive, unique per deck, and dense after service-level card deletion. Insert, move, swap, and complete reorder operations lock the parent deck where supported and retry SQLite/PostgreSQL write conflicts.
+- User-owned decks, quizzes, progress, cards, answers, questions, and options cascade at the database layer. A deleted user nulls `QuizAttempt.user_id` so an already-rendered attempt remains valid as an anonymous attempt; it is never left pointing at a missing user.
+- Roles, preferences, question types, progress statuses/outcomes, booleans, counters, and quiz attempt counts are enforced by database checks. Service commits translate uniqueness/foreign-key races into domain errors and roll back the transaction.
 - Removing the last `CardAnswer` deletes the parent `Card`.
 - Editing a card replaces its full answer set.
-- Public decks and quizzes are mirrored into the backend-specific full-text index for search.
+- Public decks and quizzes are mirrored into the backend-specific full-text index for search by database-native triggers. Application services do not issue a second index commit, and a rolled-back content mutation rolls back its index mutation.
 - User-facing collections use stable `*_id` ordering and capped, look-ahead pagination (20 by default, 50 maximum). Featured decks are selected from a daily rotating, bounded public-featured query.
 - Search requests never create or rebuild indexes. Use `flask rebuild-public-search-index`
-  explicitly after a restore or when index health checks identify drift.
+  explicitly after a restore or when `flask check-public-search-index --limit 100`
+  identifies drift. The check is read-only and returns bounded samples of missing,
+  orphaned, stale, and duplicate rows.
 - The search index stores title, description, and tags only.
-- PostgreSQL search schema and lookup indexes are owned by Alembic migrations rather than web-request startup code.
+- PostgreSQL search schema, weighted vector expression, trigger function, and lookup
+  indexes are owned by Alembic migrations rather than web-request startup code.
 - Passwords are stored as Werkzeug password hashes, not plaintext.
 - Password reset tokens include the user's authentication version and are consumed
   atomically. Password changes increment that version, invalidating outstanding
   reset links and previously issued authenticated sessions.
 - Public registration creates `standard` users; the initial administrator is created through the `flask provision-admin` CLI command.
+- Account identity lookups use one canonical policy: trim, NFKC-normalize, and casefold. Display usernames are retained separately so login identity equivalence does not change what users see.
 - `CardMasteryProgress` is unique per `(user_id, card_id)`.
 - `MatchPairProgress` is unique per `(user_id, answer_id)`.
 - User records persist theme, match strategy, and mastery strategy preferences.
-- The app includes lightweight startup self-healing for newer SQLite columns and the match progress table; migrations provide the same schema on PostgreSQL.
+- The explicit `repair-legacy-schema` CLI command delegates to Alembic for older databases; it is never run automatically.
 - Imported decks and user-authored search content are bounded to keep oversized rows and batches out of the production database.
 - Quiz correctness is held in a one-time server-side `QuizAttempt` record instead of trusting submitted browser data. Attempts are created only by the explicit start action, are capped per user or guest session, and expire after the configured lifetime.
 

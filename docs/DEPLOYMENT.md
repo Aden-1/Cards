@@ -46,8 +46,12 @@ The [Procfile](C:/Users/adent/PycharmProjects/Cards/Procfile:1) keeps the migrat
 ```text
 release: python -m flask db upgrade
 web: gunicorn app:app ...
-worker: rq worker password-reset-email --url ${PASSWORD_RESET_QUEUE_URL:-$RATELIMIT_STORAGE_URI} --serializer rq.serializers.JSONSerializer --with-scheduler
+worker: python -m password_reset_worker
 ```
+
+`app:app` is the production-compatible WSGI export backed by
+`app.create_app()`. The worker builds its own factory application context and
+does not start route registration or web startup probes.
 
 That means each deploy should run migrations before the web process starts serving traffic.
 
@@ -56,10 +60,10 @@ That means each deploy should run migrations before the web process starts servi
 Run one or more worker processes in every environment where password recovery is enabled. The worker uses the same Redis service as rate limiting by default, but `PASSWORD_RESET_QUEUE_URL` can point to a dedicated Redis database. It must use `--with-scheduler` so the 30-second, 2-minute, and 5-minute retries execute.
 
 ```powershell
-rq worker password-reset-email --url $env:PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler
+python -m password_reset_worker
 ```
 
-The queue stores only the user ID and a random monitoring correlation ID. The worker generates the signed reset token immediately before delivery. SMTP socket operations use the bounded `PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS` value (1-30 seconds), and a failed job is retained for 24 hours for monitoring after its three retries are exhausted.
+The queue stores only a keyed recovery-email digest and a random monitoring correlation ID; it never stores an email address or reset token. The worker performs the account lookup and generates the signed reset token immediately before delivery. SMTP socket operations use the bounded `PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS` value (1-30 seconds). Jobs retry after 30 seconds, 2 minutes, and 5 minutes, then remain retained for 24 hours for monitoring and recovery.
 
 ## Staging
 
@@ -93,11 +97,12 @@ These steps still need to be performed in your hosting platform:
 2. Set config vars in the platform dashboard or CLI. Never put production values in `.env.example`, GitHub Actions, or committed files.
 3. Enable HTTPS for custom domains and verify all user traffic is encrypted.
 4. Confirm the release phase successfully runs `python -m flask db upgrade`, including the PostgreSQL search indexes and `quiz_attempt` table.
-5. Schedule database backups, choose retention, and complete a restore drill into staging before accepting user data.
-6. Attach a log drain and exception/alert monitoring, then point uptime checks at `/healthz` and `/readyz`.
-7. Run `python -m flask provision-admin --username <name> --email <email>` in the production environment while registration is disabled.
-8. Perform the production smoke checklist and explicitly decide when to set `PUBLIC_REGISTRATION_ENABLED=true`.
-9. Rehearse launch and rollback procedures from [docs/OPERATIONS.md](C:/Users/adent/PycharmProjects/Cards/docs/OPERATIONS.md:1).
+5. If an old database needs a one-shot repair, run `python -m flask repair-legacy-schema`; no schema repair runs during import or web startup.
+6. Schedule database backups, choose retention, and complete a restore drill into staging before accepting user data.
+7. Attach a log drain and exception/alert monitoring, then point uptime checks at `/healthz` and `/readyz`.
+8. Run `python -m flask provision-admin --username <name> --email <email>` in the production environment while registration is disabled.
+9. Perform the production smoke checklist and explicitly decide when to set `PUBLIC_REGISTRATION_ENABLED=true`.
+10. Rehearse launch and rollback procedures from [docs/OPERATIONS.md](C:/Users/adent/PycharmProjects/Cards/docs/OPERATIONS.md:1).
 
 ## Shared Abuse Protection
 

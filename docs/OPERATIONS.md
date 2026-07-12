@@ -56,6 +56,41 @@ repair. Rebuild only after a restore or when monitoring confirms index drift.
 
 5. Verify decks, quizzes, users, and progress records.
 
+The issue-10 invariant migration repairs legacy data before adding constraints.
+The identity migration after it (`20260711080000`) is intentionally fail-closed:
+it reports canonical username/email collisions with user IDs and rolls back
+without merging accounts. Resolve legacy collisions explicitly before retrying.
+Do not apply PostgreSQL offline SQL to a populated database: the deck-tag,
+recovery-digest, card-position, and canonical-identity revisions require
+Python reconciliation. Their generated scripts fail closed with an actionable
+error when the relevant source table is non-empty; use the normal online
+`flask db upgrade` for existing data. Empty-schema offline generation remains
+supported.
+After upgrade, verify the revision and search consistency before accepting
+traffic:
+
+```powershell
+python -m flask db current
+python -m flask check-public-search-index --limit 100
+```
+
+For SQLite, `PRAGMA foreign_keys` must return `1`; the application refuses a
+checked-out connection that cannot enable it. For PostgreSQL, review the
+migration SQL for `ON DELETE CASCADE` on owned content/progress and `ON DELETE
+SET NULL` on quiz attempts, then run the normal smoke checklist.
+
+Search-index operations:
+
+```powershell
+python -m flask check-public-search-index --limit 100
+python -m flask rebuild-public-search-index
+```
+
+The check reports expected versus actual public rows and bounded samples of
+missing, orphaned, stale, or duplicate rows without mutating the database. Rebuild is an
+explicit repair and runs in one transaction; ordinary search requests never
+repair or create schema.
+
 ## Quiz Attempt Cleanup
 
 Quiz attempts are bounded during creation and rejected after their configured
@@ -86,12 +121,12 @@ Tune named `RATE_LIMIT_*` variables deliberately, then verify both browser and J
 
 ## Password-Reset Delivery Operations
 
-Password-reset requests return the same generic response for existing and nonexistent accounts. Do not infer account existence from the response; investigate only the structured worker events using `request_id` and `user_id`. Logs deliberately exclude reset tokens, email addresses, SMTP credentials, and provider exception text.
+Password-reset requests return the same generic response for existing, nonexistent, inactive, and no-email accounts. Every syntactically valid request queues the same opaque job; the web process never performs an account lookup or SMTP operation. Investigate only structured worker events using `request_id` and (for delivered jobs) `user_id`. Logs deliberately exclude reset tokens, email addresses, lookup digests, SMTP credentials, and provider exception text.
 
 Run the RQ worker with its scheduler enabled so retries occur:
 
 ```powershell
-rq worker password-reset-email --url $env:PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler
+python -m password_reset_worker
 ```
 
 On Heroku, set `PASSWORD_RESET_QUEUE_URL` to the same value as `RATELIMIT_STORAGE_URI` (or use a dedicated Redis URL) and scale it after each deploy:
@@ -101,7 +136,7 @@ heroku ps:scale worker=1 -a your-cards-production
 heroku logs --tail -a your-cards-production
 ```
 
-Alert on `password_reset_queue_enqueue_failed` and terminal `password_reset_delivery_failed` events. RQ retries SMTP failures after 30 seconds, 2 minutes, and 5 minutes; its job timeout is the configured SMTP timeout plus five seconds. Failed jobs are retained for 24 hours for inspection. Restrict Redis access to trusted application and worker processes because RQ job serialization is an execution boundary.
+Alert on `password_reset_queue_enqueue_failed` and terminal `password_reset_delivery_failed` events. RQ retries SMTP failures after 30 seconds, 2 minutes, and 5 minutes; its job timeout is the configured SMTP timeout plus five seconds. Failed jobs are retained for 24 hours for inspection. The worker uses request-id idempotency markers and a short claim lease to suppress duplicate provider calls. Restrict Redis access to trusted application and worker processes because RQ job serialization is an execution boundary. If delivery fails, inspect the failure class and queue depth, fix SMTP/Redis configuration, and requeue retained failed jobs; never copy reset tokens from logs or job metadata.
 
 ## Rollback Procedure
 
@@ -115,6 +150,9 @@ Migration rollback:
 - Prefer roll-forward fixes for production migrations unless a migration is known to be safely reversible.
 - If rollback is necessary, rehearse it on staging against a recent backup first.
 - Restore from backup when a bad migration cannot be reversed cleanly.
+- `20260711070000` has a tested downgrade for SQLite and PostgreSQL, but roll
+  forward remains preferred because a downgrade removes protections against
+  duplicate card positions and invalid enum values.
 
 ## Production Smoke Checklist
 
@@ -140,9 +178,27 @@ python -m scripts.seed_sample_decks
 ```
 
 The command is additive and safe to run again: existing sample deck titles
-owned by `cards` are skipped. It also rebuilds the public search index when it
-adds content. To deliberately delete and recreate those decks, including their
-associated learner progress, run `python -m scripts.seed_sample_decks --replace`.
+owned by `cards` are skipped. Search rows are maintained atomically by the
+database triggers. To deliberately delete and recreate those decks, including
+their associated learner progress, run `python -m scripts.seed_sample_decks --replace`.
+
+## Import And Copy Diagnostic
+
+Run the bounded graph diagnostic with:
+
+```powershell
+python -m unittest tests.test_issue12_import_copy_performance
+```
+
+It exercises a 500-card import, maximum-size quiz copy, parent-child ordering,
+rollback cleanup, normalized tags, and search-index consistency. The previous
+500-card ORM path emitted 1,003 SQLite statements; the batched deck path now
+uses a constant statement budget. Quiz questions remain capped at 50, allowing
+safe ordered-ID correlation on both supported databases.
+
+Import/copy endpoints have no natural client request key, so duplicate
+successful submissions intentionally create separate copies. Existing rate
+limits are the duplicate-submission boundary.
 
 ## Privacy And Account Operations
 
@@ -154,5 +210,9 @@ Before accepting public user data, confirm:
 - retention expectations
 - incident response contacts
 - who is authorized to perform restores and role changes
+- only active admins may manage accounts and roles; active moderators may only
+  unpublish public decks/quizzes through `POST /moderation/unpublish`; inactive
+  users have no authority. Audit events must not include usernames, email
+  addresses, passwords, reset tokens, or other request secrets.
 - a security-contact mailbox and escalation owner
 - a strategy for expiring or deleting user data on request

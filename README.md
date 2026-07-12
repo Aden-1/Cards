@@ -103,6 +103,7 @@ GPL-3.0 license policy are documented in
 - Set `DATABASE_URL=postgresql://user:password@host/database` for PostgreSQL; the app uses the bundled Psycopg 3 driver.
 - Run `python -m flask db upgrade` after pulling schema changes
 - Run `python -m flask rebuild-public-search-index` when you need to rebuild public search content explicitly
+- Run `python -m flask check-public-search-index --limit 100` for a bounded, read-only drift report
 - Health endpoints are available at `/healthz` and `/readyz`
 - Search falls back to plain matching if the FTS index is unavailable
 - The app now uses session-based authentication instead of a hard-coded demo user
@@ -113,13 +114,22 @@ GPL-3.0 license policy are documented in
 - Production PostgreSQL connections require SSL and use configurable SQLAlchemy pool settings
 - All state-changing requests are protected by CSRF validation and expect `csrf_token` form data or an `X-CSRFToken` header
 - Responses include a nonce-based Content Security Policy and standard browser security headers
+- JSON/API requests use a shared `{ "error": "public message" }` failure contract with safe 400/401/403/404/405/413/415/429/500 handling; browser forms retain their existing HTML and redirect behavior. See [docs/API.md](docs/API.md).
+- Static CSS and JavaScript URLs use content-hash versions with immutable caching; HTML is not cached because it can contain CSRF tokens and user data. See [docs/STATIC_ASSETS.md](docs/STATIC_ASSETS.md) for deployment and audit guidance.
 - Flask-Limiter applies user/IP-aware limits to authentication, recovery, search, quiz starts, imports, public copies, and expensive content mutations
 - Development and tests use an in-memory limiter; production requires Redis so all workers share limits
 - Password-reset delivery runs in an RQ worker on Redis; valid requests receive a uniform response and reset tokens are generated only by the worker
 - New passwords must be at least 12 characters and contain a letter and a number
 - Public registration always creates standard accounts; provision the initial administrator with `flask provision-admin --username <name> --email <email>`
 - Controlled role changes are available through `flask set-user-role --username <name> --role <standard|moderator|admin>`
-- Existing SQLite databases are upgraded at startup for a few newer user preference columns and match-progress storage
+- Schema changes are applied by Alembic during release or with `python -m flask db upgrade`; use `python -m flask repair-legacy-schema` only as an explicit legacy repair
+
+The application factory and module boundaries are documented in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Tests use isolated factory/database helpers and focused API contract coverage;
+see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the architecture-first test
+order.
 
 ## Production Deployment Notes
 
@@ -127,7 +137,7 @@ GPL-3.0 license policy are documented in
 - Production sessions automatically use secure cookies over HTTPS
 - Set `RATELIMIT_STORAGE_URI` to a shared `redis://` or `rediss://` URL before production startup; `WEB_CONCURRENCY` can then be sized independently of rate limiting
 - Configure `MAIL_SERVER`, `MAIL_PORT`, `MAIL_DEFAULT_SENDER`, and related mail settings before enabling password recovery for users
-- Run `rq worker password-reset-email --url $PASSWORD_RESET_QUEUE_URL --serializer rq.serializers.JSONSerializer --with-scheduler` wherever password recovery is enabled
+- Run `python -m password_reset_worker` wherever password recovery is enabled
 
 ## Related Docs
 

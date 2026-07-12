@@ -43,6 +43,7 @@ class ProductionReadinessTests(unittest.TestCase):
         with cards_app.app.app_context():
             db.session.remove()
             db.drop_all()
+            db.engine.dispose()
 
     def _csrf(self):
         with self.client.session_transaction() as current_session:
@@ -65,26 +66,6 @@ class ProductionReadinessTests(unittest.TestCase):
                 'quiz_source': quiz_source,
             },
         )
-
-    def test_health_and_browser_security_headers_are_enabled(self):
-        response = self.client.get('/healthz')
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {'status': 'ok'})
-        self.assertIn('Content-Security-Policy', response.headers)
-        self.assertEqual(response.headers['X-Frame-Options'], 'DENY')
-
-    def test_responses_support_brotli_and_gzip_compression(self):
-        brotli_response = self.client.get('/', headers={'Accept-Encoding': 'br'})
-        gzip_response = self.client.get('/', headers={'Accept-Encoding': 'gzip'})
-
-        self.assertEqual(brotli_response.headers.get('Content-Encoding'), 'br')
-        self.assertEqual(gzip_response.headers.get('Content-Encoding'), 'gzip')
-        self.assertIn('Accept-Encoding', brotli_response.headers.get('Vary', ''))
-        self.assertIn(b'CARDS', brotli.decompress(brotli_response.data))
-        self.assertIn(b'CARDS', gzip.decompress(gzip_response.data))
-        brotli_response.close()
-        gzip_response.close()
 
     def test_learn_pages_list_only_owned_decks_but_allow_direct_public_links(self):
         with cards_app.app.app_context():
@@ -1037,6 +1018,93 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(keyword_args['failure_ttl'], 86400)
         self.assertEqual(keyword_args['retry'].max, 3)
         self.assertEqual(keyword_args['retry'].intervals, [30, 120, 300])
+
+    def test_password_reset_valid_targets_have_identical_public_outcomes_and_queue_shape(self):
+        queued_jobs = []
+        original_enqueue = cards_app.enqueue_password_reset_email
+
+        def fake_enqueue(target_digest, request_id):
+            queued_jobs.append((target_digest, request_id))
+
+        try:
+            with cards_app.app.app_context():
+                cards_app.create_user('active_target', 'password12345', email='active-target@example.test')
+                inactive = cards_app.create_user(
+                    'inactive_target', 'password12345', email='inactive-target@example.test'
+                )
+                inactive.is_active = False
+                cards_app.db.session.commit()
+                cards_app.create_user('no_email_target', 'password12345')
+
+            cards_app.enqueue_password_reset_email = fake_enqueue
+            self._csrf()
+            with mock.patch.object(cards_app, 'get_user_by_email', side_effect=AssertionError('web lookup')):
+                responses = [
+                    self.client.post(
+                        '/forgot-password',
+                        data={'csrf_token': 'csrf-test-token', 'email': email},
+                    )
+                    for email in (
+                        'active-target@example.test',
+                        'inactive-target@example.test',
+                        'missing-target@example.test',
+                        'no-email-target@example.test',
+                    )
+                ]
+
+            self.assertEqual([response.status_code for response in responses], [200] * 4)
+            bodies = [
+                re.sub(r'nonce="[^"]+"', 'nonce="<nonce>"', response.get_data(as_text=True))
+                for response in responses
+            ]
+            self.assertEqual(bodies, [bodies[0]] * 4)
+            self.assertEqual([response.headers.get('Location') for response in responses], [None] * 4)
+            self.assertEqual(len(queued_jobs), 4)
+            self.assertTrue(all(len(target_digest) == 64 for target_digest, _ in queued_jobs))
+            self.assertTrue(all('example.test' not in repr(job) for job in queued_jobs))
+        finally:
+            cards_app.enqueue_password_reset_email = original_enqueue
+
+    def test_password_reset_request_never_calls_smtp_inline(self):
+        original_enqueue = cards_app.enqueue_password_reset_email
+        cards_app.enqueue_password_reset_email = lambda _target_digest, _request_id: 'job-1'
+        try:
+            with mock.patch.object(cards_app.smtplib, 'SMTP') as smtp, mock.patch.object(
+                cards_app.smtplib, 'SMTP_SSL'
+            ) as smtp_ssl:
+                self._csrf()
+                response = self.client.post(
+                    '/forgot-password',
+                    data={'csrf_token': 'csrf-test-token', 'email': 'inline-check@example.test'},
+                )
+            self.assertEqual(response.status_code, 200)
+            smtp.assert_not_called()
+            smtp_ssl.assert_not_called()
+        finally:
+            cards_app.enqueue_password_reset_email = original_enqueue
+
+    def test_password_reset_worker_looks_up_by_digest_and_is_idempotent(self):
+        import jobs
+
+        sent = []
+        original_send = cards_app.send_password_reset_email
+        with cards_app.app.app_context():
+            user = cards_app.create_user('worker_lookup', 'password12345', email='worker@example.test')
+            target_digest = user.recovery_email_digest
+
+        def fake_send(worker_user, reset_url):
+            sent.append((worker_user.user_id, reset_url))
+
+        cards_app.send_password_reset_email = fake_send
+        try:
+            with mock.patch.object(cards_app, 'get_user_by_id', side_effect=AssertionError('id lookup')):
+                jobs.deliver_password_reset_email(target_digest, 'worker-request-1')
+                jobs.deliver_password_reset_email(target_digest, 'worker-request-1')
+            self.assertEqual(len(sent), 1)
+            self.assertNotIn('worker@example.test', repr(('jobs.deliver_password_reset_email', target_digest, 'worker-request-1')))
+            self.assertNotIn('token=', repr(('jobs.deliver_password_reset_email', target_digest, 'worker-request-1')))
+        finally:
+            cards_app.send_password_reset_email = original_send
 
     def test_password_change_revokes_other_sessions(self):
         with cards_app.app.app_context():

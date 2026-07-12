@@ -16,12 +16,7 @@ logger = logging.getLogger('alembic.env')
 
 
 def get_engine():
-    try:
-        # this works with Flask-SQLAlchemy<3 and Alchemical
-        return current_app.extensions['migrate'].db.get_engine()
-    except (TypeError, AttributeError):
-        # this works with Flask-SQLAlchemy>=3
-        return current_app.extensions['migrate'].db.engine
+    return current_app.extensions['migrate'].db.engine
 
 
 def get_engine_url():
@@ -97,14 +92,28 @@ def run_migrations_online():
     connectable = get_engine()
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=get_metadata(),
-            **conf_args
-        )
+        sqlite_migration = connection.dialect.name == 'sqlite'
+        if sqlite_migration:
+            # Legacy SQLite table-rebuild revisions predate connection-level
+            # FK enforcement and temporarily need it disabled while Alembic
+            # moves parent columns. The application checkout hook restores
+            # and verifies it before the connection returns to the pool.
+            connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
+        try:
+            context.configure(
+                connection=connection,
+                target_metadata=get_metadata(),
+                **conf_args
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            if sqlite_migration:
+                connection.commit()
+                connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+                if connection.exec_driver_sql('PRAGMA foreign_keys').scalar() != 1:
+                    raise RuntimeError('SQLite foreign-key enforcement was not restored after migration.')
 
 
 if context.is_offline_mode():

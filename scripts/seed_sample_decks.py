@@ -12,16 +12,17 @@ deleted and recreated.
 import argparse
 import secrets
 
-from app import _rebuild_content_fts_index, app
-from models import Card, CardAnswer, Deck, DeckTag, User, db
+from app import app
+from models import Deck, User, db
 from sample_decks import SAMPLE_DECKS
+from services.core import _insert_deck_graph, get_user
 
 
 SAMPLE_USERNAME = "cards"
 
 
 def _create_sample_user():
-    user = User.query.filter_by(username=SAMPLE_USERNAME).one_or_none()
+    user = get_user(SAMPLE_USERNAME)
     if user:
         return user, False
 
@@ -35,70 +36,63 @@ def _create_sample_user():
 
 def seed_sample_decks(*, replace=False):
     """Create missing sample decks and return a summary dictionary."""
-    user, user_created = _create_sample_user()
-    sample_titles = [definition["title"] for definition in SAMPLE_DECKS]
-    existing = {
-        deck.description: deck
-        for deck in Deck.query.filter(
-            Deck.owned_by == user.user_id,
-            Deck.description.in_(sample_titles),
-        ).all()
-    }
+    try:
+        user, user_created = _create_sample_user()
+        sample_titles = [definition["title"] for definition in SAMPLE_DECKS]
+        existing = {
+            deck.description: deck
+            for deck in Deck.query.filter(
+                Deck.owned_by == user.user_id,
+                Deck.description.in_(sample_titles),
+            ).all()
+        }
 
-    replaced = 0
-    if replace:
-        for deck in existing.values():
-            db.session.delete(deck)
-            replaced += 1
-        db.session.flush()
-        existing = {}
+        replaced = 0
+        if replace:
+            for deck in existing.values():
+                db.session.delete(deck)
+                replaced += 1
+            existing = {}
 
-    created = 0
-    skipped = 0
-    card_count = 0
-    for definition in SAMPLE_DECKS:
-        if definition["title"] in existing:
-            skipped += 1
-            continue
+        created = 0
+        skipped = 0
+        card_count = 0
+        for definition in SAMPLE_DECKS:
+            if definition["title"] in existing:
+                skipped += 1
+                continue
 
-        deck = Deck(
-            owned_by=user.user_id,
-            description=definition["title"],
-            detailed_description=definition["description"],
-            tags=definition["tags"],
-            sortable=definition["sortable"],
-            is_public=True,
-            is_featured=True,
-        )
-        db.session.add(deck)
-        db.session.flush()
-        seen_tags = set()
-        for raw_tag in (deck.tags or "").split(","):
-            display = raw_tag.strip()
-            normalized = display.casefold()
-            if display and normalized not in seen_tags:
-                seen_tags.add(normalized)
-                db.session.add(DeckTag(deck_id=deck.deck_id, tag_normalized=normalized, tag_display=display))
+            _insert_deck_graph(
+                user.user_id,
+                definition["title"],
+                definition["description"],
+                definition["tags"],
+                definition["sortable"],
+                True,
+                [
+                    {
+                        "question": question,
+                        "position": position,
+                        "answers": list(answers),
+                    }
+                    for position, (question, answers) in enumerate(definition["cards"], start=1)
+                ],
+                is_featured=True,
+            )
+            created += 1
+            card_count += len(definition["cards"])
 
-        for position, (question, answers) in enumerate(definition["cards"], start=1):
-            card = Card(deck_id=deck.deck_id, question=question, position=position)
-            db.session.add(card)
-            db.session.flush()
-            for answer in answers:
-                db.session.add(CardAnswer(card_id=card.card_id, answer=answer))
-            card_count += 1
-        created += 1
-
-    db.session.commit()
-    # Rebuild even on a no-op rerun so the command can repair a stale index.
-    _rebuild_content_fts_index()
-    return {
-        "user_created": user_created,
-        "created": created,
-        "skipped": skipped,
-        "replaced": replaced,
-        "cards_created": card_count,
-    }
+        db.session.commit()
+        return {
+            "user_created": user_created,
+            "created": created,
+            "skipped": skipped,
+            "replaced": replaced,
+            "cards_created": card_count,
+        }
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def main():

@@ -1,25 +1,42 @@
 import re
 import secrets
 import hashlib
+from contextvars import ContextVar
 from functools import wraps
+from urllib.parse import urlsplit
 
 from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
-from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
+from api_contract import api_error, api_response, is_api_request, request_payload
+from static_assets import asset_url, asset_version, is_current_asset_version
+from config import validate_rate_limit
+from extensions import db, limiter
+from identity import canonical_email, canonical_username, display_username
+from services.authorization import audit_event, has_role
+
+
+_ACTIVE_LIMITER = ContextVar('active_route_limiter', default=None)
 
 
 # Request parsing helpers.
 def _request_data():
-    return request.get_json(silent=True) or request.values.to_dict(flat=True)
+    return request_payload()
 
 
 def _int_value(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    if isinstance(value, str) and len(value.strip()) > 19:
+        return None
     try:
-        return int(value)
+        number = int(value)
     except (TypeError, ValueError):
         return None
+    return number if 1 <= number <= 9223372036854775807 else None
 
 
 def _requested_page():
@@ -158,7 +175,14 @@ def _target_key(field, namespace):
     value = _request_data().get(field)
     if value is None or not str(value).strip():
         return f'target:{namespace}:missing:{_client_ip_key()}'
-    normalized = str(value).strip().lower()[:512]
+    try:
+        normalized = (
+            canonical_email(value, allow_none=False)
+            if field == 'email'
+            else canonical_username(value)
+        )
+    except ValueError:
+        normalized = str(value).strip().casefold()[:512]
     digest = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
     return f'target:{namespace}:{digest}'
 
@@ -179,14 +203,10 @@ def _reset_target_key():
     return _target_key('token', 'password-reset')
 
 
-limiter = Limiter(key_func=_rate_limit_key)
-
-
 def _configured_limit(policy_name):
     """Resolve a policy at request time so environment-backed config is testable."""
     def configured_limit():
-        from app import _validate_rate_limit
-        return _validate_rate_limit(
+        return validate_rate_limit(
             f'RATE_LIMIT_{policy_name.upper()}',
             current_app.config['RATE_LIMITS'][policy_name],
         )
@@ -194,7 +214,8 @@ def _configured_limit(policy_name):
 
 
 def _limit(view_func, policy_name, methods, key_func=None):
-    return limiter.limit(
+    app_limiter = _ACTIVE_LIMITER.get() or limiter
+    return app_limiter.limit(
         _configured_limit(policy_name), methods=methods, key_func=key_func
     )(view_func)
 
@@ -209,8 +230,9 @@ def verify_limiter_backend():
     """Raise during production startup when the shared limiter backend is down."""
     if not current_app.config.get('IS_PRODUCTION'):
         return
+    app_limiter = current_app.extensions.get('cards_limiter', limiter)
     try:
-        available = limiter.storage.check()
+        available = app_limiter.storage.check()
     except Exception as exc:
         raise RuntimeError('Shared Redis rate-limit backend is unavailable.') from exc
     if not available:
@@ -221,11 +243,10 @@ def _rate_limit_response(error):
     message = 'Too many requests. Please try again later.'
     original_response = error.get_response()
     retry_after = original_response.headers.get('Retry-After')
-    if _wants_json():
-        response = jsonify({'error': message})
+    if is_api_request():
+        response = api_error(message, 429)
     else:
         response = current_app.response_class(message, status=429, mimetype='text/plain')
-    response.status_code = 429
     if retry_after:
         response.headers['Retry-After'] = retry_after
     return response
@@ -238,6 +259,27 @@ def _prepare_security_request():
     return None
 
 
+def _canonicalize_static_asset():
+    """Redirect stale or hand-written versioned asset URLs to the current hash."""
+    if request.endpoint != 'static' or request.method not in ('GET', 'HEAD'):
+        return None
+
+    filename = (request.view_args or {}).get('filename')
+    supplied_version = request.args.get('v')
+    if not filename or not supplied_version:
+        return None
+
+    try:
+        current_version = asset_version(filename)
+    except FileNotFoundError:
+        return None
+
+    if supplied_version == current_version:
+        return None
+
+    return redirect(url_for('static', filename=filename, v=current_version), code=302)
+
+
 def _set_security_headers(response):
     nonce = getattr(g, 'csp_nonce', '')
     response.headers['Content-Security-Policy'] = (
@@ -247,7 +289,7 @@ def _set_security_headers(response):
         "frame-ancestors 'none'; "
         "form-action 'self'; "
         f"script-src 'self' 'nonce-{nonce}'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self'; "
         "font-src 'self' data:; "
         "img-src 'self' data:; "
         "connect-src 'self'"
@@ -256,13 +298,32 @@ def _set_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Permissions-Policy'] = 'camera=(), geolocation=(), microphone=()'
+    if request.endpoint == 'static':
+        filename = (request.view_args or {}).get('filename')
+        version = request.args.get('v')
+        response.headers.pop('Expires', None)
+        try:
+            is_versioned_asset = filename and is_current_asset_version(filename, version)
+        except FileNotFoundError:
+            is_versioned_asset = False
+        if is_versioned_asset:
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            # Unversioned URLs remain safe during development and can never
+            # pin a changed asset in a shared cache.
+            response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    elif response.mimetype == 'text/html':
+        # Pages contain a per-response CSP nonce and may contain CSRF tokens or
+        # user-specific navigation/data. Do not permit shared or browser disk
+        # caches to retain personalized HTML.
+        response.headers['Cache-Control'] = 'no-store, private'
     if current_app.config.get('IS_PRODUCTION'):
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
 
 
 def _current_user():
-    from app import get_user_by_id
+    from services import get_user_by_id
     user_id = session.get('user_id')
     if not user_id:
         return None
@@ -287,7 +348,7 @@ def _current_user_id():
 
 
 def _wants_json():
-    return request.is_json or request.accept_mimetypes.best == 'application/json'
+    return is_api_request()
 
 
 def _login_required_response():
@@ -306,17 +367,27 @@ def login_required(view_func):
 
 
 def admin_required(view_func):
-    @wraps(view_func)
-    def wrapped(*args, **kwargs):
-        user = _current_user()
-        if not user:
-            return _login_required_response()
-        if not user.is_admin:
-            if _wants_json():
-                return jsonify({'error': 'Admin access required'}), 403
-            return redirect(url_for('index', notice='Admin access required.', level='error'))
-        return view_func(*args, **kwargs)
-    return wrapped
+    return roles_required('admin')(view_func)
+
+
+def roles_required(*roles):
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(*args, **kwargs):
+            user = _current_user()
+            if not user:
+                return _login_required_response()
+            if not has_role(user, *roles):
+                if _wants_json():
+                    return jsonify({'error': 'Insufficient permissions'}), 403
+                return redirect(url_for('index', notice='Insufficient permissions.', level='error'))
+            return view_func(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def moderator_required(view_func):
+    return roles_required('moderator', 'admin')(view_func)
 
 
 def _csrf_token():
@@ -358,7 +429,27 @@ def _validate_csrf():
 
 
 def _valid_username(username):
-    return bool(re.fullmatch(r'[A-Za-z0-9_.-]{3,40}', username or ''))
+    try:
+        canonical = canonical_username(username)
+    except ValueError:
+        return False
+    return bool(re.fullmatch(r'[\w.-]{3,40}', username or '', re.UNICODE)) and len(canonical) >= 3
+
+
+def _display_username_input(value):
+    try:
+        return display_username(value or '')
+    except ValueError:
+        return ''
+
+
+def _canonical_email_input(value):
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return canonical_email(value, allow_none=False)
+    except ValueError:
+        return ''
 
 
 def _valid_password(password):
@@ -371,7 +462,11 @@ def _valid_password(password):
 
 
 def _valid_email(email):
-    return bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email or ''))
+    try:
+        canonical = canonical_email(email, allow_none=False)
+    except ValueError:
+        return False
+    return bool(re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', canonical or ''))
 
 
 def _password_requirements_message(prefix='Passwords'):
@@ -379,13 +474,41 @@ def _password_requirements_message(prefix='Passwords'):
 
 
 def _safe_next_url(next_url):
-    if next_url and next_url.startswith('/') and not next_url.startswith('//'):
-        return next_url
+    if next_url and isinstance(next_url, str) and next_url.startswith('/') and not next_url.startswith('//'):
+        # Browsers normalize backslashes in redirect targets before resolving
+        # them.  Without this guard, /\\evil.example becomes https://evil.example.
+        if '\\' not in next_url and not any(ord(character) < 0x20 for character in next_url):
+            parsed = urlsplit(next_url)
+            if not parsed.scheme and not parsed.netloc:
+                return next_url
     return url_for('index')
 
 
+def _api_error_handler(error):
+    """Use a safe JSON envelope for API failures and retain HTML pages for browsers."""
+    if not is_api_request():
+        return error
+
+    status = getattr(error, 'code', 500) or 500
+    messages = {
+        400: 'Invalid request.',
+        401: 'Authentication required.',
+        403: 'Forbidden.',
+        404: 'Not found.',
+        405: 'Method not allowed.',
+        413: 'Request entity too large.',
+        415: 'Unsupported request Content-Type.',
+        422: 'Invalid request.',
+        429: 'Too many requests. Please try again later.',
+        500: 'An unexpected error occurred.',
+    }
+    if status >= 500:
+        current_app.logger.error('api_request_failed status=%s', status, exc_info=True)
+    return api_error(messages.get(status, 'Request failed.'), status)
+
+
 def healthz():
-    return jsonify({'status': 'ok'}), 200
+    return api_response({'status': 'ok'}, 200)
 
 
 def readyz():
@@ -393,15 +516,15 @@ def readyz():
 
     try:
         db.session.execute(text('SELECT 1'))
-        return jsonify({'status': 'ready', 'database': 'ok'}), 200
+        return api_response({'status': 'ready', 'database': 'ok'}, 200)
     except Exception:
         current_app.logger.exception('database_readiness_check_failed')
         db.session.rollback()
-        return jsonify({'status': 'not_ready', 'database': 'error'}), 503
+        return api_error('Service not ready.', 503)
 
 
 def register():
-    from app import create_user, get_user, get_user_by_email
+    from services import create_user, get_user, get_user_by_email
     from models import db
 
     if not current_app.config.get('PUBLIC_REGISTRATION_ENABLED', True):
@@ -414,14 +537,14 @@ def register():
         return render_template('register.html')
 
     data = _request_data()
-    username = (data.get('username') or '').strip()
-    email = (data.get('email') or '').strip().lower() or None
+    username = _display_username_input(data.get('username'))
+    email = _canonical_email_input(data.get('email'))
     password = data.get('password') or ''
     confirm_password = data.get('confirm_password') or ''
 
     if not _valid_username(username):
         return render_template('register.html', error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
-    if email and not _valid_email(email):
+    if email is not None and not _valid_email(email):
         return render_template('register.html', error='Enter a valid email address.'), 400
     if not _valid_password(password):
         return render_template('register.html', error=_password_requirements_message()), 400
@@ -434,7 +557,7 @@ def register():
 
     try:
         user = create_user(username=username, password=password, email=email, role='standard')
-    except IntegrityError:
+    except (IntegrityError, ValueError):
         db.session.rollback()
         return render_template('register.html', error='That username or email is already in use.'), 400
     session.clear()
@@ -446,13 +569,13 @@ def register():
 
 
 def login():
-    from app import get_user
+    from services import get_user
 
     if request.method == 'GET':
         return render_template('login.html', next=request.args.get('next', ''))
 
     data = _request_data()
-    username = (data.get('username') or '').strip()
+    username = _display_username_input(data.get('username'))
     password = data.get('password') or ''
     user = get_user(username)
     if not user or not user.is_active or not user.check_password(password):
@@ -467,10 +590,7 @@ def login():
 
 
 def forgot_password():
-    from app import (
-        enqueue_password_reset_email,
-        get_user_by_email,
-    )
+    from services import enqueue_password_reset_email, password_reset_target_digest
 
     success_message = 'If that email matches an active account, a password reset link has been sent.'
     email_delivery_available = current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED', False)
@@ -482,7 +602,7 @@ def forgot_password():
         )
 
     data = _request_data()
-    email = (data.get('email') or '').strip().lower()
+    email = _canonical_email_input(data.get('email')) or ''
     if not _valid_email(email):
         return render_template(
             'forgot_password.html',
@@ -490,21 +610,19 @@ def forgot_password():
             email_delivery_available=email_delivery_available,
         ), 400
 
-    user = get_user_by_email(email)
-    if user and user.is_active and email_delivery_available:
+    if email_delivery_available:
         request_id = secrets.token_hex(12)
         try:
-            enqueue_password_reset_email(user.user_id, request_id)
+            enqueue_password_reset_email(password_reset_target_digest(email), request_id)
         except Exception as exc:
             current_app.logger.error(
-                'password_reset_queue_enqueue_failed request_id=%s user_id=%s failure_class=%s',
+                'password_reset_queue_enqueue_failed request_id=%s failure_class=%s',
                 request_id,
-                user.user_id,
                 type(exc).__name__,
             )
         else:
             current_app.logger.info(
-                'password_reset_queued request_id=%s user_id=%s', request_id, user.user_id
+                'password_reset_queued request_id=%s', request_id
             )
 
     return render_template(
@@ -515,7 +633,7 @@ def forgot_password():
 
 
 def reset_password():
-    from app import get_user_by_password_reset_token, reset_user_password_with_token
+    from services import get_user_by_password_reset_token, reset_user_password_with_token
 
     token = (request.args.get('token') if request.method == 'GET' else _request_data().get('token') or '').strip()
     user = get_user_by_password_reset_token(token)
@@ -565,7 +683,7 @@ def logout():
 
 @login_required
 def account():
-    from app import get_user, get_user_by_email, update_user_account
+    from services import get_user, get_user_by_email, update_user_account
     from models import db
 
     user = _current_user()
@@ -573,8 +691,8 @@ def account():
         return render_template('account.html', user=user)
 
     data = _request_data()
-    username = (data.get('username') or '').strip()
-    email = (data.get('email') or '').strip().lower() or None
+    username = _display_username_input(data.get('username'))
+    email = _canonical_email_input(data.get('email'))
     current_password = data.get('current_password') or ''
     new_password = data.get('new_password') or ''
     confirm_password = data.get('confirm_password') or ''
@@ -583,7 +701,7 @@ def account():
         return render_template('account.html', user=user, error='Enter your current password to save account changes.'), 400
     if not _valid_username(username):
         return render_template('account.html', user=user, error='Usernames must be 3-40 letters, numbers, dots, dashes, or underscores.'), 400
-    if email and not _valid_email(email):
+    if email is not None and not _valid_email(email):
         return render_template('account.html', user=user, error='Enter a valid email address.'), 400
     existing_user = get_user(username)
     if existing_user and existing_user.user_id != user.user_id:
@@ -599,7 +717,7 @@ def account():
 
     try:
         updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
-    except IntegrityError:
+    except (IntegrityError, ValueError):
         db.session.rollback()
         return render_template('account.html', user=user, error='That username or email is already in use.'), 400
     if new_password:
@@ -613,7 +731,7 @@ def account():
 
 @login_required
 def delete_account():
-    from app import delete_user_account
+    from services import delete_user_account
 
     user = _current_user()
     data = _request_data()
@@ -658,7 +776,7 @@ def update_theme_route():
 
 @admin_required
 def admin_users():
-    from app import delete_user_account
+    from services import delete_user_account
     from models import User, db
 
     if request.method == 'GET':
@@ -688,6 +806,7 @@ def admin_users():
         if current_user and current_user.user_id == target_user.user_id:
             return redirect(url_for('admin_users', notice='You cannot delete your own account.', level='error'))
         delete_user_account(target_user.user_id)
+        audit_event('account_deleted', current_user, 'success', target_type='user', target_id=target_user_id)
         current_app.logger.info('admin_action=delete_user actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User and all owned data deleted.', level='success'))
 
@@ -696,6 +815,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='User is already an admin.', level='success'))
         target_user.role = 'admin'
         db.session.commit()
+        audit_event('role_changed', current_user, 'success', target_type='user', target_id=target_user_id, role='admin')
         current_app.logger.info('admin_action=promote_admin actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to admin.', level='success'))
 
@@ -706,6 +826,7 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Admins cannot be changed to moderator here.', level='error'))
         target_user.role = 'moderator'
         db.session.commit()
+        audit_event('role_changed', current_user, 'success', target_type='user', target_id=target_user_id, role='moderator')
         current_app.logger.info('admin_action=promote_moderator actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User promoted to moderator.', level='success'))
 
@@ -718,10 +839,40 @@ def admin_users():
             return redirect(url_for('admin_users', notice='Use a dedicated admin-role workflow to demote admins.', level='error'))
         target_user.role = 'standard'
         db.session.commit()
+        audit_event('role_changed', current_user, 'success', target_type='user', target_id=target_user_id, role='standard')
         current_app.logger.info('admin_action=demote_standard actor_id=%s target_id=%s', current_user.user_id, target_user_id)
         return redirect(url_for('admin_users', notice='User demoted to standard.', level='success'))
 
     return redirect(url_for('admin_users', notice='Unknown admin action.', level='error'))
+
+
+@moderator_required
+def moderate_unpublish_route():
+    """The only public-content mutation granted to moderators."""
+    from models import Deck, Quiz
+
+    data = _request_data()
+    content_type = (data.get('content_type') or '').strip().lower()
+    content_id = _int_value(data.get('content_id'))
+    model = Deck if content_type == 'deck' else Quiz if content_type == 'quiz' else None
+    if model is None or not content_id:
+        return jsonify({'error': 'content_type and content_id are required'}), 400
+
+    content = db.session.get(model, content_id)
+    if not content or not content.is_public:
+        return jsonify({'error': 'Public content not found'}), 404
+
+    actor = _current_user()
+    content.is_public = False
+    db.session.commit()
+    audit_event(
+        'public_content_unpublished',
+        actor,
+        'success',
+        target_type=content_type,
+        target_id=content_id,
+    )
+    return jsonify({'success': True, 'content_type': content_type, 'content_id': content_id})
 
 
 def _owned_deck(deck_id, user_id):
@@ -751,7 +902,7 @@ def _owned_quiz(quiz_id, user_id):
 
 def _accessible_answer(answer_id, user_id):
     from models import CardAnswer
-    answer = CardAnswer.query.get(answer_id) if answer_id else None
+    answer = db.session.get(CardAnswer, answer_id) if answer_id else None
     if not answer or (not answer.card.deck.is_public and answer.card.deck.owned_by != user_id):
         return None
     return answer
@@ -760,7 +911,7 @@ def _accessible_answer(answer_id, user_id):
 # Page routes.
 # Render the home page.
 def index():
-    from app import get_homepage_public_data
+    from services import get_homepage_public_data
 
     homepage_data = get_homepage_public_data(featured_limit=3, tag_limit=5)
     return render_template(
@@ -776,7 +927,7 @@ def edit():
     if not _current_user():
         return _login_required_response()
     user_id = _current_user_id()
-    from app import get_user_decks_page, get_deck_details
+    from services import get_user_decks_page, get_deck_details
 
     deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size())
     decks = deck_page['items']
@@ -787,7 +938,7 @@ def edit():
     selected_deck_export_text = ''
     selected_cards = []
     if selected_deck_id and _owned_deck(selected_deck_id, user_id):
-        from app import export_deck_as_text
+        from services import export_deck_as_text
         selected_deck = get_deck_details(selected_deck_id, shuffle_cards=False, shuffle_answers=False)
         if selected_deck and selected_deck['deck_id']:
             selected_cards = selected_deck['cards']
@@ -815,7 +966,7 @@ def edit():
 # Render the study page.
 def view():
     user_id = _current_user_id()
-    from app import get_deck_details, get_user_decks_page
+    from services import get_deck_details, get_user_decks_page
 
     deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
     decks = deck_page['items'] if deck_page else []
@@ -837,7 +988,7 @@ def view():
 def match():
     user = _current_user()
     user_id = user.user_id if user else None
-    from app import get_match_game_data, get_match_strategy_catalog, get_user_decks_page, normalize_match_strategy
+    from services import get_match_game_data, get_match_strategy_catalog, get_user_decks_page, normalize_match_strategy
 
     deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
     decks = deck_page['items'] if deck_page else []
@@ -877,7 +1028,7 @@ def match():
 # Render the reorder game page.
 def reorder():
     user_id = _current_user_id()
-    from app import get_deck_details, get_user_decks_page
+    from services import get_deck_details, get_user_decks_page
 
     deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size(), sortable_only=True) if user_id is not None else None
     sortable_decks = deck_page['items'] if deck_page else []
@@ -908,7 +1059,7 @@ def reorder():
 # Mastery mode page (spaced repetition-style practice).
 @login_required
 def master():
-    from app import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks_page, normalize_mastery_strategy
+    from services import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks_page, normalize_mastery_strategy
 
     user = _current_user()
     user_id = user.user_id if user else None
@@ -972,7 +1123,7 @@ def master():
 
 @login_required
 def master_rate_route():
-    from app import normalize_mastery_strategy, record_mastery_rating
+    from services import normalize_mastery_strategy, record_mastery_rating
     from models import Deck
 
     data = _request_data()
@@ -985,7 +1136,7 @@ def master_rate_route():
     if not deck_id or not card_id:
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck and card are required.', level='error')
 
-    deck_record = Deck.query.get(deck_id)
+    deck_record = db.session.get(Deck, deck_id)
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
 
@@ -1009,7 +1160,7 @@ def master_rate_route():
 
 @login_required
 def master_reset_route():
-    from app import normalize_mastery_strategy, reset_mastery_progress
+    from services import normalize_mastery_strategy, reset_mastery_progress
     from models import Deck
 
     data = _request_data()
@@ -1020,7 +1171,7 @@ def master_reset_route():
     if not deck_id:
         return _redirect_with_fragment('master', notice='Deck is required.', level='error')
 
-    deck_record = Deck.query.get(deck_id)
+    deck_record = db.session.get(Deck, deck_id)
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return _redirect_with_fragment('master', notice='Deck not found.', level='error')
 
@@ -1040,7 +1191,7 @@ def master_reset_route():
 def create_deck_route():
     if not _current_user():
         return _login_required_response()
-    from app import create_deck
+    from services import create_deck
 
     data = _request_data()
     user_id = _current_user_id()
@@ -1056,7 +1207,7 @@ def create_deck_route():
         deck = create_deck(user_id, description, sortable, is_public, False, detailed_description, tags)
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
-    if request.is_json:
+    if _wants_json():
         return jsonify({'success': True, 'deck_id': deck.deck_id, 'description': deck.description})
     return _redirect_with_fragment(
         'edit',
@@ -1071,7 +1222,7 @@ def create_deck_route():
 def get_deck_list_route():
     if not _current_user():
         return _login_required_response()
-    from app import get_user_decks_page
+    from services import get_user_decks_page
 
     user_id = _current_user_id()
 
@@ -1092,7 +1243,7 @@ def get_deck_list_route():
 def delete_deck_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_deck
+    from services import delete_deck
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
@@ -1105,7 +1256,7 @@ def delete_deck_route():
     
     deleted = delete_deck(deck_id)
     if deleted:
-        if request.is_json:
+        if _wants_json():
             return jsonify({'success': True, 'deck_id': deck_id})
         return _redirect_with_fragment('edit', fragment='decks-section', notice='Deck deleted', level='success')
     else:
@@ -1116,7 +1267,7 @@ def delete_deck_route():
 def edit_deck_route():
     if not _current_user():
         return _login_required_response()
-    from app import edit_deck
+    from services import edit_deck
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
@@ -1138,7 +1289,7 @@ def edit_deck_route():
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     if deck:
-        if request.is_json:
+        if _wants_json():
             return jsonify({'success': True, 'deck_id': deck.deck_id})
         return _redirect_with_fragment(
             'edit',
@@ -1157,7 +1308,7 @@ def edit_deck_route():
 def add_card_route():
     if not _current_user():
         return _login_required_response()
-    from app import add_card
+    from services import add_card
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
@@ -1174,7 +1325,7 @@ def add_card_route():
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
-    if request.is_json:
+    if _wants_json():
         return jsonify({'success': True, 'card_id': card.card_id})
     return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card added', level='success')
 
@@ -1183,7 +1334,7 @@ def add_card_route():
 def delete_card_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_card
+    from services import delete_card
     from models import Card
 
     data = _request_data()
@@ -1193,13 +1344,13 @@ def delete_card_route():
 
     if not card_id:
         return jsonify({'error': 'Card ID is required'}), 400
-    card = Card.query.get(card_id)
+    card = db.session.get(Card, card_id)
     if not card or not _owned_deck(card.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
     
     deleted = delete_card(card_id)
     if deleted:
-        if request.is_json:
+        if _wants_json():
             return jsonify({'success': True, 'card_id': card_id})
         return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card deleted', level='success') if deck_id else _redirect_with_fragment('edit', fragment='decks-section', notice='Card deleted', level='success')
     else:
@@ -1210,7 +1361,7 @@ def delete_card_route():
 def edit_card_route():
     if not _current_user():
         return _login_required_response()
-    from app import edit_card
+    from services import edit_card
     from models import Card
 
     data = _request_data()
@@ -1222,7 +1373,7 @@ def edit_card_route():
     
     if not card_id or not question:
         return jsonify({'error': 'Card ID and question are required'}), 400
-    card_record = Card.query.get(card_id)
+    card_record = db.session.get(Card, card_id)
     if not card_record or not _owned_deck(card_record.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
     
@@ -1232,10 +1383,10 @@ def edit_card_route():
         return jsonify({'error': str(exc)}), 400
     if card:
         if isinstance(card, dict) and card.get('deleted'):
-            if request.is_json:
+            if _wants_json():
                 return jsonify({'success': True, 'card_id': card_id, 'deleted': True})
             return _redirect_with_fragment('edit', deck_id=card.get('deck_id') or deck_id, fragment='deck-editor', notice='Card updated', level='success')
-        if request.is_json:
+        if _wants_json():
             return jsonify({'success': True, 'card_id': card.card_id})
         return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card updated', level='success')
     else:
@@ -1244,7 +1395,7 @@ def edit_card_route():
 
 # List cards in a deck.
 def list_cards_route():
-    from app import list_cards_from_deck, get_deck_details
+    from services import list_cards_from_deck, get_deck_details
     from models import Deck
 
     data = _request_data()
@@ -1254,7 +1405,7 @@ def list_cards_route():
 
     if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
-    deck_record = Deck.query.get(deck_id)
+    deck_record = db.session.get(Deck, deck_id)
     user_id = _current_user_id()
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return jsonify({'error': 'Deck not found'}), 404
@@ -1269,7 +1420,7 @@ def list_cards_route():
 def import_deck_route():
     if not _current_user():
         return _login_required_response()
-    from app import import_deck
+    from services import import_deck
 
     data = _request_data()
     user_id = _current_user_id()
@@ -1311,7 +1462,7 @@ def import_deck_route():
 
 # Return one card with answers.
 def get_card_route():
-    from app import get_card_from_deck
+    from services import get_card_from_deck
     from models import Card
 
     data = _request_data()
@@ -1319,7 +1470,7 @@ def get_card_route():
 
     if not card_id:
         return jsonify({'error': 'Card ID is required'}), 400
-    card_record = Card.query.get(card_id)
+    card_record = db.session.get(Card, card_id)
     user_id = _current_user_id()
     if not card_record or (not card_record.deck.is_public and card_record.deck.owned_by != user_id):
         return jsonify({'error': 'Card not found'}), 404
@@ -1334,7 +1485,7 @@ def get_card_route():
 # Match only checks the pair, it does not mutate the answer row.
 # Validate one matching-game answer.
 def match_answer_route():
-    from app import record_match_attempt
+    from services import record_match_attempt
     from models import CardAnswer
 
     data = _request_data()
@@ -1371,7 +1522,7 @@ def match_answer_route():
 
 
 def match_attempt_route():
-    from app import normalize_match_strategy, record_match_attempt
+    from services import normalize_match_strategy, record_match_attempt
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))
@@ -1402,7 +1553,7 @@ def match_attempt_route():
 def delete_answer_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_answer
+    from services import delete_answer
     from models import CardAnswer
 
     data = _request_data()
@@ -1427,25 +1578,25 @@ def delete_answer_route():
     if context == 'edit':
         deleted = delete_answer(answer_id)
         if deleted:
-            if request.is_json:
+            if _wants_json():
                 return jsonify({'success': True, **deleted})
             return _redirect_with_fragment('edit', deck_id=deleted.get('deck_id') or deck_id, fragment='deck-editor', notice='Answer removed', level='success')
         return jsonify({'error': 'Answer not found'}), 404
 
     if not selected_question_id:
-        if request.is_json:
+        if _wants_json():
             return jsonify({'error': 'Select a question tile first'}), 400
         return redirect(url_for('match', deck_id=deck_id or answer.card.deck_id, error='Select a question tile first'))
 
     if answer.card_id != selected_question_id:
-        if request.is_json:
+        if _wants_json():
             return jsonify({'error': 'That answer does not match the selected question'}), 400
         return redirect(url_for('match', deck_id=deck_id or answer.card.deck_id, selected_question=selected_question_id, error='That answer does not match the selected question'))
 
     deleted = delete_answer(answer_id)
     if deleted:
         next_selected = None if deleted.get('card_deleted') else selected_question_id
-        if request.is_json:
+        if _wants_json():
             return jsonify({'success': True, **deleted})
         return redirect(url_for('match', deck_id=deleted.get('deck_id') or deck_id, selected_question=next_selected or ''))
     return jsonify({'error': 'Answer not found'}), 404
@@ -1455,7 +1606,7 @@ def delete_answer_route():
 def move_card_route():
     if not _current_user():
         return _login_required_response()
-    from app import move_card_in_deck
+    from services import move_card_in_deck
     from models import Card
 
     data = _request_data()
@@ -1466,7 +1617,7 @@ def move_card_route():
 
     if not card_id or direction not in ('up', 'down'):
         return jsonify({'error': 'Card ID and valid direction are required'}), 400
-    card = Card.query.get(card_id)
+    card = db.session.get(Card, card_id)
     if not card or not _owned_deck(card.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
 
@@ -1474,7 +1625,7 @@ def move_card_route():
     if not result.get('success'):
         return jsonify({'error': result.get('error', 'Unable to move card')}), 400
 
-    if request.is_json:
+    if _wants_json():
         return jsonify({'success': True, **result})
     return _redirect_with_fragment('edit', deck_id=result.get('deck_id') or deck_id, fragment='deck-editor')
 
@@ -1483,18 +1634,18 @@ def move_card_route():
 def swap_cards_route():
     if not _current_user():
         return _login_required_response()
-    from app import swap_cards_in_deck
+    from services import swap_cards_in_deck
     from models import Card
 
-    payload = request.get_json(silent=True) or {}
+    payload = _request_data()
     card_id = _int_value(payload.get('card_id'))
     target_card_id = _int_value(payload.get('target_card_id'))
     user_id = _current_user_id()
 
     if not card_id or not target_card_id:
         return jsonify({'error': 'Both card IDs are required'}), 400
-    first_card = Card.query.get(card_id)
-    second_card = Card.query.get(target_card_id)
+    first_card = db.session.get(Card, card_id)
+    second_card = db.session.get(Card, target_card_id)
     if not first_card or not second_card or not _owned_deck(first_card.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
 
@@ -1507,16 +1658,16 @@ def swap_cards_route():
 
 # Check a submitted reorder attempt.
 def check_reorder_route():
-    from app import check_deck_order
+    from services import check_deck_order
     from models import Deck
 
-    payload = request.get_json(silent=True) or {}
+    payload = _request_data()
     deck_id = _int_value(payload.get('deck_id'))
     ordered_card_ids = payload.get('ordered_card_ids')
 
     if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
-    deck_record = Deck.query.get(deck_id)
+    deck_record = db.session.get(Deck, deck_id)
     user_id = _current_user_id()
     if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
         return jsonify({'error': 'Deck not found'}), 404
@@ -1526,8 +1677,11 @@ def check_reorder_route():
 
     try:
         # Normalize IDs before comparing order.
-        normalized_card_ids = [int(card_id) for card_id in ordered_card_ids]
+        normalized_card_ids = [_int_value(card_id) for card_id in ordered_card_ids]
     except (TypeError, ValueError):
+        return jsonify({'error': 'ordered_card_ids must contain valid card IDs'}), 400
+
+    if any(card_id is None for card_id in normalized_card_ids):
         return jsonify({'error': 'ordered_card_ids must contain valid card IDs'}), 400
 
     result = check_deck_order(deck_id, normalized_card_ids)
@@ -1546,7 +1700,7 @@ def check_reorder_route():
 # Search results.
 # Render public search results.
 def search_route():
-    from app import search_public_content
+    from services import search_public_content
 
     query = request.args.get('q', '')
     user_id = _current_user_id()
@@ -1574,7 +1728,7 @@ def search_route():
 
 # Public quiz detail (read-only).
 def public_quiz_route():
-    from app import get_quiz_with_content
+    from services import get_quiz_with_content
 
     user_id = _current_user_id()
     quiz_id = _int_value(request.args.get('quiz_id'))
@@ -1592,14 +1746,17 @@ def public_quiz_route():
 def copy_public_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import copy_public_quiz_to_user
+    from services import copy_public_quiz_to_user
 
     data = _request_data()
     source_quiz_id = _int_value(data.get('quiz_id'))
     if not source_quiz_id:
         return redirect(url_for('search'))
 
-    copied_quiz = copy_public_quiz_to_user(source_quiz_id, user_id=_current_user_id())
+    try:
+        copied_quiz = copy_public_quiz_to_user(source_quiz_id, user_id=_current_user_id())
+    except ValueError:
+        return redirect(url_for('search'))
     if not copied_quiz:
         return redirect(url_for('search'))
 
@@ -1614,7 +1771,7 @@ def copy_public_quiz_route():
 
 # Public deck detail (read-only).
 def public_deck_route():
-    from app import get_deck_with_content
+    from services import get_deck_with_content
 
     user_id = _current_user_id()
     deck_id = _int_value(request.args.get('deck_id'))
@@ -1632,14 +1789,17 @@ def public_deck_route():
 def copy_public_deck_route():
     if not _current_user():
         return _login_required_response()
-    from app import copy_public_deck_to_user
+    from services import copy_public_deck_to_user
 
     data = _request_data()
     source_deck_id = _int_value(data.get('deck_id'))
     if not source_deck_id:
         return redirect(url_for('search'))
 
-    copied_deck = copy_public_deck_to_user(source_deck_id, user_id=_current_user_id())
+    try:
+        copied_deck = copy_public_deck_to_user(source_deck_id, user_id=_current_user_id())
+    except ValueError:
+        return redirect(url_for('search'))
     if not copied_deck:
         return redirect(url_for('search'))
 
@@ -1654,7 +1814,7 @@ def copy_public_deck_route():
 
 # Resolve the quiz launcher selection without creating an attempt.
 def _quiz_launcher_context(source_data):
-    from app import get_accessible_custom_quizzes_page, get_user_decks_page
+    from services import get_accessible_custom_quizzes_page, get_user_decks_page
 
     user_id = _current_user_id()
     deck_page = get_user_decks_page(user_id, _requested_page(), _requested_page_size()) if user_id is not None else None
@@ -1724,7 +1884,7 @@ def quiz_route():
 
 
 def start_quiz_route():
-    from app import create_quiz_attempt, generate_quiz_data
+    from services import create_quiz_attempt, generate_quiz_data
 
     context = _quiz_launcher_context(_request_data())
     if not context['selected_source']:
@@ -1775,8 +1935,8 @@ def start_quiz_route():
 
 # Score a submitted quiz.
 def score_quiz_route():
-    from app import score_quiz_attempt
-    data = request.get_json(silent=True) or {}
+    from services import score_quiz_attempt
+    data = _request_data()
     submitted_answers = data.get('answers', {})
     attempt_token = str(data.get('attempt_token', '')).strip()
     active_attempt_tokens = list(session.get('quiz_attempt_tokens', []))
@@ -1811,7 +1971,7 @@ def score_quiz_route():
 def edit_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import get_quiz_with_content, get_user_custom_quizzes_page
+    from services import get_quiz_with_content, get_user_custom_quizzes_page
     user_id = _current_user_id()
     quiz_page = get_user_custom_quizzes_page(user_id, _requested_page(), _requested_page_size())
     quizzes = quiz_page['items']
@@ -1830,7 +1990,7 @@ def edit_quiz_route():
 def create_custom_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import create_custom_quiz
+    from services import create_custom_quiz
     data = _request_data()
     title = data.get('title')
     description = data.get('description')
@@ -1848,7 +2008,7 @@ def create_custom_quiz_route():
 def edit_custom_quiz_metadata_route():
     if not _current_user():
         return _login_required_response()
-    from app import edit_custom_quiz
+    from services import edit_custom_quiz
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
     title = data.get('title')
@@ -1867,7 +2027,7 @@ def edit_custom_quiz_metadata_route():
 def delete_custom_quiz_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_custom_quiz
+    from services import delete_custom_quiz
     quiz_id = _int_value(_request_data().get('quiz_id'))
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only delete quizzes you own'}), 403
@@ -1878,7 +2038,7 @@ def delete_custom_quiz_route():
 def add_quiz_question_route():
     if not _current_user():
         return _login_required_response()
-    from app import add_quiz_question
+    from services import add_quiz_question
 
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
@@ -1902,14 +2062,14 @@ def add_quiz_question_route():
 def delete_quiz_question_route():
     if not _current_user():
         return _login_required_response()
-    from app import delete_quiz_question
+    from services import delete_quiz_question
     from models import QuizQuestion
     data = _request_data()
     question_id = _int_value(data.get('question_id'))
     quiz_id = _int_value(data.get('quiz_id'))
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
-    question = QuizQuestion.query.get(question_id)
+    question = db.session.get(QuizQuestion, question_id)
     if not question or question.quiz_id != quiz_id:
         return jsonify({'error': 'Question not found'}), 404
     delete_quiz_question(question_id)
@@ -1919,14 +2079,14 @@ def delete_quiz_question_route():
 def edit_quiz_question_route():
     if not _current_user():
         return _login_required_response()
-    from app import edit_quiz_question
+    from services import edit_quiz_question
     from models import QuizQuestion
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
     question_id = _int_value(data.get('question_id'))
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
-    question = QuizQuestion.query.get(question_id)
+    question = db.session.get(QuizQuestion, question_id)
     if not question or question.quiz_id != quiz_id:
         return jsonify({'error': 'Question not found'}), 404
     question_text = data.get('question')
@@ -1946,11 +2106,16 @@ def edit_quiz_question_route():
 
 # Route registration.
 # Register every route on the Flask app.
-def register_routes(app):
-    limiter.init_app(app)
+def register_routes(app, app_limiter=None):
+    app_limiter = app_limiter or limiter
+    app.extensions['cards_limiter'] = app_limiter
+    limiter_token = _ACTIVE_LIMITER.set(app_limiter)
     app.before_request(_prepare_security_request)
+    app.before_request(_canonicalize_static_asset)
     app.before_request(_validate_csrf)
     app.after_request(_set_security_headers)
+    for status_code in (400, 401, 403, 404, 405, 413, 415, 422, 500):
+        app.register_error_handler(status_code, _api_error_handler)
     app.register_error_handler(429, _rate_limit_response)
 
     @app.context_processor
@@ -1964,6 +2129,7 @@ def register_routes(app):
             'ensure_csrf_token': _ensure_csrf_token,
             'csrf_token_required': csrf_token_required,
             'csp_nonce': g.csp_nonce,
+            'asset_url': asset_url,
         }
 
     # Main pages
@@ -1979,6 +2145,7 @@ def register_routes(app):
     app.add_url_rule('/account/delete', endpoint='delete_account', view_func=_limit(delete_account, 'delete_account', ['POST']), methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/moderation/unpublish', endpoint='moderate_unpublish', view_func=_limit(moderate_unpublish_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/master', endpoint='master', view_func=master, methods=['GET'])
@@ -2023,3 +2190,4 @@ def register_routes(app):
     app.add_url_rule('/move_card', endpoint='move_card', view_func=_limit(move_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=_limit(swap_cards_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=_limit(check_reorder_route, 'api', ['POST']), methods=['POST'])
+    _ACTIVE_LIMITER.reset(limiter_token)

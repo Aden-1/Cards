@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Cards{% endblock %}</title>
-    <link href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
-    <link href="{{ url_for('static', filename='app.css') }}" rel="stylesheet">
+    <link href="{{ asset_url('vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ asset_url('app.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -62,6 +62,9 @@
                             {% if current_user.is_admin %}
                             <li><a class="dropdown-item" href="{{ url_for('admin_users') }}">Admin Users</a></li>
                             {% endif %}
+                            {% if current_user.role in ('moderator', 'admin') %}
+                            <li><span class="dropdown-item-text small-muted">Moderation enabled</span></li>
+                            {% endif %}
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <form method="post" action="{{ url_for('logout') }}">
@@ -98,7 +101,7 @@
         <div>&copy; 2026 Cards</div>
     </div>
 </footer>
-<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ asset_url('vendor/bootstrap/bootstrap.bundle.min.js') }}" defer></script>
 <script nonce="{{ csp_nonce }}">
 window.cardsCsrfToken = {{ (ensure_csrf_token() if csrf_token_required else '') | tojson }};
 window.cardsConfig = {
@@ -106,7 +109,7 @@ window.cardsConfig = {
     userTheme: {{ (active_theme or '') | tojson }}
 };
 </script>
-<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ asset_url('app.js') }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

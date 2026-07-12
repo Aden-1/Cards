@@ -5,7 +5,7 @@ Revises: 20260526003000
 Create Date: 2026-05-26 01:00:00.000000
 
 """
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 
 
@@ -17,6 +17,8 @@ depends_on = None
 
 
 def _index_names(bind, table_name):
+    if context.is_offline_mode():
+        return set()
     inspector = sa.inspect(bind)
     return {index['name'] for index in inspector.get_indexes(table_name)}
 
@@ -28,6 +30,9 @@ def _create_index_if_missing(bind, table_name, index_name, columns):
 
 
 def _drop_index_if_present(bind, table_name, index_name):
+    if context.is_offline_mode():
+        op.drop_index(index_name, table_name=table_name)
+        return
     if index_name not in _index_names(bind, table_name):
         return
     op.drop_index(index_name, table_name=table_name)

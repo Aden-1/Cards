@@ -12,6 +12,29 @@
 - Success redirects may include `notice` and `level` query parameters for the global toast handler.
 - Some routes are HTML-first and redirect on success even when they are not classic JSON APIs.
 
+## JSON Contract
+
+JSON clients should send `Content-Type: application/json` and may send
+`Accept: application/json`. JSON responses always use
+`Content-Type: application/json` and retain the documented success fields.
+Successful mutations use the existing `success: true` envelope where one was
+already documented; failures use:
+
+```json
+{ "error": "public message" }
+```
+
+The standard statuses are `200` for success, `400` for malformed or invalid
+input (including CSRF), `401` for missing authentication, `403` for denied
+access, `404` for missing resources, `405` for unsupported methods, `413`
+for oversized bodies, `415` for unsupported request media types, and `429`
+for rate limits. Rate-limited responses preserve `Retry-After`.
+
+Malformed JSON is never treated as an empty form. JSON-only reorder and quiz
+actions reject non-JSON bodies. API errors and unexpected 500 errors use the
+JSON envelope without exposing exception details. Browser form requests retain
+their rendered pages, redirects, and flash/toast behavior.
+
 ---
 
 ## Page Routes
@@ -34,7 +57,7 @@ Fields:
 - `confirm_password`
 
 Notes:
-- Username must be 3-40 characters using letters, numbers, dots, dashes, or underscores.
+- Username must be 3-40 characters using Unicode letters/numbers, dots, dashes, or underscores. Identity comparisons trim, NFKC-normalize, and casefold the value; the display username keeps its submitted case.
 - Email is optional during alpha, but accounts with an email can use password recovery later.
 - New passwords must be at least 12 characters and contain a letter and a number.
 - Public registration always creates a `standard` account. Administrators are provisioned through the controlled CLI workflow.
@@ -130,6 +153,15 @@ POST fields:
 Response:
 - `GET`: rendered, paginated HTML admin user list. `page` and `page_size` are accepted; page size is capped at 50.
 - `POST`: redirect back to `/admin/users` with a notice describing the result.
+
+### Public-content moderation
+**POST** `/moderation/unpublish`
+
+Moderator- and admin-only. Accepts `content_type` (`deck` or `quiz`) and
+`content_id`. It can only change an already-public item to private. It cannot
+edit private content, accounts, or roles. Inactive sessions have no authority.
+Successful changes emit an audit-safe event containing only actor/target IDs,
+type, and outcome.
 
 ### Deck Editor
 **GET** `/edit`
@@ -279,6 +311,10 @@ Notes:
 - `import_text` accepts pasted CSV or tab-delimited rows.
 - Each valid line should contain at least `question,answer`.
 - Duplicate answers for the same question are deduplicated during import.
+- Server-side limits are 2 MiB of raw text, 500 cards, 10 answers per card,
+  5,000 characters per question, and 2,000 characters per answer.
+- Validation finishes before the deck graph is written. The deck, cards,
+  answers, normalized tags, and public-search row commit atomically.
 
 Response:
 - Redirect to `/edit?deck_id=<new_id>#deck-editor` on success.
@@ -552,6 +588,10 @@ Fields:
 Notes:
 - Requires login.
 - Creates a private copy owned by the current user.
+- The source is preflighted against import and text-size limits before its
+  bounded graph is loaded.
+- Cards are batch inserted and correlated to answers by their unique
+  per-deck positions; the complete private copy commits atomically.
 
 Response:
 - Redirect to `/edit?deck_id=<new_id>#deck-editor` on success.
@@ -621,6 +661,9 @@ Fields:
 Notes:
 - Requires login.
 - Creates a private copy owned by the current user.
+- The source is preflighted to at most 50 questions and 5 options per
+  question. Ordered generated-ID correlation preserves question/option
+  pairing and dynamic/static semantics in one transaction.
 
 Response:
 - Redirect to `/edit_quiz?quiz_id=<new_id>#quiz-editor` on success.
@@ -746,3 +789,8 @@ Response:
 | 404 | Resource not found |
 | 401 | Authentication required |
 | 403 | Authenticated but not allowed |
+| 405 | HTTP method is not supported |
+| 413 | Request body exceeds `MAX_CONTENT_LENGTH` |
+| 415 | Request `Content-Type` is not supported |
+| 429 | Rate limit exceeded; see `Retry-After` |
+| 500 | Unexpected server error; implementation details are not returned |

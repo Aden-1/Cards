@@ -43,7 +43,7 @@
         {% else %}
         <div class="small-muted" id="matchInstruction">Select a question tile, then click an answer. Correct matches disappear.</div>
         <div class="game-stats"><div class="stat"><div class="stat-label">Questions Left</div><div class="stat-value" id="questionsRemaining">{{ match_deck.card_count }}</div></div><div class="stat"><div class="stat-label">Answers Left</div><div class="stat-value" id="answersRemaining">{{ match_deck.answer_count }}</div></div><div class="stat"><div class="stat-label">Goal</div><div class="stat-value">Clear All</div></div></div>
-        <div id="completionMessage" class="completion-container" style="display:none;"><div class="completion-message"><h3>Perfect!</h3><p>You've mastered all the cards. Great job.</p><a class="btn-primary-surface" href="{{ url_for('match', deck_id=match_deck.deck_id, strategy=selected_strategy) }}">Restart Game</a></div></div>
+        <div id="completionMessage" class="completion-container" hidden><div class="completion-message"><h3>Perfect!</h3><p>You've mastered all the cards. Great job.</p><a class="btn-primary-surface" href="{{ url_for('match', deck_id=match_deck.deck_id, strategy=selected_strategy) }}">Restart Game</a></div></div>
         <div id="gameGridContainer">
             <div class="match-board" id="matchGrid">
                 <section class="match-section question-section">
@@ -509,8 +509,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!gameGridContainer || !completionMessage) {
             return;
         }
-        gameGridContainer.style.display = 'none';
-        completionMessage.style.display = 'flex';
+        gameGridContainer.hidden = true;
+        completionMessage.hidden = false;
     }
 
     function renderMatchBoard() {
@@ -695,8 +695,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (standardFinished) {
             showCompletionState();
         } else {
-            gameGridContainer.style.display = '';
-            completionMessage.style.display = 'none';
+            gameGridContainer.hidden = false;
+            completionMessage.hidden = true;
         }
     }
 

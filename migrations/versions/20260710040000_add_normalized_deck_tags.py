@@ -4,8 +4,10 @@ Revision ID: 20260710040000
 Revises: 20260710030000
 Create Date: 2026-07-10 04:00:00.000000
 """
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
+
+from migrations.offline_safety import require_empty_postgresql_source
 
 
 revision = '20260710040000'
@@ -25,6 +27,7 @@ def _tag_rows(tags):
 
 
 def upgrade():
+    require_empty_postgresql_source('deck', 'normalized deck-tag backfill')
     op.create_index('ix_deck_public_featured_id', 'deck', ['is_public', 'is_featured', 'deck_id'], unique=False)
     op.create_table(
         'deck_tag',
@@ -34,6 +37,9 @@ def upgrade():
         sa.PrimaryKeyConstraint('deck_id', 'tag_normalized'),
     )
     op.create_index('ix_deck_tag_normalized_deck_id', 'deck_tag', ['tag_normalized', 'deck_id'], unique=False)
+
+    if context.is_offline_mode():
+        return
 
     bind = op.get_bind()
     decks = bind.execute(sa.text('SELECT deck_id, tags FROM deck')).mappings()

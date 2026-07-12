@@ -31,6 +31,7 @@ It also requires `TRUSTED_HOSTS`, for example `localhost` when exercising produc
 
 ```powershell
 python -m flask db upgrade
+python -m flask repair-legacy-schema  # explicit legacy repair only
 python -m flask rebuild-public-search-index
 ```
 
@@ -42,7 +43,24 @@ Run the quality gates expected by CI:
 python -m ruff check .
 python -m unittest
 python -m flask db upgrade
+python scripts/audit_static_assets.py
 ```
+
+Tests are organized by responsibility. `tests/support.py` provides isolated
+factory/database/client helpers; `tests/test_api_contract.py` covers the
+shared JSON request/response contract; `tests/test_architecture.py` covers
+factory boundaries; `tests/test_browser_security.py` covers browser headers,
+asset caching, and compression; and `tests/test_production_readiness.py`
+retains broader performance, rate-limit, search, quiz, and recovery coverage.
+
+Run the focused contract and architecture tests when changing request parsing:
+
+```powershell
+python -m unittest tests.test_api_contract tests.test_architecture
+```
+
+Use `python -m unittest` for the complete suite. Tests should close streamed
+responses, remove SQLAlchemy sessions, and dispose factory-owned engines.
 
 To exercise PostgreSQL locally, point `DATABASE_URL` at a PostgreSQL database, run migrations, and then run:
 
@@ -51,6 +69,11 @@ python -m unittest tests.test_postgres_smoke
 ```
 
 Health and readiness checks are exposed at `/healthz` and `/readyz`.
+
+The application factory is available as `app.create_app(config=None)`. Use it
+for isolated tests and avoid importing the WSGI singleton in new services.
+See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for module boundaries and worker
+behavior.
 
 ## Notes
 

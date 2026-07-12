@@ -693,6 +693,12 @@ textarea.form-control {
 
 .progress-bar {
   background: linear-gradient(90deg, var(--primary), var(--accent));
+  width: 0%;
+  min-height: 0.65rem;
+}
+
+.static-only-tick {
+  display: flex;
 }
 
 .feedback-message {

@@ -96,13 +96,13 @@
                 </label>
                 {% endfor %}
             </div>
-            <div class="feedback mt-3 small-muted" style="display:none;"></div>
+            <div class="feedback mt-3 small-muted" hidden></div>
         </article>
         {% endfor %}
         <div id="quizScore"></div>
         <div class="quiz-actions mt-2">
             <button id="submitQuiz" class="btn-primary-surface" type="button">Submit Quiz</button>
-            <form id="retakeQuizForm" method="post" action="{{ url_for('start_quiz') }}" style="display:none;">
+            <form id="retakeQuizForm" method="post" action="{{ url_for('start_quiz') }}" hidden>
                 <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
                 <input type="hidden" name="quiz_source" value="{{ selected_source }}">
                 <button type="submit" class="btn-surface">Retake Quiz</button>
@@ -142,7 +142,7 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
             const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
             if (!qEl) { return; }
             const feedback = qEl.querySelector('.feedback');
-            feedback.style.display = 'block';
+            feedback.hidden = false;
             feedback.replaceChildren();
             const status = document.createElement('span');
             if (res.is_correct) {
@@ -162,8 +162,8 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
                 feedback.append(status, document.createTextNode(' '), correctAnswerText);
             }
         });
-        document.getElementById('submitQuiz').style.display = 'none';
-        document.getElementById('retakeQuizForm').style.display = 'inline-flex';
+        document.getElementById('submitQuiz').hidden = true;
+        document.getElementById('retakeQuizForm').hidden = false;
     });
 });
 </script>
