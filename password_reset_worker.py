@@ -15,7 +15,12 @@ def main():
     if not queue_url:
         raise RuntimeError('PASSWORD_RESET_QUEUE_URL is required for the password-reset worker.')
     timeout = worker_app.config['PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS']
-    connection = Redis.from_url(queue_url, socket_connect_timeout=timeout, socket_timeout=timeout)
+    connection = Redis.from_url(
+        queue_url,
+        socket_connect_timeout=timeout,
+        socket_timeout=timeout,
+        **worker_app.config.get('PASSWORD_RESET_REDIS_OPTIONS', {}),
+    )
     queue = Queue(PASSWORD_RESET_QUEUE_NAME, connection=connection, serializer=JSONSerializer)
     with worker_app.app_context():
         Worker([queue], connection=connection, serializer=JSONSerializer).work(with_scheduler=True)

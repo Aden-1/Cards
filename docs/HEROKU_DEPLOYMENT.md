@@ -154,7 +154,7 @@ heroku config:set DB_POOL_RECYCLE=300 -a your-cards-production
 
 Notes:
 
-- Heroku Key-Value Store's `REDIS_URL` is used automatically for rate limiting. Set `RATELIMIT_STORAGE_URI` only to override it or when a third-party provider uses a different config-var name. Limits are shared across workers, so tune `WEB_CONCURRENCY` for capacity rather than rate-limit consistency.
+- Heroku Key-Value Store's `REDIS_URL` is used automatically for rate limiting, including Heroku's documented self-signed TLS client setting. Set `RATELIMIT_STORAGE_URI` only to override it or when a third-party provider uses a different config-var name; explicit providers retain normal certificate verification. Limits are shared across workers, so tune `WEB_CONCURRENCY` for capacity rather than rate-limit consistency.
 - Set `TRUST_PROXY_HOPS=1`; this is what allows the application to use Heroku's client address safely instead of trusting arbitrary forwarded headers.
 - If you add a custom domain later, append it to `TRUSTED_HOSTS` as a comma-separated value.
 - Because you are not setting up email yet, leave `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_DEFAULT_SENDER`, and `PASSWORD_RESET_URL_BASE` unset for now. Password reset will remain unavailable, which is acceptable for your alpha.

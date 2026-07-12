@@ -617,6 +617,23 @@ class ProductionReadinessTests(unittest.TestCase):
             loaded['RATELIMIT_STORAGE_URI'],
             'rediss://heroku-redis.example.test/0',
         )
+        self.assertEqual(loaded['RATELIMIT_STORAGE_OPTIONS'], {'ssl_cert_reqs': None})
+        self.assertEqual(loaded['PASSWORD_RESET_REDIS_OPTIONS'], {'ssl_cert_reqs': None})
+
+    def test_explicit_redis_override_retains_certificate_verification(self):
+        with mock.patch.dict(os.environ, {
+            'APP_ENV': 'production',
+            'SECRET_KEY': 'production-test-secret',
+            'DATABASE_URL': 'postgresql://postgres.example.test/cards',
+            'TRUSTED_HOSTS': 'cards.example.test',
+            'RATELIMIT_STORAGE_URI': 'rediss://external-redis.example.test/0',
+            'REDIS_URL': 'rediss://heroku-redis.example.test/0',
+            'PASSWORD_RESET_EMAILS_ENABLED': 'false',
+        }, clear=True):
+            loaded = load_config()
+
+        self.assertEqual(loaded['RATELIMIT_STORAGE_OPTIONS'], {})
+        self.assertEqual(loaded['PASSWORD_RESET_REDIS_OPTIONS'], {})
 
     def test_rate_limit_values_are_validated_and_bounded(self):
         self.assertEqual(cards_app._validate_rate_limit('RATE_LIMIT_TEST', '5 per minute'), '5 per minute')

@@ -57,7 +57,12 @@ def _password_reset_redis():
     queue_url = app.config.get('PASSWORD_RESET_QUEUE_URL')
     if not queue_url:
         return None
-    return Redis.from_url(queue_url, socket_connect_timeout=timeout, socket_timeout=timeout)
+    return Redis.from_url(
+        queue_url,
+        socket_connect_timeout=timeout,
+        socket_timeout=timeout,
+        **app.config.get('PASSWORD_RESET_REDIS_OPTIONS', {}),
+    )
 
 
 def _password_reset_queue():

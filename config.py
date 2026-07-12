@@ -150,10 +150,14 @@ def load_config(overrides=None):
     if is_production and not secret_key:
         raise RuntimeError('SECRET_KEY must be set in production.')
 
-    storage_uri = overrides.get(
-        'RATELIMIT_STORAGE_URI',
-        _env_str('RATELIMIT_STORAGE_URI') or _env_str('REDIS_URL'),
+    explicit_storage_uri = (
+        overrides.get('RATELIMIT_STORAGE_URI')
+        if 'RATELIMIT_STORAGE_URI' in overrides
+        else _env_str('RATELIMIT_STORAGE_URI')
     )
+    heroku_redis_uri = _env_str('REDIS_URL')
+    uses_heroku_redis = not explicit_storage_uri and bool(heroku_redis_uri)
+    storage_uri = explicit_storage_uri or heroku_redis_uri
     if not storage_uri:
         storage_uri = 'memory://'
     if not allows_memory and not storage_uri.startswith(('redis://', 'rediss://')):
@@ -192,6 +196,20 @@ def load_config(overrides=None):
         'PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS': _env_int('PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS', 2),
         'PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS': _env_int('PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS', 10),
         'RATELIMIT_STORAGE_URI': storage_uri,
+        # Heroku KVS uses TLS with a self-signed certificate and documents
+        # disabling certificate verification in redis-py. Restrict that
+        # exception to Heroku's managed REDIS_URL fallback; explicit Redis
+        # providers retain normal certificate verification.
+        'RATELIMIT_STORAGE_OPTIONS': (
+            {'ssl_cert_reqs': None}
+            if uses_heroku_redis and storage_uri.startswith('rediss://')
+            else {}
+        ),
+        'PASSWORD_RESET_REDIS_OPTIONS': (
+            {'ssl_cert_reqs': None}
+            if uses_heroku_redis and storage_uri.startswith('rediss://')
+            else {}
+        ),
         'RATELIMIT_KEY_PREFIX': _env_str('RATELIMIT_KEY_PREFIX', 'cards'),
         'RATELIMIT_HEADERS_ENABLED': True,
         'RATELIMIT_HEADER_RETRY_AFTER_VALUE': 'delta-seconds',
