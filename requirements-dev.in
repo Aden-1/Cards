@@ -3,5 +3,5 @@
 
 ruff==0.14.6
 pip-audit==2.9.0
-pip-tools==7.5.1
+pip-tools==7.5.3
 pip-licenses==5.5.0
