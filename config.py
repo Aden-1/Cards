@@ -156,7 +156,9 @@ def load_config(overrides=None):
         else _env_str('RATELIMIT_STORAGE_URI')
     )
     heroku_redis_uri = _env_str('REDIS_URL')
-    uses_heroku_redis = not explicit_storage_uri and bool(heroku_redis_uri)
+    uses_heroku_redis = bool(heroku_redis_uri) and (
+        not explicit_storage_uri or explicit_storage_uri == heroku_redis_uri
+    )
     storage_uri = explicit_storage_uri or heroku_redis_uri
     if not storage_uri:
         storage_uri = 'memory://'
