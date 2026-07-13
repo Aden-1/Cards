@@ -1084,6 +1084,15 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(keyword_args['retry'].max, 3)
         self.assertEqual(keyword_args['retry'].intervals, [30, 120, 300])
 
+    def test_password_reset_core_enqueues_worker_when_unpatched(self):
+        with mock.patch(
+            'cards.workers.jobs.enqueue_password_reset_email', return_value='job-123'
+        ) as enqueue_job:
+            job_id = cards_app.enqueue_password_reset_email('target-digest', 'request-123')
+
+        self.assertEqual(job_id, 'job-123')
+        enqueue_job.assert_called_once_with('target-digest', 'request-123')
+
     def test_password_reset_valid_targets_have_identical_public_outcomes_and_queue_shape(self):
         queued_jobs = []
         original_enqueue = cards_app.enqueue_password_reset_email

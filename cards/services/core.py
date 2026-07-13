@@ -919,8 +919,8 @@ def enqueue_password_reset_email(target_digest, request_id):
     override = _legacy_override('enqueue_password_reset_email', enqueue_password_reset_email)
     if override is not enqueue_password_reset_email:
         return override(target_digest, request_id)
-        from ..workers.jobs import enqueue_password_reset_email as enqueue_job
 
+    from ..workers.jobs import enqueue_password_reset_email as enqueue_job
     return enqueue_job(target_digest, request_id)
 
 
