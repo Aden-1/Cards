@@ -4,10 +4,8 @@ from flask import Flask
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from cards.config import (
-    build_engine_options,
     configure_logging,
     load_config,
-    normalize_database_url,
     rate_limit_storage_uri,
     validate_rate_limit,
     validate_rate_limits,
@@ -19,7 +17,6 @@ from cards.models import (
     CardAnswer,
     CardMasteryProgress,
     Deck,
-    DeckTag,
     MatchPairProgress,
     Quiz,
     QuizAttempt,

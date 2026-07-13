@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import unicodedata
 
+from flask import current_app
 
 MAX_CANONICAL_USERNAME_LENGTH = 40
 MAX_CANONICAL_EMAIL_LENGTH = 255
@@ -43,3 +46,15 @@ def canonical_username(value) -> str:
 
 def canonical_email(value, *, allow_none: bool = True) -> str | None:
     return canonical_identity(value, field='email', allow_none=allow_none)
+
+
+def recovery_email_digest(email: str | None) -> str | None:
+    """Return the keyed digest used to look up a password-recovery address."""
+    normalized = canonical_email(email)
+    if normalized is None:
+        return None
+    return hmac.new(
+        current_app.config['PASSWORD_RESET_LOOKUP_KEY'].encode('utf-8'),
+        normalized.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()

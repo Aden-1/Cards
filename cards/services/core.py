@@ -1,6 +1,4 @@
 import csv
-import hashlib
-import hmac
 import io
 import json
 import random
@@ -21,7 +19,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
 from werkzeug.security import generate_password_hash
 
-from ..identity import canonical_email, canonical_username, display_username
+from ..identity import canonical_email, canonical_username, display_username, recovery_email_digest
 from .authorization import audit_event
 from ..models import (
     Card,
@@ -114,12 +112,7 @@ def normalize_password_reset_email(email):
 
 def password_reset_target_digest(email):
     """Return a non-reversible, deployment-keyed recovery lookup value."""
-    normalized = normalize_password_reset_email(email)
-    return hmac.new(
-        current_app.config['PASSWORD_RESET_LOOKUP_KEY'].encode('utf-8'),
-        normalized.encode('utf-8'),
-        hashlib.sha256,
-    ).hexdigest()
+    return recovery_email_digest(email) or ''
 
 
 def _clean_text(value):
@@ -477,9 +470,22 @@ def _insert_deck_graph(user_id, description, detailed_description, tags, sortabl
 
 
 def _insert_quiz_graph(user_id, title, description, tags, questions):
-    """Insert one bounded quiz graph with explicitly ordered ID correlation."""
+    """Copy one bounded legacy-compatible quiz graph with ordered ID correlation."""
     if len(questions) > _max_quiz_questions():
         raise ValueError(f'Quizzes may contain at most {_max_quiz_questions()} questions.')
+    normalized_questions = []
+    for question in questions:
+        question_text = _validate_text_length(
+            'Question', question.get('question'), MAX_CARD_QUESTION_LENGTH, required=True
+        )
+        question_type, options = _validate_quiz_question_options(
+            question.get('type'), question.get('options'), require_scorable=False
+        )
+        normalized_questions.append({
+            'question': question_text,
+            'type': question_type,
+            'options': options,
+        })
     quiz_id = db.session.execute(
         insert(Quiz).values(
             owned_by=user_id,
@@ -492,7 +498,7 @@ def _insert_quiz_graph(user_id, title, description, tags, questions):
 
     question_rows = [
         {'quiz_id': quiz_id, 'question': question['question'], 'type': question['type']}
-        for question in questions
+        for question in normalized_questions
     ]
     question_ids = []
     if question_rows:
@@ -505,7 +511,7 @@ def _insert_quiz_graph(user_id, title, description, tags, questions):
         ).scalars())
     option_rows = [
         {'question_id': question_id, 'text': option['text'], 'is_correct': option['is_correct']}
-        for question_id, question in zip(question_ids, questions)
+        for question_id, question in zip(question_ids, normalized_questions, strict=True)
         for option in question['options']
     ]
     if option_rows:
@@ -628,17 +634,43 @@ def copy_public_deck_to_user(source_deck_id, user_id):
         db.session.rollback()
         raise
 
-def add_quiz_question(quiz_id, question_text, q_type, options_data):
+def _validate_quiz_question_options(q_type, options_data, *, require_scorable=True):
+    """Normalize options while preserving scoring invariants for new or edited questions."""
     if q_type not in ('dynamic', 'static'):
         raise ValueError('Quiz question type must be dynamic or static.')
+    if not isinstance(options_data, list):
+        raise ValueError('Quiz question options must be a list.')
     if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
         raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
 
-    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
     cleaned_options = []
-    for opt in options_data:
-        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
-        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+    seen_option_text = set()
+    for option in options_data:
+        if not isinstance(option, dict):
+            raise ValueError('Each quiz option must be an object.')
+        option_text = _validate_text_length(
+            'Option', option.get('text'), MAX_CARD_ANSWER_LENGTH, required=True
+        )
+        if option_text in seen_option_text:
+            raise ValueError('Quiz question options must have unique text.')
+        seen_option_text.add(option_text)
+        cleaned_options.append({
+            'text': option_text,
+            'is_correct': bool(option.get('is_correct', False)),
+        })
+
+    correct_count = sum(option['is_correct'] for option in cleaned_options)
+    if require_scorable:
+        if not 1 <= correct_count <= 2:
+            raise ValueError('Quiz questions must have 1-2 correct answers.')
+        if q_type == 'static' and len(cleaned_options) < 2:
+            raise ValueError('Static questions must have at least 2 options.')
+    return q_type, cleaned_options
+
+
+def add_quiz_question(quiz_id, question_text, q_type, options_data):
+    question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
+    q_type, cleaned_options = _validate_quiz_question_options(q_type, options_data)
 
     q = QuizQuestion(quiz_id=quiz_id, question=question_text, type=q_type)
     db.session.add(q)
@@ -655,16 +687,8 @@ def edit_quiz_question(question_id, question_text, q_type, options_data):
     q = db.session.get(QuizQuestion, question_id)
     if not q:
         return None
-    if q_type not in ('dynamic', 'static'):
-        raise ValueError('Quiz question type must be dynamic or static.')
-    if len(options_data) > MAX_QUIZ_OPTIONS_PER_QUESTION:
-        raise ValueError(f'Quiz questions may have at most {MAX_QUIZ_OPTIONS_PER_QUESTION} options.')
-
     question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
-    cleaned_options = []
-    for opt in options_data:
-        option_text = _validate_text_length('Option', opt.get('text'), MAX_CARD_ANSWER_LENGTH, required=True)
-        cleaned_options.append({'text': option_text, 'is_correct': bool(opt.get('is_correct', False))})
+    q_type, cleaned_options = _validate_quiz_question_options(q_type, options_data)
 
     q.question = question_text
     q.type = q_type
@@ -1099,7 +1123,9 @@ def get_homepage_public_data(featured_limit=3, tag_limit=5):
     ).order_by(Deck.deck_id.asc())
     featured_count = featured_query.count() if featured_limit else 0
     featured_limit = min(featured_limit, featured_count)
-    offset = datetime.now().date().toordinal() % featured_count if featured_count else 0
+    # The daily rotation must be deterministic across web workers regardless
+    # of their host locale or daylight-saving setting.
+    offset = datetime.now(timezone.utc).date().toordinal() % featured_count if featured_count else 0
     featured_decks = featured_query.limit(featured_limit).offset(offset).all() if featured_count else []
     # Wrap around without ever reading more than the requested feature limit.
     if len(featured_decks) < featured_limit and featured_count > len(featured_decks):
@@ -2061,7 +2087,6 @@ def move_card_in_deck(card_id, direction):
     """Move a card up or down within its deck by swapping position with a neighbor."""
     if direction not in ('up', 'down'):
         return {'success': False, 'error': 'Invalid direction'}
-    last_error = None
     for _ in range(ORDER_MUTATION_RETRIES):
         db.session.rollback()
         card = db.session.get(Card, card_id)
@@ -2081,8 +2106,7 @@ def move_card_in_deck(card_id, direction):
             _swap_positions(deck_cards[current_index], deck_cards[target_index])
             db.session.commit()
             return {'success': True, 'moved': True, 'deck_id': deck.deck_id}
-        except (IntegrityError, OperationalError) as exc:
-            last_error = exc
+        except (IntegrityError, OperationalError):
             db.session.rollback()
             time.sleep(0.01)
     return {'success': False, 'error': 'Card order changed concurrently; please try again.'}

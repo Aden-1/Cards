@@ -1,7 +1,6 @@
 """Domain service surfaces grouped by application capability."""
 
 from .core import *  # noqa: F403
-from .core import register_cli_commands
 
 
 def __getattr__(name):

@@ -1,5 +1,8 @@
 """Custom quiz, search, and progress service surface."""
 
+# This module intentionally re-exports the cohesive public quiz surface.
+# ruff: noqa: F401
+
 from .core import (
     add_quiz_question,
     copy_public_quiz_to_user,

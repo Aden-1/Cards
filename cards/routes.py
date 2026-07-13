@@ -1554,7 +1554,6 @@ def delete_answer_route():
     if not _current_user():
         return _login_required_response()
     from services import delete_answer
-    from models import CardAnswer
 
     data = _request_data()
     answer_id = _int_value(data.get('answer_id'))

@@ -1,5 +1,8 @@
 """Deck, card, and matching service surface."""
 
+# This module intentionally re-exports the cohesive public deck surface.
+# ruff: noqa: F401
+
 from .core import (
     add_answer_to_card,
     add_card,

@@ -1,5 +1,8 @@
 """Auth and password-recovery service surface."""
 
+# This module intentionally re-exports the cohesive public auth surface.
+# ruff: noqa: F401
+
 from .core import (
     build_password_reset_url,
     create_user,

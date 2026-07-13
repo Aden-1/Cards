@@ -226,10 +226,12 @@ def uninstall_search_schema(connection):
 
 def install_search_schema_after_create(target, connection, **kwargs):
     """Create-all compatibility hook; Alembic remains production authority."""
+    del target, kwargs
     install_search_schema(connection)
 
 
 def uninstall_search_schema_before_drop(target, connection, **kwargs):
+    del target, kwargs
     uninstall_search_schema(connection)
 
 

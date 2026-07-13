@@ -2,7 +2,7 @@ from sqlalchemy import CheckConstraint, event, func
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
-from .identity import canonical_email, canonical_username, display_username
+from .identity import canonical_email, canonical_username, display_username, recovery_email_digest
 from .search_index import register_metadata_hooks
 
 
@@ -208,7 +208,8 @@ register_metadata_hooks(db.metadata)
 @event.listens_for(User, 'before_insert')
 @event.listens_for(User, 'before_update')
 def _populate_canonical_identity(_mapper, _connection, user):
-    """Keep direct ORM writes subject to the same identity policy as services."""
+    """Keep direct ORM writes subject to the same identity and recovery policy as services."""
     user.username = display_username(user.username)
     user.canonical_username = canonical_username(user.username)
     user.canonical_email = canonical_email(user.email)
+    user.recovery_email_digest = recovery_email_digest(user.canonical_email)

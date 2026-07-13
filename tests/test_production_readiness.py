@@ -1,11 +1,9 @@
 import os
-import gzip
 import re
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-import brotli
 from flask import Flask
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -72,7 +70,7 @@ class ProductionReadinessTests(unittest.TestCase):
         with cards_app.app.app_context():
             owner = cards_app.create_user('learn_owner', 'password12345', email='learn-owner@example.test')
             other = cards_app.create_user('learn_other', 'password12345', email='learn-other@example.test')
-            owned = cards_app.create_deck(owner.user_id, 'Owned Learn Deck', sortable=True)
+            cards_app.create_deck(owner.user_id, 'Owned Learn Deck', sortable=True)
             public = cards_app.create_deck(other.user_id, 'Public Direct Deck', sortable=True, is_public=True)
             private = cards_app.create_deck(other.user_id, 'Foreign Private Deck', sortable=True)
             public_card = Card(deck_id=public.deck_id, question='Public direct question?', position=1)
