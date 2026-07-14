@@ -47,6 +47,11 @@ Returns featured public decks and popular public tags.
 Response:
 - Rendered HTML page.
 
+### Dashboard
+**GET** `/dashboard`
+
+Requires login. Returns the signed-in user's mastery, matching summary, deck-health cards, and recommended next deck.
+
 ### Register
 **GET, POST** `/register`
 

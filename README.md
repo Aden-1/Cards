@@ -17,6 +17,7 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Search public decks and custom quizzes
 - Build custom quizzes with static or dynamic questions
 - Master a deck with per-card confidence ratings and persistent progress
+- Use a private dashboard to see current mastery, match accuracy, and recommended next decks
 - Register accounts, optionally add recovery emails, manage account settings, and save theme/study preferences
 - Browse featured public decks and popular tags from the home page
 - Copy public decks and public quizzes into your own account
@@ -86,6 +87,7 @@ GPL-3.0 license policy are documented in
 
 - `/register`, `/login`, `/logout`, and `/account` manage authentication and profile settings
 - `/theme` saves the signed-in user's light/dark preference
+- `/dashboard` shows a signed-in user's progress and recommended study deck
 - `/admin/users` provides admin-only user management
 - `/edit` manages decks and cards
 - `/view` shows study mode

@@ -15,6 +15,7 @@ from .config import validate_rate_limit
 from .extensions import db, limiter
 from .identity import canonical_email, canonical_username, display_username
 from .services.authorization import audit_event, has_role
+from .urls import deck_url_slug, id_from_url_slug, quiz_url_slug
 
 
 _ACTIVE_LIMITER = ContextVar('active_route_limiter', default=None)
@@ -876,19 +877,30 @@ def moderate_unpublish_route():
 
 
 def _owned_deck(deck_id, user_id):
-    from models import Deck
-    if not deck_id:
+    from models import Deck, DeckCollaborator
+    if not deck_id or not user_id:
         return None
-    return Deck.query.filter_by(deck_id=deck_id, owned_by=user_id).first()
+    return Deck.query.outerjoin(
+        DeckCollaborator, DeckCollaborator.deck_id == Deck.deck_id
+    ).filter(
+        Deck.deck_id == deck_id,
+        (Deck.owned_by == user_id) | (DeckCollaborator.user_id == user_id),
+    ).first()
+
+
+def _is_deck_owner(deck_id, user_id):
+    from models import Deck
+    return bool(deck_id and user_id and Deck.query.filter_by(deck_id=deck_id, owned_by=user_id).first())
 
 
 def _directly_accessible_deck(deck_id, user_id):
     """Allow an owned deck or an explicitly linked public deck."""
-    from models import Deck, db
+    from models import Deck, DeckCollaborator, db
     if not deck_id:
         return None
     deck = db.session.get(Deck, deck_id)
-    if not deck or (deck.owned_by != user_id and not deck.is_public):
+    is_collaborator = bool(user_id and DeckCollaborator.query.filter_by(deck_id=deck_id, user_id=user_id).first())
+    if not deck or (deck.owned_by != user_id and not is_collaborator and not deck.is_public):
         return None
     return deck
 
@@ -921,6 +933,14 @@ def index():
     )
 
 
+@login_required
+def dashboard():
+    from services import get_dashboard_data
+
+    user = _current_user()
+    return render_template('dashboard.html', dashboard=get_dashboard_data(user.user_id))
+
+
 # Deck editor.
 # Render the deck editor page.
 def edit():
@@ -948,6 +968,13 @@ def edit():
             selected_deck = None
     selected_deck_record = _owned_deck(selected_deck_id, user_id) if selected_deck_id else None
     deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
+    collaborators = []
+    share_links = []
+    can_manage_sharing = _is_deck_owner(selected_deck_id, user_id)
+    if can_manage_sharing:
+        from models import DeckCollaborator, DeckShareLink
+        collaborators = DeckCollaborator.query.filter_by(deck_id=selected_deck_id).order_by(DeckCollaborator.created_at.asc()).all()
+        share_links = DeckShareLink.query.filter_by(deck_id=selected_deck_id).order_by(DeckShareLink.created_at.desc()).all()
 
     return render_template(
         'edit.html',
@@ -957,6 +984,9 @@ def edit():
         selected_cards=selected_cards,
         selected_deck_id=selected_deck_id,
         selected_deck_export_text=selected_deck_export_text,
+        can_manage_sharing=can_manage_sharing,
+        collaborators=collaborators,
+        share_links=share_links,
         deck_page=deck_page,
         **_pagination_context('edit'),
     )
@@ -1251,7 +1281,7 @@ def delete_deck_route():
 
     if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
-    if not _owned_deck(deck_id, user_id):
+    if not _is_deck_owner(deck_id, user_id):
         return jsonify({'error': 'You can only delete decks you own'}), 403
     
     deleted = delete_deck(deck_id)
@@ -1737,8 +1767,22 @@ def public_quiz_route():
     quiz = get_quiz_with_content(quiz_id)
     if not quiz or (not quiz.is_public and quiz.owned_by != user_id):
         return redirect(url_for('search'))
-
+    if quiz.is_public:
+        return redirect(url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)), code=301)
     return render_template('public_quiz.html', quiz=quiz, user_id=user_id)
+
+
+def public_quiz_detail_route(quiz_slug):
+    from services import get_quiz_with_content
+
+    quiz_id = id_from_url_slug(quiz_slug)
+    quiz = get_quiz_with_content(quiz_id) if quiz_id else None
+    if not quiz or not quiz.is_public:
+        return redirect(url_for('search'))
+    canonical_slug = quiz_url_slug(quiz)
+    if quiz_slug != canonical_slug:
+        return redirect(url_for('public_quiz_detail', quiz_slug=canonical_slug), code=301)
+    return render_template('public_quiz.html', quiz=quiz, user_id=_current_user_id())
 
 
 # Copy a public quiz to the current user's account.
@@ -1780,8 +1824,36 @@ def public_deck_route():
     deck = get_deck_with_content(deck_id)
     if not deck or (not deck.is_public and deck.owned_by != user_id):
         return redirect(url_for('search'))
+    if deck.is_public:
+        return redirect(url_for('public_deck_detail', deck_slug=deck_url_slug(deck)), code=301)
+    return render_template('public_deck.html', deck=deck, user_id=user_id, can_copy=False)
 
-    return render_template('public_deck.html', deck=deck, user_id=user_id)
+
+def public_deck_detail_route(deck_slug):
+    from services import get_deck_with_content
+
+    deck_id = id_from_url_slug(deck_slug)
+    deck = get_deck_with_content(deck_id) if deck_id else None
+    if not deck or not deck.is_public:
+        return redirect(url_for('search'))
+    canonical_slug = deck_url_slug(deck)
+    if deck_slug != canonical_slug:
+        return redirect(url_for('public_deck_detail', deck_slug=canonical_slug), code=301)
+    return render_template('public_deck.html', deck=deck, user_id=_current_user_id(), can_copy=True)
+
+
+def shared_deck_route(token):
+    from models import DeckShareLink
+    from services import get_deck_with_content
+
+    share_link = db.session.get(DeckShareLink, token)
+    deck = get_deck_with_content(share_link.deck_id) if share_link else None
+    if not deck:
+        return redirect(url_for('search'))
+    return render_template(
+        'public_deck.html', deck=deck, user_id=_current_user_id(), share_token=share_link.token,
+        can_copy=share_link.permission == 'copy', is_unlisted=True,
+    )
 
 
 # Copy a public deck to the current user's account.
@@ -1795,8 +1867,9 @@ def copy_public_deck_route():
     if not source_deck_id:
         return redirect(url_for('search'))
 
+    share_token = (data.get('share_token') or '').strip()
     try:
-        copied_deck = copy_public_deck_to_user(source_deck_id, user_id=_current_user_id())
+        copied_deck = copy_public_deck_to_user(source_deck_id, user_id=_current_user_id(), share_token=share_token or None)
     except ValueError:
         return redirect(url_for('search'))
     if not copied_deck:
@@ -1880,6 +1953,74 @@ def quiz_route():
         attempt_token=None,
         quiz_error=None,
     )
+
+
+def create_deck_share_link_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import DeckShareLink
+
+    data = _request_data()
+    deck_id = _int_value(data.get('deck_id'))
+    permission = (data.get('permission') or 'view').strip().lower()
+    if not _is_deck_owner(deck_id, _current_user_id()) or permission not in ('view', 'copy'):
+        return jsonify({'error': 'Only the deck owner can create a share link.'}), 403
+    share_link = DeckShareLink(token=secrets.token_urlsafe(32), deck_id=deck_id, permission=permission)
+    db.session.add(share_link)
+    db.session.commit()
+    return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Unlisted share link created.', level='success')
+
+
+def delete_deck_share_link_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import DeckShareLink
+
+    data = _request_data()
+    token = (data.get('token') or '').strip()
+    share_link = db.session.get(DeckShareLink, token)
+    if not share_link or not _is_deck_owner(share_link.deck_id, _current_user_id()):
+        return jsonify({'error': 'Share link not found.'}), 404
+    deck_id = share_link.deck_id
+    db.session.delete(share_link)
+    db.session.commit()
+    return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Share link revoked.', level='success')
+
+
+def add_deck_collaborator_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import DeckCollaborator, User
+
+    data = _request_data()
+    deck_id = _int_value(data.get('deck_id'))
+    username = canonical_username(data.get('username'))
+    collaborator = User.query.filter_by(canonical_username=username).first() if username else None
+    if not _is_deck_owner(deck_id, _current_user_id()):
+        return jsonify({'error': 'Only the deck owner can manage collaborators.'}), 403
+    if not collaborator or collaborator.user_id == _current_user_id() or not collaborator.is_active:
+        return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Active user not found.', level='error')
+    if not db.session.get(DeckCollaborator, (deck_id, collaborator.user_id)):
+        db.session.add(DeckCollaborator(deck_id=deck_id, user_id=collaborator.user_id))
+        db.session.commit()
+    return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Co-author added.', level='success')
+
+
+def remove_deck_collaborator_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import DeckCollaborator
+
+    data = _request_data()
+    deck_id = _int_value(data.get('deck_id'))
+    collaborator_id = _int_value(data.get('user_id'))
+    if not _is_deck_owner(deck_id, _current_user_id()):
+        return jsonify({'error': 'Only the deck owner can manage collaborators.'}), 403
+    collaborator = db.session.get(DeckCollaborator, (deck_id, collaborator_id))
+    if collaborator:
+        db.session.delete(collaborator)
+        db.session.commit()
+    return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Co-author removed.', level='success')
 
 
 def start_quiz_route():
@@ -2133,6 +2274,7 @@ def register_routes(app, app_limiter=None):
 
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
+    app.add_url_rule('/dashboard', endpoint='dashboard', view_func=dashboard, methods=['GET'])
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
@@ -2152,8 +2294,15 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
     app.add_url_rule('/search', endpoint='search', view_func=_limit(search_route, 'search', ['GET']))
     app.add_url_rule('/public_deck', endpoint='public_deck', view_func=public_deck_route, methods=['GET'])
+    app.add_url_rule('/decks/<deck_slug>', endpoint='public_deck_detail', view_func=public_deck_detail_route, methods=['GET'])
+    app.add_url_rule('/s/<token>', endpoint='shared_deck', view_func=shared_deck_route, methods=['GET'])
     app.add_url_rule('/copy_public_deck', endpoint='copy_public_deck', view_func=_limit(copy_public_deck_route, 'public_copy', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/share', endpoint='create_deck_share_link', view_func=_limit(create_deck_share_link_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/share/revoke', endpoint='delete_deck_share_link', view_func=_limit(delete_deck_share_link_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/collaborators', endpoint='add_deck_collaborator', view_func=_limit(add_deck_collaborator_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/collaborators/remove', endpoint='remove_deck_collaborator', view_func=_limit(remove_deck_collaborator_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/public_quiz', endpoint='public_quiz', view_func=public_quiz_route, methods=['GET'])
+    app.add_url_rule('/quizzes/<quiz_slug>', endpoint='public_quiz_detail', view_func=public_quiz_detail_route, methods=['GET'])
     app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=_limit(copy_public_quiz_route, 'public_copy', ['POST']), methods=['POST'])
     app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
     app.add_url_rule('/quiz/start', endpoint='start_quiz', view_func=_limit(start_quiz_route, 'start_quiz', ['POST']), methods=['POST'])

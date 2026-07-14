@@ -61,7 +61,7 @@
                 <p class="muted-copy mb-0">{{ deck.detailed_description or 'Public study deck ready to review.' }}</p>
                 <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
                 <div class="deck-actions mt-auto">
-                    <a class="btn-primary-surface home-cta" href="{{ url_for('public_deck', deck_id=deck.deck_id) }}">View Deck</a>
+                    <a class="btn-primary-surface home-cta" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View Deck</a>
                 </div>
             </article>
             {% endfor %}

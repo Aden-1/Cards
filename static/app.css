@@ -550,6 +550,73 @@ summary.btn-summary.primary {
   gap: 1rem;
 }
 
+.dashboard-focus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1.4rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line));
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 13%, var(--surface)), var(--surface));
+  box-shadow: var(--shadow-card);
+}
+
+.dashboard-focus-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-metrics {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-deck-card {
+  min-height: 250px;
+}
+
+.dashboard-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.dashboard-progress {
+  width: 100%;
+  height: 0.7rem;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-alt);
+}
+
+.dashboard-progress::-webkit-progress-bar {
+  background: var(--surface-alt);
+}
+
+.dashboard-progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
+}
+
+.dashboard-progress::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
+}
+
+@media (max-width: 1100px) {
+  .dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .panel-header,
 .section-topline {
   display: flex;
@@ -1605,6 +1672,21 @@ summary::-webkit-details-marker {
      short vertical list on a phone. */
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-focus {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-focus-actions {
+    justify-content: stretch;
+  }
+
+  .dashboard-focus-actions > * {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
   }
 
   .metric-card {

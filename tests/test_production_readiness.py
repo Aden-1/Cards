@@ -91,10 +91,12 @@ class ProductionReadinessTests(unittest.TestCase):
 
         direct_public_page = self.client.get(f'/view?deck_id={public_id}').get_data(as_text=True)
         blocked_private_page = self.client.get(f'/view?deck_id={private_id}').get_data(as_text=True)
-        public_detail_page = self.client.get(f'/public_deck?deck_id={public_id}').get_data(as_text=True)
+        legacy_public_detail = self.client.get(f'/public_deck?deck_id={public_id}', follow_redirects=False)
+        public_detail_page = self.client.get(legacy_public_detail.headers['Location']).get_data(as_text=True)
 
         self.assertIn('Public Direct Deck', direct_public_page)
         self.assertNotIn('Foreign Private Deck', blocked_private_page)
+        self.assertEqual(legacy_public_detail.status_code, 301)
         self.assertIn('Public Direct Deck', public_detail_page)
 
         with self.client.session_transaction() as current_session:

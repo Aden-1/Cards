@@ -144,6 +144,26 @@
                 <textarea class="form-control" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
                 <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button></div>
             </article>
+            {% if can_manage_sharing %}
+            <article class="editor-card" id="sharing">
+                <div class="panel-header mb-3"><div><h3 class="h5 mb-1">Sharing and co-authors</h3><p class="muted-copy mb-0">Create private links or let another account edit this deck.</p></div></div>
+                <form method="post" action="{{ url_for('create_deck_share_link') }}" class="toolbar-row mb-3">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                    <label class="form-label mb-0" for="sharePermission">Link permission</label>
+                    <select class="form-select" id="sharePermission" name="permission"><option value="view">View only</option><option value="copy">View and copy</option></select>
+                    <button class="btn-surface" type="submit">Create link</button>
+                </form>
+                {% for link in share_links %}
+                <div class="answer-row"><a class="answer-row-text" href="{{ url_for('shared_deck', token=link.token, _external=True) }}">{{ url_for('shared_deck', token=link.token, _external=True) }}</a><span class="status-chip info">{{ link.permission }}</span><form method="post" action="{{ url_for('delete_deck_share_link') }}"><input type="hidden" name="token" value="{{ link.token }}"><button class="btn-danger-surface" type="submit">Revoke</button></form></div>
+                {% else %}<p class="small-muted">No unlisted links yet.</p>{% endfor %}
+                <form method="post" action="{{ url_for('add_deck_collaborator') }}" class="toolbar-row mt-4">
+                    <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}"><label class="form-label mb-0" for="collaboratorUsername">Co-author username</label><input class="form-control" id="collaboratorUsername" name="username" required><button class="btn-surface" type="submit">Add co-author</button>
+                </form>
+                {% for collaborator in collaborators %}
+                <div class="answer-row"><span class="answer-row-text">{{ collaborator.user.username }}</span><form method="post" action="{{ url_for('remove_deck_collaborator') }}"><input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}"><input type="hidden" name="user_id" value="{{ collaborator.user_id }}"><button class="btn-danger-surface" type="submit">Remove</button></form></div>
+                {% else %}<p class="small-muted">No co-authors yet.</p>{% endfor %}
+            </article>
+            {% endif %}
             <article class="editor-card">
                 <div class="panel-header mb-3"><h3 class="h5 mb-0">Add Card</h3></div>
                 <form method="post" action="{{ url_for('add_card') }}" class="section-stack track-unsaved-form">

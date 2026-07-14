@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | Dashboard{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Learning Dashboard</span>
+    <h1 class="page-title">Your next best study step.</h1>
+    <p class="page-description">See your current progress, focus on the cards that need you most, and keep your decks moving forward.</p>
+</section>
+
+{% if dashboard.recommendation %}
+<section class="dashboard-focus fade-in">
+    <div>
+        <span class="page-kicker">Recommended next</span>
+        <h2 class="h3 mt-3 mb-2">{{ dashboard.recommendation.description }}</h2>
+        <p class="muted-copy mb-0">{{ dashboard.recommendation.message }}</p>
+    </div>
+    <div class="dashboard-focus-actions">
+        <span class="score-chip">{{ dashboard.recommendation.remaining_count }} remaining</span>
+        <a class="btn-primary-surface" href="{{ url_for('master', deck_id=dashboard.recommendation.deck_id, strategy='spaced') }}">{{ dashboard.recommendation.action_label }}</a>
+    </div>
+</section>
+{% elif dashboard.stats.card_count %}
+<section class="dashboard-focus fade-in">
+    <div>
+        <span class="page-kicker">All caught up</span>
+        <h2 class="h3 mt-3 mb-2">Your studied cards are mastered.</h2>
+        <p class="muted-copy mb-0">Choose a deck to review it again or add fresh material when you are ready.</p>
+    </div>
+    <a class="btn-primary-surface" href="{{ url_for('edit') }}">Manage Decks</a>
+</section>
+{% else %}
+<section class="dashboard-focus fade-in">
+    <div>
+        <span class="page-kicker">Start learning</span>
+        <h2 class="h3 mt-3 mb-2">Build your first study deck.</h2>
+        <p class="muted-copy mb-0">Create a deck or import existing cards to begin tracking your progress here.</p>
+    </div>
+    <a class="btn-primary-surface" href="{{ url_for('edit') }}">Create a Deck</a>
+</section>
+{% endif %}
+
+<section class="metrics-grid dashboard-metrics stagger" aria-label="Learning summary">
+    <article class="metric-card"><span class="metric-value">{{ dashboard.stats.cards_touched_today }}</span><span class="metric-label">Cards rated today</span></article>
+    <article class="metric-card"><span class="metric-value">{{ dashboard.stats.mastery_percent }}%</span><span class="metric-label">Overall mastery</span></article>
+    <article class="metric-card"><span class="metric-value">{{ dashboard.stats.total_reviews }}</span><span class="metric-label">Ratings recorded</span></article>
+    {% if dashboard.stats.match_accuracy is not none %}
+    <article class="metric-card"><span class="metric-value">{{ dashboard.stats.match_accuracy }}%</span><span class="metric-label">Match accuracy</span></article>
+    {% else %}
+    <article class="metric-card"><span class="metric-value">{{ dashboard.stats.deck_count }}</span><span class="metric-label">Owned decks</span></article>
+    {% endif %}
+</section>
+
+<section class="surface p-4 p-lg-5 fade-in">
+    <div class="panel-header">
+        <div>
+            <span class="page-kicker">Deck health</span>
+            <h2 class="page-title">Know what needs attention.</h2>
+            <p class="muted-copy mb-0">Progress is based on the ratings you have recorded in Mastery mode.</p>
+        </div>
+        <a class="btn-surface" href="{{ url_for('edit') }}">Manage Decks</a>
+    </div>
+    {% if dashboard.decks %}
+    <div class="deck-grid stagger mt-4">
+        {% for deck in dashboard.decks %}
+        <article class="deck-card dashboard-deck-card">
+            <div class="panel-header">
+                <span class="status-chip {{ 'danger' if deck.health == 'needs_attention' else ('learning' if deck.health == 'learning' else ('mastered' if deck.health == 'mastered' else 'new')) }}">{{ deck.health_label }}</span>
+                <span class="score-chip">{{ deck.card_count }} cards</span>
+            </div>
+            <h3 class="h4 mb-0">{{ deck.description }}</h3>
+            <div class="dashboard-progress-label"><span>{{ deck.mastered_count }} mastered</span><span>{{ deck.mastery_percent }}%</span></div>
+            <progress class="dashboard-progress" aria-label="{{ deck.description }} mastery" value="{{ deck.mastery_percent }}" max="100">{{ deck.mastery_percent }}%</progress>
+            <p class="muted-copy mb-0">
+                {% if deck.weak_count %}{{ deck.weak_count }} card{{ '' if deck.weak_count == 1 else 's' }} need extra attention.
+                {% elif deck.remaining_count %}{{ deck.remaining_count }} card{{ '' if deck.remaining_count == 1 else 's' }} left to master.
+                {% elif deck.card_count %}Every card is currently marked mastered.
+                {% else %}Add cards to start learning.{% endif %}
+            </p>
+            <div class="deck-actions mt-auto">
+                {% if deck.card_count and deck.remaining_count %}
+                <a class="btn-primary-surface" href="{{ url_for('master', deck_id=deck.deck_id, strategy='spaced') }}">Review Deck</a>
+                {% else %}
+                <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">View Deck</a>
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-card mt-4">You do not have any decks yet. Create one to start tracking learning progress.</div>
+    {% endif %}
+</section>
+{% endblock %}

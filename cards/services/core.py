@@ -14,7 +14,7 @@ from email.message import EmailMessage
 import click
 from flask import current_app
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import func, insert, text
+from sqlalchemy import and_, case, func, insert, or_, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
 from werkzeug.security import generate_password_hash
@@ -26,6 +26,8 @@ from ..models import (
     CardAnswer,
     CardMasteryProgress,
     Deck,
+    DeckCollaborator,
+    DeckShareLink,
     DeckTag,
     MatchPairProgress,
     Quiz,
@@ -600,9 +602,13 @@ def copy_public_quiz_to_user(source_quiz_id, user_id):
         raise
 
 
-def copy_public_deck_to_user(source_deck_id, user_id):
+def copy_public_deck_to_user(source_deck_id, user_id, share_token=None):
     try:
         source_deck = _load_copyable_deck(source_deck_id)
+        if not source_deck and share_token:
+            share = db.session.get(DeckShareLink, share_token)
+            if share and share.deck_id == source_deck_id and share.permission == 'copy':
+                source_deck = get_deck_with_content(source_deck_id)
         if not source_deck:
             return None
 
@@ -1081,15 +1087,174 @@ def get_accessible_decks(user_id=None):
     if user_id is None:
         query = query.filter(Deck.is_public == True)
     else:
-        query = query.filter((Deck.owned_by == user_id) | (Deck.is_public == True))
+        query = query.outerjoin(DeckCollaborator, DeckCollaborator.deck_id == Deck.deck_id).filter(
+            (Deck.owned_by == user_id) | (DeckCollaborator.user_id == user_id) | (Deck.is_public == True)
+        ).distinct()
     return _page_rows(query.order_by(Deck.deck_id.asc()), _attach_deck_card_counts)['items']
 
 
 def get_user_decks_page(user_id, page=1, per_page=DEFAULT_PAGE_SIZE, sortable_only=False):
-    query = _deck_query_with_card_counts().filter(Deck.owned_by == user_id)
+    query = _deck_query_with_card_counts().outerjoin(
+        DeckCollaborator, DeckCollaborator.deck_id == Deck.deck_id
+    ).filter(
+        (Deck.owned_by == user_id) | (DeckCollaborator.user_id == user_id)
+    ).distinct()
     if sortable_only:
         query = query.filter(Deck.sortable == True)
     return _page_rows(query.order_by(Deck.deck_id.asc()), _attach_deck_card_counts, page, per_page)
+
+
+def get_dashboard_data(user_id, deck_limit=6):
+    """Return the signed-in learner's current progress and recommended next deck."""
+    try:
+        deck_limit = max(1, min(int(deck_limit), MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        deck_limit = 6
+
+    progress_join = and_(
+        CardMasteryProgress.card_id == Card.card_id,
+        CardMasteryProgress.user_id == user_id,
+    )
+    deck_rows = db.session.query(
+        Deck.deck_id,
+        Deck.description,
+        func.count(Card.card_id).label('card_count'),
+        func.coalesce(func.sum(case((CardMasteryProgress.status == 'mastered', 1), else_=0)), 0).label('mastered_count'),
+        func.coalesce(func.sum(case((CardMasteryProgress.status == 'learning', 1), else_=0)), 0).label('learning_count'),
+        func.coalesce(func.sum(case((CardMasteryProgress.status == 'unknown', 1), else_=0)), 0).label('unknown_count'),
+        func.coalesce(func.sum(case((CardMasteryProgress.progress_id.is_(None), 1), else_=0)), 0).label('new_count'),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        or_(
+                            CardMasteryProgress.status == 'unknown',
+                            CardMasteryProgress.dont_know_count > CardMasteryProgress.understood_count,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label('weak_count'),
+        func.coalesce(func.sum(CardMasteryProgress.reviewed_count), 0).label('review_count'),
+        func.max(CardMasteryProgress.updated_at).label('last_reviewed_at'),
+    ).outerjoin(
+        Card, Card.deck_id == Deck.deck_id
+    ).outerjoin(
+        CardMasteryProgress, progress_join
+    ).filter(
+        Deck.owned_by == user_id
+    ).group_by(
+        Deck.deck_id, Deck.description
+    ).all()
+
+    decks = []
+    for row in deck_rows:
+        card_count = int(row.card_count or 0)
+        mastered_count = int(row.mastered_count or 0)
+        learning_count = int(row.learning_count or 0)
+        unknown_count = int(row.unknown_count or 0)
+        new_count = int(row.new_count or 0)
+        weak_count = int(row.weak_count or 0)
+        remaining_count = max(0, card_count - mastered_count)
+        if not card_count:
+            health = 'empty'
+            health_label = 'No cards yet'
+        elif mastered_count == card_count:
+            health = 'mastered'
+            health_label = 'Mastered'
+        elif weak_count:
+            health = 'needs_attention'
+            health_label = 'Needs attention'
+        elif learning_count:
+            health = 'learning'
+            health_label = 'Learning'
+        else:
+            health = 'new'
+            health_label = 'Ready to start'
+        decks.append({
+            'deck_id': row.deck_id,
+            'description': row.description,
+            'card_count': card_count,
+            'mastered_count': mastered_count,
+            'learning_count': learning_count,
+            'unknown_count': unknown_count,
+            'new_count': new_count,
+            'weak_count': weak_count,
+            'remaining_count': remaining_count,
+            'review_count': int(row.review_count or 0),
+            'last_reviewed_at': row.last_reviewed_at,
+            'mastery_percent': round((mastered_count / card_count) * 100) if card_count else 0,
+            'health': health,
+            'health_label': health_label,
+        })
+
+    health_priority = {
+        'needs_attention': 0,
+        'learning': 1,
+        'new': 2,
+        'mastered': 3,
+        'empty': 4,
+    }
+    ordered_decks = sorted(
+        decks,
+        key=lambda deck: (
+            health_priority[deck['health']],
+            -deck['weak_count'],
+            -deck['remaining_count'],
+            deck['description'].casefold(),
+        ),
+    )
+    recommendation = next(
+        (deck for deck in ordered_decks if deck['card_count'] and deck['remaining_count']),
+        None,
+    )
+    if recommendation:
+        recommendation = dict(recommendation)
+        recommendation['action_label'] = (
+            'Review weak cards' if recommendation['weak_count'] else 'Continue mastery'
+        )
+        recommendation['message'] = (
+            f"{recommendation['weak_count']} card{'s' if recommendation['weak_count'] != 1 else ''} need extra attention."
+            if recommendation['weak_count']
+            else f"{recommendation['remaining_count']} card{'s' if recommendation['remaining_count'] != 1 else ''} remain to master."
+        )
+
+    today_start = datetime.now(timezone.utc).replace(
+        tzinfo=None, hour=0, minute=0, second=0, microsecond=0
+    )
+    cards_touched_today = CardMasteryProgress.query.filter(
+        CardMasteryProgress.user_id == user_id,
+        CardMasteryProgress.updated_at >= today_start,
+    ).count()
+    match_totals = db.session.query(
+        func.coalesce(func.sum(MatchPairProgress.correct_count), 0),
+        func.coalesce(func.sum(MatchPairProgress.incorrect_count), 0),
+    ).filter(
+        MatchPairProgress.user_id == user_id
+    ).one()
+    match_correct = int(match_totals[0] or 0)
+    match_incorrect = int(match_totals[1] or 0)
+    match_attempts = match_correct + match_incorrect
+    total_cards = sum(deck['card_count'] for deck in decks)
+    mastered_cards = sum(deck['mastered_count'] for deck in decks)
+
+    return {
+        'recommendation': recommendation,
+        'decks': ordered_decks[:deck_limit],
+        'stats': {
+            'deck_count': len(decks),
+            'card_count': total_cards,
+            'mastered_cards': mastered_cards,
+            'mastery_percent': round((mastered_cards / total_cards) * 100) if total_cards else 0,
+            'cards_touched_today': cards_touched_today,
+            'total_reviews': sum(deck['review_count'] for deck in decks),
+            'match_attempts': match_attempts,
+            'match_accuracy': round((match_correct / match_attempts) * 100) if match_attempts else None,
+        },
+    }
 
 
 def _normalized_tag_rows(tags):

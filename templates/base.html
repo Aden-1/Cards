@@ -25,6 +25,9 @@
             <div id="primaryNav" class="nav-cluster">
                 <nav class="nav-links" aria-label="Primary">
                     <a class="nav-chip {{ 'active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Home</a>
+                    {% if current_user %}
+                    <a class="nav-chip {{ 'active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}">Dashboard</a>
+                    {% endif %}
                     <div class="dropdown">
                         <button class="nav-chip dropdown-toggle {{ 'active' if request.endpoint in ['view', 'master', 'match', 'reorder', 'quiz'] else '' }}" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                             Learn

@@ -1,6 +1,10 @@
 """Cards application factory and WSGI compatibility entry point."""
 
+from pathlib import Path
+
 from flask import Flask
+from flask_migrate import upgrade as migrate_upgrade
+from sqlalchemy import inspect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from cards.config import (
@@ -25,18 +29,50 @@ from cards.models import (
     User,
 )
 from cards.services import register_cli_commands
+from cards.urls import deck_url_slug, quiz_url_slug
+
+
+def _upgrade_local_sqlite_database(flask_app):
+    """Bring a development SQLite file to the current migration revision."""
+    if (
+        not flask_app.config.get('AUTO_MIGRATE_LOCAL')
+        or flask_app.config.get('IS_PRODUCTION')
+        or flask_app.config.get('TESTING')
+        or db.engine.dialect.name != 'sqlite'
+    ):
+        return
+
+    migrations_directory = Path(__file__).resolve().parent / 'migrations'
+    migrate_upgrade(directory=str(migrations_directory))
+
+    # A past interrupted local setup can leave alembic_version at ``head``
+    # while the actual SQLite schema is empty or incomplete. Alembic then sees
+    # nothing to upgrade and requests fail with e.g. "no such table: deck".
+    # create_all is additive, so this restores missing local tables without
+    # deleting any existing development data.
+    if not inspect(db.engine).has_table('deck'):
+        db.create_all()
+        from cards.search_index import install_search_schema
+
+        with db.engine.begin() as connection:
+            install_search_schema(connection)
+        if not inspect(db.engine).has_table('deck'):
+            raise RuntimeError('Local SQLite schema repair did not create the deck table.')
 
 
 def create_app(config=None):
     """Construct one fully configured, isolated Flask application instance."""
     flask_app = Flask(__name__, instance_relative_config=True)
     flask_app.config.from_mapping(load_config(config))
+    flask_app.jinja_env.globals.update(deck_url_slug=deck_url_slug, quiz_url_slug=quiz_url_slug)
     configure_logging(flask_app.config['IS_PRODUCTION'])
 
     db.init_app(flask_app)
     with flask_app.app_context():
         configure_engine(db.engine)
     migrate.init_app(flask_app, db)
+    with flask_app.app_context():
+        _upgrade_local_sqlite_database(flask_app)
     compress.init_app(flask_app)
     app_limiter = limiter if flask_app.config.get('_USE_GLOBAL_LIMITER', False) else create_limiter()
     app_limiter.init_app(flask_app)

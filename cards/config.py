@@ -167,6 +167,10 @@ def load_config(overrides=None):
 
     config = {
         'APP_ENV': environment_name,
+        # A local SQLite database starts empty. Apply the checked-in schema
+        # migrations automatically in development so restarting the app cannot
+        # leave it serving an uninitialized database file.
+        'AUTO_MIGRATE_LOCAL': _env_bool('AUTO_MIGRATE_LOCAL', default=environment_name == 'development'),
         'SECRET_KEY': secret_key or 'dev-only-change-me',
         'SESSION_COOKIE_HTTPONLY': True,
         'SESSION_COOKIE_SAMESITE': 'Lax',

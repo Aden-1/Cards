@@ -63,6 +63,8 @@ class Deck(db.Model):
     is_featured = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'), index=True)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     tag_rows = db.relationship('DeckTag', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    collaborators = db.relationship('DeckCollaborator', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    share_links = db.relationship('DeckShareLink', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
 
     __table_args__ = (
         db.Index('ix_deck_public_featured_id', 'is_public', 'is_featured', 'deck_id'),
@@ -80,6 +82,26 @@ class DeckTag(db.Model):
 
     __table_args__ = (
         db.Index('ix_deck_tag_normalized_deck_id', 'tag_normalized', 'deck_id'),
+    )
+
+
+class DeckCollaborator(db.Model):
+    """An account that may edit a deck without becoming its owner."""
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    user = db.relationship('User')
+
+
+class DeckShareLink(db.Model):
+    """Opaque unlisted URL granting read-only access, optionally with copying."""
+    token = db.Column(db.String(64), primary_key=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), nullable=False, index=True)
+    permission = db.Column(db.String(10), nullable=False, default='view', server_default=db.text("'view'"))
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("permission IN ('view', 'copy')", name='ck_deck_share_link_permission'),
     )
 
 

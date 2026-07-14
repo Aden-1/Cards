@@ -4,7 +4,7 @@
 
 {% block content %}
 <section class="page-intro">
-    <span class="page-kicker">Public Deck Preview</span>
+    <span class="page-kicker">{{ 'Unlisted Deck Preview' if is_unlisted else 'Public Deck Preview' }}</span>
     <h1 class="page-title">{{ deck.description }}</h1>
     <p class="page-description">Study the deck, open a game mode, or copy it into your own collection.</p>
 </section>
@@ -15,7 +15,7 @@
                 <h2 class="h3 mb-1">Deck Details</h2>
                 <p class="muted-copy mb-0">{{ deck.cards|length }} card{{ '' if deck.cards|length == 1 else 's' }}</p>
             </div>
-            <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Public' if deck.is_public else 'Private' }}</span>
+            <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Unlisted' if is_unlisted else ('Public' if deck.is_public else 'Private') }}</span>
         </div>
         {% if deck.detailed_description %}<p class="muted-copy mb-0">{{ deck.detailed_description }}</p>{% endif %}
         {% if deck.tags %}<div class="card-rail">{% for tag in deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
@@ -27,12 +27,13 @@
             {% endif %}
             {% if deck.owned_by == user_id %}
             <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
-            {% elif current_user %}
+            {% elif current_user and can_copy %}
             <form method="post" action="{{ url_for('copy_public_deck') }}">
                 <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                {% if share_token %}<input type="hidden" name="share_token" value="{{ share_token }}">{% endif %}
                 <button class="btn-surface" type="submit">Copy To My Decks</button>
             </form>
-            {% else %}
+            {% elif not current_user and can_copy %}
             <a class="btn-surface" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
             {% endif %}
             <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back To Search</a>
