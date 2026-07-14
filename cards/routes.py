@@ -1089,7 +1089,7 @@ def reorder():
 # Mastery mode page (spaced repetition-style practice).
 @login_required
 def master():
-    from services import get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks_page, normalize_mastery_strategy
+    from services import get_due_review_cards, get_mastery_snapshot, get_mastery_strategy_catalog, get_user_decks_page, normalize_mastery_strategy
 
     user = _current_user()
     user_id = user.user_id if user else None
@@ -1146,6 +1146,7 @@ def master():
         round_restarted=round_restarted,
         selected_strategy=selected_strategy,
         mastery_strategy_catalog=get_mastery_strategy_catalog(),
+        due_reviews=get_due_review_cards(user_id),
         deck_page=deck_page,
         **_pagination_context('master'),
     )

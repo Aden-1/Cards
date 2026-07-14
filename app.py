@@ -50,7 +50,8 @@ def _upgrade_local_sqlite_database(flask_app):
     # nothing to upgrade and requests fail with e.g. "no such table: deck".
     # create_all is additive, so this restores missing local tables without
     # deleting any existing development data.
-    if not inspect(db.engine).has_table('deck'):
+    required_tables = ('deck', 'card_mastery_progress')
+    if not all(inspect(db.engine).has_table(table) for table in required_tables):
         db.create_all()
         from cards.search_index import install_search_schema
 

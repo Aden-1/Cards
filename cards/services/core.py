@@ -2540,6 +2540,8 @@ def get_mastery_snapshot(user_id, deck_id, strategy='spaced'):
             'learning_count': progress.learning_count if progress else 0,
             'dont_know_count': progress.dont_know_count if progress else 0,
             'last_rating': progress.last_rating if progress else None,
+            'next_review_at': progress.next_review_at if progress else None,
+            'interval_days': progress.interval_days if progress else 0,
             'updated_at': progress.updated_at if progress else None,
         })
 
@@ -2591,10 +2593,32 @@ def record_mastery_rating(user_id, deck_id, card_id, rating):
                 db.session.rollback()
                 continue
 
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        interval = int(progress.interval_days or 0)
+        ease = float(progress.ease_factor or 2.5)
+        lapses = int(progress.lapse_count or 0)
+        if rating == 'understood':
+            interval = 1 if interval < 1 else max(interval + 1, round(interval * ease))
+            ease = min(3.0, ease + 0.1)
+            next_review_at = now + timedelta(days=interval)
+        elif rating == 'still_learning':
+            interval = max(1, interval)
+            ease = max(1.3, ease - 0.15)
+            next_review_at = now + timedelta(days=1)
+        else:
+            interval = 0
+            ease = max(1.3, ease - 0.2)
+            lapses += 1
+            next_review_at = now
+
         updates = {
             CardMasteryProgress.reviewed_count: CardMasteryProgress.reviewed_count + 1,
             CardMasteryProgress.last_rating: rating,
             CardMasteryProgress.status: _mastery_status_for_rating(rating),
+            CardMasteryProgress.interval_days: interval,
+            CardMasteryProgress.ease_factor: ease,
+            CardMasteryProgress.lapse_count: lapses,
+            CardMasteryProgress.next_review_at: next_review_at,
         }
         if rating == 'understood':
             updates[CardMasteryProgress.understood_count] = CardMasteryProgress.understood_count + 1
@@ -2614,6 +2638,16 @@ def record_mastery_rating(user_id, deck_id, card_id, rating):
 
     current_app.logger.warning('mastery_progress_update_skipped user_id=%s card_id=%s', user_id, card_id)
     return {'success': False, 'error': 'Could not save progress right now.'}
+
+
+def get_due_review_cards(user_id, limit=50):
+    """Return calendar-scheduled cards due for the signed-in learner."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return CardMasteryProgress.query.join(Card).join(Deck).filter(
+        CardMasteryProgress.user_id == user_id,
+        CardMasteryProgress.next_review_at.isnot(None),
+        CardMasteryProgress.next_review_at <= now,
+    ).order_by(CardMasteryProgress.next_review_at.asc(), CardMasteryProgress.progress_id.asc()).limit(limit).all()
 
 
 def reset_mastery_progress(user_id, deck_id):

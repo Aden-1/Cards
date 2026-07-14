@@ -184,6 +184,10 @@ class CardMasteryProgress(db.Model):
     dont_know_count = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
     reviewed_count = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
     last_rating = db.Column(db.String(20), nullable=True)
+    next_review_at = db.Column(db.DateTime, nullable=True, index=True)
+    interval_days = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
+    ease_factor = db.Column(db.Float, nullable=False, default=2.5, server_default=db.text('2.5'))
+    lapse_count = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
 
@@ -195,6 +199,9 @@ class CardMasteryProgress(db.Model):
         CheckConstraint('dont_know_count >= 0', name='ck_card_mastery_dont_know_nonnegative'),
         CheckConstraint('reviewed_count >= 0', name='ck_card_mastery_reviewed_nonnegative'),
         CheckConstraint("last_rating IS NULL OR last_rating IN ('understood', 'still_learning', 'dont_know')", name='ck_card_mastery_last_rating'),
+        CheckConstraint('interval_days >= 0', name='ck_card_mastery_interval_nonnegative'),
+        CheckConstraint('ease_factor >= 1.3', name='ck_card_mastery_ease_minimum'),
+        CheckConstraint('lapse_count >= 0', name='ck_card_mastery_lapse_nonnegative'),
     )
 
 
