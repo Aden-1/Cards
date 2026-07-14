@@ -242,10 +242,15 @@ class QuizQuestion(db.Model):
     question = db.Column(db.Text, nullable=False)
     # Static uses fixed options; dynamic pulls distractors from other quiz questions.
     type = db.Column(db.String(50), nullable=False, default='dynamic', server_default=db.text("'dynamic'"))
+    # Choice questions render options; typed questions grade an entered answer.
+    answer_mode = db.Column(db.String(16), nullable=False, default='choice', server_default=db.text("'choice'"))
+    pool = db.Column(db.String(80), nullable=True, index=True)
+    explanation = db.Column(db.Text, nullable=True)
     options = db.relationship('QuizOption', backref='question', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
 
     __table_args__ = (
         CheckConstraint("type IN ('dynamic', 'static')", name='ck_quiz_question_type'),
+        CheckConstraint("answer_mode IN ('choice', 'typed')", name='ck_quiz_question_answer_mode'),
     )
 
 class QuizOption(db.Model):
@@ -266,6 +271,7 @@ class QuizAttempt(db.Model):
     session_id = db.Column(db.String(64), nullable=True, index=True)
     correct_answers_json = db.Column(db.Text, nullable=False)
     question_count = db.Column(db.Integer, nullable=False)
+    time_limit_seconds = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
 
     __table_args__ = (

@@ -24,6 +24,7 @@
                 </select>
                 {{ controls(deck_page, pagination_endpoint, pagination_args) }}
             </div>
+            <div class="toolbar-row"><div><label class="form-label" for="deck_question_count">Questions</label><input class="form-control" id="deck_question_count" name="question_count" type="number" min="1" max="50" placeholder="All available"></div><div><label class="form-label" for="deck_time_limit">Timer</label><select class="form-select" id="deck_time_limit" name="time_limit_seconds"><option value="0">No timer</option><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1200">20 minutes</option><option value="1800">30 minutes</option></select></div></div>
             <div class="form-actions"><button class="btn-primary-surface" type="submit">Start Deck Quiz</button></div>
         </form>
         {% else %}
@@ -50,6 +51,8 @@
                 </select>
                 {{ controls(quiz_page, pagination_endpoint, pagination_args) }}
             </div>
+            <div><label class="form-label" for="custom_question_pool">Question pool <span class="small-muted">(optional)</span></label><input class="form-control" id="custom_question_pool" name="question_pool" list="questionPools" placeholder="e.g., Chapter 3">{% if available_question_pools %}<datalist id="questionPools">{% for pool in available_question_pools %}<option value="{{ pool }}">{% endfor %}</datalist>{% endif %}</div>
+            <div class="toolbar-row"><div><label class="form-label" for="custom_question_count">Questions</label><input class="form-control" id="custom_question_count" name="question_count" type="number" min="1" max="50" placeholder="All available"></div><div><label class="form-label" for="custom_time_limit">Timer</label><select class="form-select" id="custom_time_limit" name="time_limit_seconds"><option value="0">No timer</option><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1200">20 minutes</option><option value="1800">30 minutes</option></select></div></div>
             <div class="form-actions"><button class="btn-surface" type="submit">Take Custom Quiz</button></div>
         </form>
         <p class="small-muted mb-0">Want to build a specific test? <a href="{{ url_for('edit_quiz_route') if current_user else url_for('login') }}">Manage quizzes</a>.</p>
@@ -75,6 +78,7 @@
     <form method="post" action="{{ url_for('start_quiz') }}" class="form-actions">
         <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
         <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+        <label class="form-label" for="ready_time_limit">Timer</label><select class="form-select" id="ready_time_limit" name="time_limit_seconds"><option value="0">No timer</option><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1200">20 minutes</option><option value="1800">30 minutes</option></select>
         <button class="btn-primary-surface" type="submit">Start Quiz</button>
     </form>
 </section>
@@ -82,19 +86,24 @@
 {% if quiz_data %}
 <section class="surface p-4 fade-in mt-4" id="quizGameSection">
     <div class="panel-header mb-3">
-        <div><span class="page-kicker">Live Quiz</span><h2 class="h3 mb-1">Answer every question, then score the run.</h2></div>
+        <div><span class="page-kicker">Live Quiz</span><h2 class="h3 mb-1">Answer every question, then score the run.</h2>{% if time_limit_seconds %}<p class="muted-copy mb-0" id="quizTimer" data-seconds="{{ time_limit_seconds }}">Time remaining: {{ time_limit_seconds // 60 }}:00</p>{% endif %}</div>
     </div>
     <div class="quiz-stack" id="quizForm">
         {% for q in quiz_data %}
         <article class="quiz-question-shell quiz-question" data-question-id="{{ q.id }}">
             <h3 class="h5 mb-3">{{ loop.index }}. {{ q.question }}</h3>
             <div class="section-stack">
+                {% if q.answer_mode == 'typed' %}
+                <label class="form-label" for="typed_{{ q.id }}">Your answer</label>
+                <input class="form-control typed-answer" id="typed_{{ q.id }}" type="text" autocomplete="off" placeholder="Type your answer">
+                {% else %}
                 {% for opt in q.options %}
                 <label class="option-row form-check">
                     <input class="form-check-input option-checkbox me-2" type="checkbox" value="{{ opt.text|escape }}" id="opt_{{ q.id }}_{{ loop.index }}">
                     <span class="form-check-label" for="opt_{{ q.id }}_{{ loop.index }}">{{ opt.text }}</span>
                 </label>
                 {% endfor %}
+                {% endif %}
             </div>
             <div class="feedback mt-3 small-muted" hidden></div>
         </article>
@@ -107,6 +116,12 @@
                 <input type="hidden" name="quiz_source" value="{{ selected_source }}">
                 <button type="submit" class="btn-surface">Retake Quiz</button>
             </form>
+            <form id="retryMissedQuizForm" method="post" action="{{ url_for('start_quiz') }}" hidden>
+                <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+                <input type="hidden" name="retry_question_ids" id="retryQuestionIds">
+                <button type="submit" class="btn-primary-surface">Retry Missed Questions</button>
+            </form>
         </div>
     </div>
 </section>
@@ -117,12 +132,18 @@
 {% if quiz_data %}
 <script nonce="{{ csp_nonce }}">
 const quizAttemptToken = {{ attempt_token|tojson }};
-document.getElementById('submitQuiz')?.addEventListener('click', () => {
+let quizSubmitted = false;
+let quizTimer = null;
+function submitQuiz() {
+    if (quizSubmitted) { return; }
+    quizSubmitted = true;
     const answers = {};
     document.querySelectorAll('.quiz-question').forEach((el) => {
         const qId = el.dataset.questionId;
         const selected = [];
         el.querySelectorAll('.option-checkbox:checked').forEach((cb) => selected.push(cb.value));
+        const typedAnswer = el.querySelector('.typed-answer');
+        if (typedAnswer && typedAnswer.value.trim()) { selected.push(typedAnswer.value); }
         answers[qId] = selected;
     });
     fetch('{{ url_for("score_quiz") }}', {
@@ -132,11 +153,14 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
     })
     .then((r) => r.json())
     .then((data) => {
-        if (!data.success) { return; }
+        if (!data.success) { quizSubmitted = false; return; }
+        if (quizTimer) { window.clearInterval(quizTimer); }
         const quizScore = document.getElementById('quizScore');
         const scoreBanner = document.createElement('div');
         scoreBanner.className = 'quiz-score-banner';
-        scoreBanner.textContent = `Your Score: ${data.score} / ${data.total}`;
+        scoreBanner.textContent = data.timed_out
+            ? `Time is up — Your Score: ${data.score} / ${data.total}`
+            : `Your Score: ${data.score} / ${data.total}`;
         quizScore.replaceChildren(scoreBanner);
         data.results.forEach((res) => {
             const qEl = document.querySelector(`.quiz-question[data-question-id="${res.id}"]`);
@@ -161,11 +185,35 @@ document.getElementById('submitQuiz')?.addEventListener('click', () => {
                 correctAnswerText.textContent = `Correct answers: ${res.correct_answers.join(', ')}`;
                 feedback.append(status, document.createTextNode(' '), correctAnswerText);
             }
+            if (res.explanation) {
+                const explanation = document.createElement('p');
+                explanation.className = 'small-muted mb-0 mt-2';
+                explanation.textContent = `Explanation: ${res.explanation}`;
+                feedback.append(explanation);
+            }
         });
         document.getElementById('submitQuiz').hidden = true;
         document.getElementById('retakeQuizForm').hidden = false;
+        if (data.missed_question_ids.length) {
+            document.getElementById('retryQuestionIds').value = data.missed_question_ids.join(',');
+            document.getElementById('retryMissedQuizForm').hidden = false;
+        }
     });
-});
+}
+document.getElementById('submitQuiz')?.addEventListener('click', submitQuiz);
+const timerElement = document.getElementById('quizTimer');
+if (timerElement) {
+    let secondsLeft = Number(timerElement.dataset.seconds || 0);
+    const updateTimer = () => {
+        const minutes = Math.floor(secondsLeft / 60);
+        const seconds = String(secondsLeft % 60).padStart(2, '0');
+        timerElement.textContent = `Time remaining: ${minutes}:${seconds}`;
+        if (secondsLeft <= 0) { submitQuiz(); return; }
+        secondsLeft -= 1;
+    };
+    updateTimer();
+    quizTimer = window.setInterval(updateTimer, 1000);
+}
 </script>
 {% endif %}
 {% endblock %}

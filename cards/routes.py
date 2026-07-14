@@ -110,7 +110,7 @@ def _quiz_launcher_deck_payload(deck, user_id):
     }
 
 
-def _parse_quiz_question_options(data, q_type):
+def _parse_quiz_question_options(data, q_type, answer_mode='choice'):
     """Read the repeated quiz option fields from create/edit forms."""
     options_data = []
     correct_count = 0
@@ -120,7 +120,10 @@ def _parse_quiz_question_options(data, q_type):
         if not option_text:
             continue
 
-        is_correct = q_type == 'dynamic' or data.get(f'is_correct_{index}') is not None
+        is_correct = (
+            answer_mode == 'typed' or q_type == 'dynamic'
+            or data.get(f'is_correct_{index}') is not None
+        )
         if is_correct:
             correct_count += 1
         options_data.append({'text': option_text, 'is_correct': is_correct})
@@ -128,7 +131,14 @@ def _parse_quiz_question_options(data, q_type):
     return options_data, correct_count
 
 
-def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count):
+def _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count, answer_mode='choice'):
+    if answer_mode == 'typed':
+        if not 1 <= correct_count <= 5:
+            return _redirect_with_fragment(
+                'edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id,
+                notice='Typed questions need at least one accepted answer.', level='error',
+            )
+        return None
     if q_type == 'dynamic' and not (1 <= correct_count <= 2):
         return _redirect_with_fragment(
             'edit_quiz_route',
@@ -2017,6 +2027,10 @@ def _quiz_launcher_context(source_data):
 
     deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
     custom_quizzes = _include_selected_quiz(custom_quizzes, selected_quiz_record if selected_custom_quiz_id else None)
+    available_question_pools = sorted({
+        question.pool for question in (selected_quiz_record.questions if selected_quiz_record else [])
+        if question.pool
+    }, key=str.casefold)
     return {
         'user_id': user_id,
         'decks': deck_data,
@@ -2026,6 +2040,7 @@ def _quiz_launcher_context(source_data):
         'selected_source': selected_source,
         'deck_page': deck_page,
         'quiz_page': quiz_page,
+        'available_question_pools': available_question_pools,
         **_pagination_context('quiz'),
     }
 
@@ -2123,11 +2138,34 @@ def start_quiz_route():
             quiz_error='That quiz source is unavailable.',
         ), 404
 
+    data = _request_data()
+    pool = ' '.join(str(data.get('question_pool') or '').split())
+    if len(pool) > 80:
+        pool = ''
+    retry_question_ids = [
+        item.strip() for item in str(data.get('retry_question_ids') or '').split(',')
+        if item.strip()
+    ]
+    if len(retry_question_ids) > current_app.config['MAX_QUIZ_QUESTIONS']:
+        retry_question_ids = []
+    question_count = _int_value(data.get('question_count'))
+    time_limit_seconds = _int_value(data.get('time_limit_seconds'))
+    if str(data.get('time_limit_seconds') or '').strip() in ('', '0'):
+        time_limit_seconds = None
+    if time_limit_seconds not in (None, 300, 600, 1200, 1800):
+        return render_template(
+            'quiz.html', **context, quiz_data=None, attempt_token=None,
+            quiz_error='Choose one of the available time limits.',
+        ), 400
+
     if context['selected_deck_id']:
-        quiz_questions = generate_quiz_data(deck_id=context['selected_deck_id'])
+        quiz_questions = generate_quiz_data(
+            deck_id=context['selected_deck_id'], question_ids=retry_question_ids or None,
+        )
     else:
         quiz_questions = generate_quiz_data(
-            custom_quiz_id=context['selected_custom_quiz_id']
+            custom_quiz_id=context['selected_custom_quiz_id'], pool=pool or None,
+            question_ids=retry_question_ids or None,
         )
     if not quiz_questions:
         return render_template(
@@ -2143,17 +2181,23 @@ def start_quiz_route():
         quiz_session_id = secrets.token_urlsafe(24)
         session['quiz_session_id'] = quiz_session_id
 
-    attempt_token, display_questions, active_tokens = create_quiz_attempt(
-        context['user_id'],
-        quiz_session_id,
-        quiz_questions,
-    )
+    try:
+        attempt_token, display_questions, active_tokens = create_quiz_attempt(
+            context['user_id'], quiz_session_id, quiz_questions,
+            question_limit=question_count, time_limit_seconds=time_limit_seconds,
+        )
+    except ValueError as exc:
+        return render_template(
+            'quiz.html', **context, quiz_data=None, attempt_token=None,
+            quiz_error=str(exc),
+        ), 400
     session['quiz_attempt_tokens'] = active_tokens
     response = current_app.make_response(render_template(
         'quiz.html',
         **context,
         quiz_data=display_questions,
         attempt_token=attempt_token,
+        time_limit_seconds=time_limit_seconds,
         quiz_error=None,
     ))
     response.headers['Cache-Control'] = 'no-store'
@@ -2272,15 +2316,19 @@ def add_quiz_question_route():
     if not _owned_quiz(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
     question_text = data.get('question')
+    answer_mode = data.get('answer_mode', 'choice')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data, correct_count = _parse_quiz_question_options(data, q_type)
-    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count, answer_mode)
     if validation_error:
         return validation_error
 
     try:
-        add_quiz_question(quiz_id, question_text, q_type, options_data)
+        add_quiz_question(
+            quiz_id, question_text, q_type, options_data, answer_mode=answer_mode,
+            pool=data.get('pool'), explanation=data.get('explanation'),
+        )
     except ValueError as exc:
         return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice='Question added successfully', level='success')
@@ -2317,15 +2365,19 @@ def edit_quiz_question_route():
     if not question or question.quiz_id != quiz_id:
         return jsonify({'error': 'Question not found'}), 404
     question_text = data.get('question')
+    answer_mode = data.get('answer_mode', 'choice')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data, correct_count = _parse_quiz_question_options(data, q_type)
-    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count)
+    options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count, answer_mode)
     if validation_error:
         return validation_error
 
     try:
-        edit_quiz_question(question_id, question_text, q_type, options_data)
+        edit_quiz_question(
+            question_id, question_text, q_type, options_data, answer_mode=answer_mode,
+            pool=data.get('pool'), explanation=data.get('explanation'),
+        )
     except ValueError as exc:
         return _redirect_with_fragment('edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id, notice=str(exc), level='error')
     

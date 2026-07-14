@@ -63,6 +63,8 @@ MAX_CARD_ANSWER_LENGTH = 2000
 MAX_IMPORT_CARD_COUNT = 500
 MAX_IMPORT_ANSWERS_PER_CARD = 10
 MAX_QUIZ_OPTIONS_PER_QUESTION = 5
+MAX_QUIZ_POOL_LENGTH = 80
+MAX_QUIZ_EXPLANATION_LENGTH = 5000
 MAX_IMPORT_RAW_TEXT_BYTES = 2 * 1024 * 1024
 ORDER_MUTATION_RETRIES = 3
 
@@ -510,10 +512,16 @@ def _insert_quiz_graph(user_id, title, description, tags, questions):
         question_type, options = _validate_quiz_question_options(
             question.get('type'), question.get('options'), require_scorable=False
         )
+        answer_mode, pool, explanation = _quiz_question_details(
+            question.get('answer_mode', 'choice'), question.get('pool'), question.get('explanation')
+        )
         normalized_questions.append({
             'question': question_text,
             'type': question_type,
             'options': options,
+            'answer_mode': answer_mode,
+            'pool': pool,
+            'explanation': explanation,
         })
     quiz_id = db.session.execute(
         insert(Quiz).values(
@@ -526,7 +534,11 @@ def _insert_quiz_graph(user_id, title, description, tags, questions):
     ).scalar_one()
 
     question_rows = [
-        {'quiz_id': quiz_id, 'question': question['question'], 'type': question['type']}
+        {
+            'quiz_id': quiz_id, 'question': question['question'], 'type': question['type'],
+            'answer_mode': question['answer_mode'], 'pool': question['pool'],
+            'explanation': question['explanation'],
+        }
         for question in normalized_questions
     ]
     question_ids = []
@@ -617,6 +629,9 @@ def copy_public_quiz_to_user(source_quiz_id, user_id):
                 'question': source_question.question,
                 'type': source_question.type,
                 'options': copied_options,
+                'answer_mode': source_question.answer_mode,
+                'pool': source_question.pool,
+                'explanation': source_question.explanation,
             })
 
         copied_quiz_id = _insert_quiz_graph(
@@ -701,11 +716,33 @@ def _validate_quiz_question_options(q_type, options_data, *, require_scorable=Tr
     return q_type, cleaned_options
 
 
-def add_quiz_question(quiz_id, question_text, q_type, options_data):
+def _normalize_typed_answer(value):
+    """Compare typed answers without penalizing harmless casing or punctuation."""
+    normalized = unicodedata.normalize('NFKC', str(value or '')).casefold()
+    return ' '.join(
+        ''.join(' ' if unicodedata.category(char).startswith(('P', 'Z')) else char for char in normalized).split()
+    )
+
+
+def _quiz_question_details(answer_mode, pool, explanation):
+    if answer_mode not in ('choice', 'typed'):
+        raise ValueError('Quiz answer mode must be choice or typed.')
+    pool = _validate_text_length('Question pool', pool, MAX_QUIZ_POOL_LENGTH, required=False)
+    explanation = _validate_text_length(
+        'Explanation', explanation, MAX_QUIZ_EXPLANATION_LENGTH, required=False
+    )
+    return answer_mode, pool or None, explanation or None
+
+
+def add_quiz_question(quiz_id, question_text, q_type, options_data, *, answer_mode='choice', pool=None, explanation=None):
     question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
     q_type, cleaned_options = _validate_quiz_question_options(q_type, options_data)
+    answer_mode, pool, explanation = _quiz_question_details(answer_mode, pool, explanation)
 
-    q = QuizQuestion(quiz_id=quiz_id, question=question_text, type=q_type)
+    q = QuizQuestion(
+        quiz_id=quiz_id, question=question_text, type=q_type,
+        answer_mode=answer_mode, pool=pool, explanation=explanation,
+    )
     db.session.add(q)
     db.session.flush()
     
@@ -716,15 +753,19 @@ def add_quiz_question(quiz_id, question_text, q_type, options_data):
     return q
 
 
-def edit_quiz_question(question_id, question_text, q_type, options_data):
+def edit_quiz_question(question_id, question_text, q_type, options_data, *, answer_mode='choice', pool=None, explanation=None):
     q = db.session.get(QuizQuestion, question_id)
     if not q:
         return None
     question_text = _validate_text_length('Question', question_text, MAX_CARD_QUESTION_LENGTH, required=True)
     q_type, cleaned_options = _validate_quiz_question_options(q_type, options_data)
+    answer_mode, pool, explanation = _quiz_question_details(answer_mode, pool, explanation)
 
     q.question = question_text
     q.type = q_type
+    q.answer_mode = answer_mode
+    q.pool = pool
+    q.explanation = explanation
     for existing_option in list(q.options):
         db.session.delete(existing_option)
     for opt in cleaned_options:
@@ -2702,17 +2743,33 @@ def delete_expired_quiz_attempts(max_age_seconds=None):
     return deleted_rows
 
 
-def create_quiz_attempt(user_id, session_id, quiz_questions):
+def create_quiz_attempt(user_id, session_id, quiz_questions, *, question_limit=None, time_limit_seconds=None):
     """Create one bounded attempt and return browser-safe questions."""
     if user_id is None and not session_id:
         raise ValueError('Anonymous quiz attempts require a session identifier.')
     max_questions = max(1, current_app.config['MAX_QUIZ_QUESTIONS'])
     max_active_attempts = max(1, current_app.config['MAX_ACTIVE_QUIZ_ATTEMPTS'])
     quiz_questions = list(quiz_questions)
-    if len(quiz_questions) > max_questions:
-        quiz_questions = random.sample(quiz_questions, max_questions)
+    if question_limit is not None:
+        try:
+            question_limit = int(question_limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Question count must be a whole number.') from exc
+        if not 1 <= question_limit <= max_questions:
+            raise ValueError(f'Question count must be between 1 and {max_questions}.')
+    selection_limit = min(question_limit or max_questions, max_questions)
+    if len(quiz_questions) > selection_limit:
+        quiz_questions = random.sample(quiz_questions, selection_limit)
     if not quiz_questions:
         return None, [], []
+
+    if time_limit_seconds is not None:
+        try:
+            time_limit_seconds = int(time_limit_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Time limit must be a whole number of seconds.') from exc
+        if time_limit_seconds not in (300, 600, 1200, 1800):
+            raise ValueError('Choose a supported time limit.')
 
     cutoff = _quiz_attempt_cutoff()
     QuizAttempt.query.filter(QuizAttempt.created_at < cutoff).delete(synchronize_session=False)
@@ -2744,9 +2801,11 @@ def create_quiz_attempt(user_id, session_id, quiz_questions):
     displaced_query.delete(synchronize_session=False)
 
     correct_answers = {
-        str(question['id']): [
-            option['text'] for option in question['options'] if option.get('is_correct')
-        ]
+        str(question['id']): {
+            'answers': [option['text'] for option in question['options'] if option.get('is_correct')],
+            'answer_mode': question.get('answer_mode', 'choice'),
+            'explanation': question.get('explanation') or '',
+        }
         for question in quiz_questions
     }
     attempt = QuizAttempt(
@@ -2755,6 +2814,7 @@ def create_quiz_attempt(user_id, session_id, quiz_questions):
         session_id=session_id,
         correct_answers_json=json.dumps(correct_answers),
         question_count=len(quiz_questions),
+        time_limit_seconds=time_limit_seconds,
     )
     db.session.add(attempt)
     db.session.commit()
@@ -2763,7 +2823,12 @@ def create_quiz_attempt(user_id, session_id, quiz_questions):
         {
             'id': question['id'],
             'question': question['question'],
-            'options': [{'text': option['text']} for option in question['options']],
+            'options': (
+                [] if question.get('answer_mode') == 'typed'
+                else [{'text': option['text']} for option in question['options']]
+            ),
+            'answer_mode': question.get('answer_mode', 'choice'),
+            'pool': question.get('pool'),
         }
         for question in quiz_questions
     ]
@@ -2784,18 +2849,38 @@ def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
         return None
 
     correct_answers = json.loads(attempt.correct_answers_json)
+    timed_out = bool(
+        attempt.time_limit_seconds
+        and attempt.created_at < datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(seconds=attempt.time_limit_seconds)
+    )
     results = []
     score = 0
-    for question_id, answers in correct_answers.items():
-        selected = set(submitted_answers.get(question_id, []))
-        correct = set(answers)
-        is_correct = bool(selected) and selected == correct
+    for question_id, answer_spec in correct_answers.items():
+        # Attempts created before advanced modes stored a bare answer list.
+        if isinstance(answer_spec, list):
+            answer_spec = {'answers': answer_spec, 'answer_mode': 'choice', 'explanation': ''}
+        answers = answer_spec.get('answers', [])
+        answer_mode = answer_spec.get('answer_mode', 'choice')
+        selected_values = submitted_answers.get(question_id, [])
+        if answer_mode == 'typed':
+            selected = [value for value in selected_values if value.strip()]
+            normalized_answers = {_normalize_typed_answer(answer) for answer in answers}
+            is_correct = (
+                not timed_out and len(selected) == 1
+                and _normalize_typed_answer(selected[0]) in normalized_answers
+            )
+        else:
+            selected = set(selected_values)
+            correct = set(answers)
+            is_correct = not timed_out and bool(selected) and selected == correct
         if is_correct:
             score += 1
         results.append({
             'id': question_id,
             'is_correct': is_correct,
-            'correct_answers': list(correct),
+            'correct_answers': list(answers),
+            'explanation': answer_spec.get('explanation') or '',
         })
 
     result = {
@@ -2803,13 +2888,15 @@ def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
         'score': score,
         'total': attempt.question_count,
         'results': results,
+        'timed_out': timed_out,
+        'missed_question_ids': [result['id'] for result in results if not result['is_correct']],
     }
     db.session.delete(attempt)
     db.session.commit()
     return result
 
 
-def _generate_deck_quiz_questions(deck_id):
+def _generate_deck_quiz_questions(deck_id, question_ids=None):
     """Build multiple-choice questions from one deck's cards and answers."""
     deck = get_deck_with_content(deck_id)
     cards = list(deck.cards) if deck else []
@@ -2818,7 +2905,10 @@ def _generate_deck_quiz_questions(deck_id):
         deck_answers = ['Option A', 'Option B', 'Option C', 'Option D', 'No other answers available']
 
     quiz_questions = []
+    allowed_ids = {str(question_id) for question_id in question_ids} if question_ids else None
     for card in cards:
+        if allowed_ids is not None and str(card.card_id) not in allowed_ids:
+            continue
         correct_answers = [answer.answer for answer in card.answers]
         chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
         wrong_needed = max(0, 4 - len(chosen_correct))
@@ -2841,11 +2931,12 @@ def _generate_deck_quiz_questions(deck_id):
             'id': card.card_id,
             'question': card.question,
             'options': options,
+            'answer_mode': 'choice',
         })
     return quiz_questions
 
 
-def _generate_custom_quiz_questions(custom_quiz_id):
+def _generate_custom_quiz_questions(custom_quiz_id, pool=None, question_ids=None):
     """Build either static or dynamic multiple-choice questions from a saved custom quiz."""
     quiz = get_quiz_with_content(custom_quiz_id)
     if not quiz:
@@ -2853,8 +2944,20 @@ def _generate_custom_quiz_questions(custom_quiz_id):
 
     all_quiz_options = {question.question_id: [option.text for option in question.options] for question in quiz.questions}
     quiz_questions = []
+    requested_pool = ' '.join(str(pool or '').split()).casefold()
+    allowed_ids = {str(question_id) for question_id in question_ids} if question_ids else None
     for question in quiz.questions:
-        if question.type == 'static':
+        question_key = f'q_{question.question_id}'
+        if allowed_ids is not None and question_key not in allowed_ids:
+            continue
+        if requested_pool and (question.pool or '').casefold() != requested_pool:
+            continue
+        if question.answer_mode == 'typed':
+            options = [
+                {'text': option.text, 'is_correct': option.is_correct}
+                for option in question.options if option.is_correct
+            ]
+        elif question.type == 'static':
             options = [{'text': option.text, 'is_correct': option.is_correct} for option in question.options]
             random.shuffle(options)
         else:
@@ -2877,19 +2980,24 @@ def _generate_custom_quiz_questions(custom_quiz_id):
             random.shuffle(options)
 
         quiz_questions.append({
-            'id': f'q_{question.question_id}',
+            'id': question_key,
             'question': question.question,
             'options': options,
+            'answer_mode': question.answer_mode,
+            'pool': question.pool,
+            'explanation': question.explanation,
         })
     return quiz_questions
 
 
-def generate_quiz_data(deck_id=None, custom_quiz_id=None):
+def generate_quiz_data(deck_id=None, custom_quiz_id=None, *, pool=None, question_ids=None):
     """Generate a browser-safe quiz payload from a deck or custom quiz."""
     if deck_id:
-        return _generate_deck_quiz_questions(deck_id)
+        return _generate_deck_quiz_questions(deck_id, question_ids=question_ids)
     if custom_quiz_id:
-        return _generate_custom_quiz_questions(custom_quiz_id)
+        return _generate_custom_quiz_questions(
+            custom_quiz_id, pool=pool, question_ids=question_ids,
+        )
     return []
 
 
