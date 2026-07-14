@@ -1839,7 +1839,65 @@ def public_deck_detail_route(deck_slug):
     canonical_slug = deck_url_slug(deck)
     if deck_slug != canonical_slug:
         return redirect(url_for('public_deck_detail', deck_slug=canonical_slug), code=301)
-    return render_template('public_deck.html', deck=deck, user_id=_current_user_id(), can_copy=True)
+    return _render_public_deck(deck, can_copy=True)
+
+
+def _render_public_deck(deck, *, can_copy, **extra):
+    from models import DeckFavorite, DeckRating
+    user_id = _current_user_id()
+    rating_count, average_rating = db.session.query(
+        db.func.count(DeckRating.user_id), db.func.avg(DeckRating.rating)
+    ).filter_by(deck_id=deck.deck_id).one()
+    my_rating = db.session.get(DeckRating, (user_id, deck.deck_id)).rating if user_id and db.session.get(DeckRating, (user_id, deck.deck_id)) else None
+    return render_template(
+        'public_deck.html', deck=deck, user_id=user_id, can_copy=can_copy,
+        is_favorite=bool(user_id and db.session.get(DeckFavorite, (user_id, deck.deck_id))),
+        my_rating=my_rating, rating_count=int(rating_count or 0), average_rating=round(float(average_rating or 0), 1), **extra,
+    )
+
+
+def toggle_deck_favorite_route():
+    if not _current_user(): return _login_required_response()
+    from models import Deck, DeckFavorite
+    deck_id = _int_value(_request_data().get('deck_id'))
+    deck = db.session.get(Deck, deck_id)
+    if not deck or not deck.is_public: return jsonify({'error': 'Public deck not found.'}), 404
+    favorite = db.session.get(DeckFavorite, (_current_user_id(), deck_id))
+    if favorite: db.session.delete(favorite)
+    else: db.session.add(DeckFavorite(user_id=_current_user_id(), deck_id=deck_id))
+    db.session.commit()
+    return redirect(request.referrer or url_for('public_deck_detail', deck_slug=deck_url_slug(deck)))
+
+
+def rate_deck_route():
+    if not _current_user(): return _login_required_response()
+    from models import Deck, DeckRating
+    data = _request_data(); deck_id = _int_value(data.get('deck_id')); rating = _int_value(data.get('rating'))
+    deck = db.session.get(Deck, deck_id)
+    if not deck or not deck.is_public or rating not in range(1, 6): return jsonify({'error': 'A public deck and a rating from 1 to 5 are required.'}), 400
+    record = db.session.get(DeckRating, (_current_user_id(), deck_id))
+    if record: record.rating = rating
+    else: db.session.add(DeckRating(user_id=_current_user_id(), deck_id=deck_id, rating=rating))
+    db.session.commit()
+    return redirect(request.referrer or url_for('public_deck_detail', deck_slug=deck_url_slug(deck)))
+
+
+def report_deck_route():
+    if not _current_user(): return _login_required_response()
+    from models import Deck, DeckReport
+    data = _request_data(); deck_id = _int_value(data.get('deck_id')); reason = (data.get('reason') or '').strip(); detail = (data.get('detail') or '').strip()[:500]
+    deck = db.session.get(Deck, deck_id)
+    if not deck or not deck.is_public or reason not in ('spam', 'copyright', 'inaccurate', 'other'): return jsonify({'error': 'A valid public deck report is required.'}), 400
+    db.session.add(DeckReport(user_id=_current_user_id(), deck_id=deck_id, reason=reason, detail=detail or None)); db.session.commit()
+    return redirect(request.referrer or url_for('public_deck_detail', deck_slug=deck_url_slug(deck)))
+
+
+def creator_profile_route(username):
+    from models import Deck, Quiz, User
+    creator = User.query.filter_by(canonical_username=canonical_username(username), is_active=True).first_or_404()
+    decks = Deck.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Deck.deck_id.desc()).all()
+    quizzes = Quiz.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Quiz.quiz_id.desc()).all()
+    return render_template('creator_profile.html', creator=creator, decks=decks, quizzes=quizzes)
 
 
 def shared_deck_route(token):
@@ -2295,6 +2353,10 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/search', endpoint='search', view_func=_limit(search_route, 'search', ['GET']))
     app.add_url_rule('/public_deck', endpoint='public_deck', view_func=public_deck_route, methods=['GET'])
     app.add_url_rule('/decks/<deck_slug>', endpoint='public_deck_detail', view_func=public_deck_detail_route, methods=['GET'])
+    app.add_url_rule('/decks/favorite', endpoint='toggle_deck_favorite', view_func=_limit(toggle_deck_favorite_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/rate', endpoint='rate_deck', view_func=_limit(rate_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/report', endpoint='report_deck', view_func=_limit(report_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/creators/<username>', endpoint='creator_profile', view_func=creator_profile_route, methods=['GET'])
     app.add_url_rule('/s/<token>', endpoint='shared_deck', view_func=shared_deck_route, methods=['GET'])
     app.add_url_rule('/copy_public_deck', endpoint='copy_public_deck', view_func=_limit(copy_public_deck_route, 'public_copy', ['POST']), methods=['POST'])
     app.add_url_rule('/decks/share', endpoint='create_deck_share_link', view_func=_limit(create_deck_share_link_route, 'content_mutation', ['POST']), methods=['POST'])

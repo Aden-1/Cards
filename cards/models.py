@@ -105,6 +105,51 @@ class DeckShareLink(db.Model):
     )
 
 
+class DeckFavorite(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), primary_key=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+
+class DeckRating(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), primary_key=True)
+    rating = db.Column(db.Integer, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (CheckConstraint('rating BETWEEN 1 AND 5', name='ck_deck_rating_range'),)
+
+
+class DeckReport(db.Model):
+    report_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), nullable=False, index=True)
+    reason = db.Column(db.String(30), nullable=False)
+    detail = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (CheckConstraint("reason IN ('spam', 'copyright', 'inaccurate', 'other')", name='ck_deck_report_reason'),)
+
+
+class CuratedCollection(db.Model):
+    collection_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    title = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    entries = db.relationship('CuratedCollectionDeck', backref='collection', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+
+
+class CuratedCollectionDeck(db.Model):
+    collection_id = db.Column(db.Integer, db.ForeignKey('curated_collection.collection_id', ondelete='CASCADE'), primary_key=True)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), primary_key=True)
+    position = db.Column(db.Integer, nullable=False, default=1, server_default=db.text('1'))
+    deck = db.relationship('Deck')
+
+    __table_args__ = (CheckConstraint('position > 0', name='ck_curated_collection_position'),)
+
+
 # Card question plus one or more answers.
 class Card(db.Model):
     card_id = db.Column(db.Integer, primary_key=True, autoincrement=True)

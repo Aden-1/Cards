@@ -18,6 +18,7 @@
             <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Unlisted' if is_unlisted else ('Public' if deck.is_public else 'Private') }}</span>
         </div>
         {% if deck.detailed_description %}<p class="muted-copy mb-0">{{ deck.detailed_description }}</p>{% endif %}
+        {% if deck.is_public %}<p class="small-muted mb-0">Created by <a href="{{ url_for('creator_profile', username=deck.owner.username) }}">{{ deck.owner.username }}</a> · {{ average_rating }} / 5 from {{ rating_count }} rating{{ '' if rating_count == 1 else 's' }}</p>{% endif %}
         {% if deck.tags %}<div class="card-rail">{% for tag in deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
         <div class="deck-actions">
             <a class="btn-primary-surface" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
@@ -38,6 +39,13 @@
             {% endif %}
             <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back To Search</a>
         </div>
+        {% if deck.is_public and current_user %}
+        <div class="toolbar-row mt-3">
+            <form method="post" action="{{ url_for('toggle_deck_favorite') }}"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><button class="btn-surface" type="submit">{{ 'Remove Bookmark' if is_favorite else 'Bookmark Deck' }}</button></form>
+            <form method="post" action="{{ url_for('rate_deck') }}" class="toolbar-row"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><label class="small-muted" for="deckRating">Your rating</label><select class="form-select" id="deckRating" name="rating">{% for score in range(1, 6) %}<option value="{{ score }}" {% if score == my_rating %}selected{% endif %}>{{ score }} star{{ '' if score == 1 else 's' }}</option>{% endfor %}</select><button class="btn-surface" type="submit">Save rating</button></form>
+            <details><summary class="btn-ghost-surface">Report</summary><div class="detail-panel"><form method="post" action="{{ url_for('report_deck') }}" class="section-stack"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><select class="form-select" name="reason"><option value="inaccurate">Inaccurate</option><option value="spam">Spam</option><option value="copyright">Copyright concern</option><option value="other">Other</option></select><input class="form-control" name="detail" maxlength="500" placeholder="Optional detail"><button class="btn-danger-surface" type="submit">Submit report</button></form></div></details>
+        </div>
+        {% endif %}
     </article>
     <article class="surface p-4">
         <div class="panel-header mb-3"><h2 class="h3 mb-0">Cards</h2></div>
