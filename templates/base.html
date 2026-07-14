@@ -23,6 +23,7 @@
                 <span class="nav-menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
             </button>
             <div id="primaryNav" class="nav-cluster">
+                <div class="nav-menu-row">
                 <nav class="nav-links" aria-label="Primary">
                     <div class="dropdown">
                         <button class="nav-chip dropdown-toggle {{ 'active' if request.endpoint in ['view', 'master', 'match', 'reorder', 'quiz', 'dashboard'] else '' }}" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -49,10 +50,6 @@
                     </div>
                     {% endif %}
                 </nav>
-                <form class="nav-search" action="{{ url_for('search') }}" method="get">
-                    <span class="nav-search-icon" aria-hidden="true">⌕</span>
-                    <input id="navSearchInput" class="form-control" data-random-placeholder="search" type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search decks and quizzes">
-                </form>
                 <div class="nav-actions">
                     {% if current_user %}
                     <div class="dropdown">
@@ -91,6 +88,11 @@
                     </div>
                     {% endif %}
                 </div>
+                </div>
+                <form class="nav-search" action="{{ url_for('search') }}" method="get">
+                    <span class="nav-search-icon" aria-hidden="true">⌕</span>
+                    <input id="navSearchInput" class="form-control" data-random-placeholder="search" type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search decks and quizzes">
+                </form>
             </div>
         </div>
     </div>

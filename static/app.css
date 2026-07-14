@@ -179,6 +179,7 @@ main {
 }
 
 .nav-cluster,
+.nav-menu-row,
 .nav-links,
 .nav-actions {
   display: flex;
@@ -1536,14 +1537,19 @@ summary::-webkit-details-marker {
 
   .nav-links,
   .nav-actions {
-    width: 100%;
-    flex-wrap: wrap;
+    width: auto;
+    flex-wrap: nowrap;
     justify-content: flex-start;
     gap: 0.4rem;
   }
 
-  .nav-cluster:not(.is-open) .nav-links,
-  .nav-cluster:not(.is-open) .nav-actions,
+  .nav-menu-row {
+    order: 0;
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+
+  .nav-cluster:not(.is-open) .nav-menu-row,
   .nav-cluster:not(.is-open) .nav-search {
     display: none;
   }
@@ -1562,14 +1568,6 @@ summary::-webkit-details-marker {
     flex: none;
     width: 100%;
     min-width: 0;
-  }
-
-  .nav-links {
-    order: 0;
-  }
-
-  .nav-actions {
-    order: 1;
   }
 
   .nav-cluster .dropdown-menu {
