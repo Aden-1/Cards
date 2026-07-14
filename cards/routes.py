@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import urlsplit
 
-from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Response, abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
 from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
@@ -1461,6 +1461,13 @@ def import_deck_route():
     sortable = _as_bool(data.get('sortable', False))
     is_public = _as_bool(data.get('is_public', False))
     import_text = data.get('import_text')
+    upload = request.files.get('import_file')
+    if upload and upload.filename:
+        from services import parse_import_file
+        try:
+            parsed, import_text = parse_import_file(upload.read(), data.get('question_column', 0), data.get('answer_column', 1))
+        except ValueError as exc:
+            return _redirect_with_fragment('edit', fragment='deck-import', notice=str(exc), level='error')
 
     if not description:
         return _redirect_with_fragment('edit', fragment='deck-import', notice='Deck name is required.', level='error')
@@ -1855,6 +1862,27 @@ def _render_public_deck(deck, *, can_copy, **extra):
         is_favorite=bool(user_id and db.session.get(DeckFavorite, (user_id, deck.deck_id))),
         my_rating=my_rating, rating_count=int(rating_count or 0), average_rating=round(float(average_rating or 0), 1), **extra,
     )
+
+
+def import_deck_preview_route():
+    if not _current_user(): return _login_required_response()
+    from services import parse_import_file
+    upload = request.files.get('import_file')
+    if not upload or not upload.filename:
+        return _redirect_with_fragment('edit', fragment='deck-import', notice='Choose a CSV or TSV file.', level='error')
+    try:
+        parsed, import_text = parse_import_file(upload.read(), request.form.get('question_column', 0), request.form.get('answer_column', 1))
+    except ValueError as exc:
+        return _redirect_with_fragment('edit', fragment='deck-import', notice=str(exc), level='error')
+    return render_template('import_preview.html', parsed=parsed, import_text=import_text, form=request.form)
+
+
+def download_deck_csv_route(deck_id):
+    if not _current_user() or not _owned_deck(deck_id, _current_user_id()): return _login_required_response()
+    from services import export_deck_as_text
+    deck = _owned_deck(deck_id, _current_user_id())
+    filename = f"deck-{deck_id}.csv"
+    return Response(export_deck_as_text(deck) + '\n', mimetype='text/csv', headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
 def toggle_deck_favorite_route():
@@ -2385,6 +2413,8 @@ def register_routes(app, app_limiter=None):
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=_limit(create_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/import_deck', endpoint='import_deck', view_func=_limit(import_deck_route, 'import_deck', ['POST']), methods=['POST'])
+    app.add_url_rule('/import_deck/preview', endpoint='import_deck_preview', view_func=_limit(import_deck_preview_route, 'import_deck', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/<int:deck_id>/download.csv', endpoint='download_deck_csv', view_func=download_deck_csv_route, methods=['GET'])
     app.add_url_rule('/get_decks', endpoint='get_decks', view_func=_limit(get_deck_list_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=_limit(delete_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=_limit(edit_deck_route, 'content_mutation', ['POST']), methods=['POST'])

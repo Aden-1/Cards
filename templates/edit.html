@@ -46,21 +46,20 @@
                     <h2 class="h3 mb-1">Copy and paste a deck</h2>
                 </div>
             </div>
-            <form method="post" action="{{ url_for('import_deck') }}" class="section-stack track-unsaved-form">
+            <form method="post" action="{{ url_for('import_deck_preview') }}" enctype="multipart/form-data" class="section-stack track-unsaved-form">
                 <div class="row g-3">
                     <div class="col-md-6"><label class="form-label" for="importDeckDescription">Deck Name</label><input class="form-control" type="text" id="importDeckDescription" name="description" required placeholder="e.g., AP Biology Unit 3"></div>
                     <div class="col-md-6"><label class="form-label" for="importDeckTags">Tags</label><input class="form-control" type="text" id="importDeckTags" name="tags" placeholder="e.g., biology, ap, cells"></div>
                 </div>
                 <div><label class="form-label" for="importDeckDetailedDescription">Description</label><textarea class="form-control" id="importDeckDetailedDescription" name="detailed_description" rows="2" placeholder="What will this imported deck help someone study?"></textarea></div>
                 <div>
-                    <label class="form-label" for="importDeckText">Paste Deck Text</label>
-                    <textarea class="form-control" id="importDeckText" name="import_text" rows="8" required placeholder="One card per line, for example: Question,Answer"></textarea>
-                    <div class="form-text">Accepted formats: comma-separated or tab-separated lines. Quoted CSV values are supported.</div>
+                    <label class="form-label" for="importDeckFile">CSV or Anki export</label><input class="form-control" id="importDeckFile" name="import_file" type="file" accept=".csv,.tsv,.txt" required><div class="form-text">CSV and tab-separated Anki exports are supported. You will review the import before saving.</div>
+                    <div class="row g-2 mt-1"><div class="col"><label class="form-label">Question column</label><input class="form-control" name="question_column" type="number" min="0" value="0"></div><div class="col"><label class="form-label">Answer column</label><input class="form-control" name="answer_column" type="number" min="0" value="1"></div></div>
                 </div>
                 <div class="toolbar-row">
                     <div class="form-check"><input class="form-check-input" type="checkbox" id="importDeckSortable" name="sortable"><label class="form-check-label" for="importDeckSortable">Keep in order</label></div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" id="importDeckPublic" name="is_public"><label class="form-check-label" for="importDeckPublic">Public</label></div>
-                    <button class="btn-primary-surface" type="submit">Import Deck</button>
+                    <button class="btn-primary-surface" type="submit">Preview Import</button>
                 </div>
             </form>
         </article>
@@ -142,7 +141,7 @@
                 <div class="panel-header mb-3"><h3 class="h5 mb-0">Export Deck</h3></div>
                 <label class="form-label" for="deckExportText">Compatible export format</label>
                 <textarea class="form-control" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
-                <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button></div>
+                <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button><a class="btn-surface" href="{{ url_for('download_deck_csv', deck_id=selected_deck.deck_id) }}">Download CSV</a></div>
             </article>
             {% if can_manage_sharing %}
             <article class="editor-card" id="sharing">

@@ -285,6 +285,33 @@ def parse_imported_deck_text(raw_text):
     }
 
 
+def parse_import_file(raw_bytes, question_column=0, answer_column=1):
+    """Parse CSV or Anki-style TSV upload into the established deck format."""
+    if not raw_bytes or len(raw_bytes) > MAX_IMPORT_RAW_TEXT_BYTES:
+        raise ValueError(f'Import files must be 1-{MAX_IMPORT_RAW_TEXT_BYTES} bytes.')
+    try:
+        source = raw_bytes.decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise ValueError('Import files must be UTF-8 encoded.') from exc
+    try:
+        question_column, answer_column = int(question_column), int(answer_column)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Choose valid question and answer columns.') from exc
+    rows = list(csv.reader(io.StringIO(source), delimiter='\t' if '\t' in source.splitlines()[0] else ','))
+    if not rows or question_column < 0 or answer_column < 0:
+        raise ValueError('The import file has no usable rows.')
+    output = io.StringIO(); writer = csv.writer(output, lineterminator='\n')
+    invalid = 0
+    for row in rows:
+        if max(question_column, answer_column) >= len(row) or not row[question_column].strip() or not row[answer_column].strip():
+            invalid += 1; continue
+        writer.writerow([row[question_column], row[answer_column]])
+    parsed = parse_imported_deck_text(output.getvalue())
+    parsed['invalid_lines'] += invalid
+    parsed['preview_rows'] = rows[:10]
+    return parsed, output.getvalue()
+
+
 def export_deck_as_text(deck):
     """Export a deck as line-based CSV text for copy/paste."""
     buffer = io.StringIO()
