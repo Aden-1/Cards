@@ -166,13 +166,32 @@
 
     document.querySelectorAll('[data-random-placeholder="search"]').forEach((input) => {
       const placeholderMessages = [
-        'Search MCAT enzymes, SAT geometry, APUSH unit 8',
-        'Find a deck for today',
+        'Search decks, quizzes, and topics',
+        'What do you want to learn today?',
+        'Find your next study set',
+        'Search the learning library',
+        'Explore decks and quizzes',
+        'Learn something new',
+        'Search subjects, skills, or topics',
+        'Find cards for any subject',
+        'Discover your next challenge',
+        'Start with a topic you love',
+        'Search public study sets',
+        'Find a deck to master',
+        'Explore ideas worth learning',
+        'What are you studying?',
+        'Search for a skill or subject',
+        'Find your next review session',
+        'Browse decks made for learning',
+        'Search knowledge, one card at a time',
+        'Pick a topic and start learning',
+        'Find a better way to study',
+        'Stack the deck in your favor',
         'Study smarter with public decks',
         'Find tags you need now',
         'Explore new decks in seconds',
-        'Search by tag and learn',
-        'Find the right deck fast'
+        'Find the right deck fast',
+        'Pick a deck, then play it smart'
       ];
       const randomIndex = Math.floor(Math.random() * placeholderMessages.length);
       input.placeholder = placeholderMessages[randomIndex];
