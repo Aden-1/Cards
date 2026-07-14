@@ -527,6 +527,25 @@ summary.btn-summary.primary {
   margin-top: 1rem;
 }
 
+.dropdown-menu .account-theme-toggle {
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  padding: 0.65rem 0.8rem;
+  text-align: left;
+}
+
+.dropdown-menu .account-theme-toggle:hover,
+.dropdown-menu .account-theme-toggle:focus-visible {
+  transform: none;
+  border: 0;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--ink);
+}
+
 .metric-card {
   min-width: 0;
   padding: 1rem;
@@ -1524,7 +1543,8 @@ summary::-webkit-details-marker {
   }
 
   .nav-cluster:not(.is-open) .nav-links,
-  .nav-cluster:not(.is-open) .nav-actions {
+  .nav-cluster:not(.is-open) .nav-actions,
+  .nav-cluster:not(.is-open) .nav-search {
     display: none;
   }
 
@@ -1538,10 +1558,23 @@ summary::-webkit-details-marker {
   }
 
   .nav-search {
-    order: 0;
+    order: 2;
     flex: none;
     width: 100%;
     min-width: 0;
+  }
+
+  .nav-links {
+    order: 0;
+  }
+
+  .nav-actions {
+    order: 1;
+  }
+
+  .nav-cluster .dropdown-menu {
+    position: static;
+    margin-top: 0.35rem;
   }
 
   .metrics-grid {

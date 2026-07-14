@@ -24,12 +24,8 @@
             </button>
             <div id="primaryNav" class="nav-cluster">
                 <nav class="nav-links" aria-label="Primary">
-                    <a class="nav-chip {{ 'active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Home</a>
-                    {% if current_user %}
-                    <a class="nav-chip {{ 'active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}">Dashboard</a>
-                    {% endif %}
                     <div class="dropdown">
-                        <button class="nav-chip dropdown-toggle {{ 'active' if request.endpoint in ['view', 'master', 'match', 'reorder', 'quiz'] else '' }}" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <button class="nav-chip dropdown-toggle {{ 'active' if request.endpoint in ['view', 'master', 'match', 'reorder', 'quiz', 'dashboard'] else '' }}" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                             Learn
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
@@ -38,6 +34,7 @@
                             <li><a class="dropdown-item" href="{{ url_for('match') }}">Matching Game</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('reorder') }}">Reorder Game</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('quiz') }}">Take a Quiz</a></li>
+                            {% if current_user %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="{{ url_for('dashboard') }}">Mastery Dashboard</a></li>{% endif %}
                         </ul>
                     </div>
                     {% if current_user %}
@@ -57,7 +54,6 @@
                     <input id="navSearchInput" class="form-control" data-random-placeholder="search" type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search decks and quizzes">
                 </form>
                 <div class="nav-actions">
-                    <button id="themeToggle" class="theme-toggle" type="button">Dark Mode</button>
                     {% if current_user %}
                     <div class="dropdown">
                         <button class="nav-chip dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -65,6 +61,7 @@
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('account') }}">Account Settings</a></li>
+                            <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
                             {% if current_user.is_admin %}
                             <li><a class="dropdown-item" href="{{ url_for('admin_users') }}">Admin Users</a></li>
                             {% endif %}
@@ -88,6 +85,8 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('login') }}">Log In</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('register') }}">Create Account</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
                         </ul>
                     </div>
                     {% endif %}
