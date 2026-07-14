@@ -6,6 +6,15 @@ from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_homepage_handles_featured_deck_summary_urls(self):
+        owner_id = self.user_session('featured-url-owner')
+        with self.app.app_context():
+            create_deck(owner_id, 'Featured URL Deck', is_public=True, is_featured=True)
+
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'/decks/featured-url-deck-', response.data)
+
     def test_public_deck_legacy_url_redirects_to_canonical_title_id_url(self):
         owner_id = self.user_session('url-owner')
         with self.app.app_context():

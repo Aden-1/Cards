@@ -12,10 +12,14 @@ def title_slug(value):
 
 
 def deck_url_slug(deck):
+    if isinstance(deck, dict):
+        return f"{title_slug(deck.get('description'))}-{deck.get('deck_id')}"
     return f'{title_slug(deck.description)}-{deck.deck_id}'
 
 
 def quiz_url_slug(quiz):
+    if isinstance(quiz, dict):
+        return f"{title_slug(quiz.get('title'))}-{quiz.get('quiz_id')}"
     return f'{title_slug(quiz.title)}-{quiz.quiz_id}'
 
 
