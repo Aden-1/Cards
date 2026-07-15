@@ -605,7 +605,7 @@ class ProductionReadinessTests(unittest.TestCase):
     def test_production_config_uses_heroku_redis_url_fallback(self):
         with mock.patch.dict(os.environ, {
             'APP_ENV': 'production',
-            'SECRET_KEY': 'production-test-secret',
+            'SECRET_KEY': '3Kv9mH2sQ8zL5pR7xN4cW6jT1bY0dF2a',
             'DATABASE_URL': 'postgresql://postgres.example.test/cards',
             'TRUSTED_HOSTS': 'cards.example.test',
             'REDIS_URL': 'rediss://heroku-redis.example.test/0',
@@ -623,7 +623,7 @@ class ProductionReadinessTests(unittest.TestCase):
     def test_explicit_redis_override_retains_certificate_verification(self):
         with mock.patch.dict(os.environ, {
             'APP_ENV': 'production',
-            'SECRET_KEY': 'production-test-secret',
+            'SECRET_KEY': '3Kv9mH2sQ8zL5pR7xN4cW6jT1bY0dF2a',
             'DATABASE_URL': 'postgresql://postgres.example.test/cards',
             'TRUSTED_HOSTS': 'cards.example.test',
             'RATELIMIT_STORAGE_URI': 'rediss://external-redis.example.test/0',
@@ -639,7 +639,7 @@ class ProductionReadinessTests(unittest.TestCase):
         heroku_url = 'rediss://heroku-redis.example.test/0'
         with mock.patch.dict(os.environ, {
             'APP_ENV': 'production',
-            'SECRET_KEY': 'production-test-secret',
+            'SECRET_KEY': '3Kv9mH2sQ8zL5pR7xN4cW6jT1bY0dF2a',
             'DATABASE_URL': 'postgresql://postgres.example.test/cards',
             'TRUSTED_HOSTS': 'cards.example.test',
             'RATELIMIT_STORAGE_URI': heroku_url,
@@ -650,6 +650,33 @@ class ProductionReadinessTests(unittest.TestCase):
 
         self.assertEqual(loaded['RATELIMIT_STORAGE_OPTIONS'], {'ssl_cert_reqs': None})
         self.assertEqual(loaded['PASSWORD_RESET_REDIS_OPTIONS'], {'ssl_cert_reqs': None})
+
+    def test_production_rejects_weak_or_placeholder_secrets(self):
+        base = {
+            'APP_ENV': 'production',
+            'SECRET_KEY': '3Kv9mH2sQ8zL5pR7xN4cW6jT1bY0dF2a',
+            'DATABASE_URL': 'postgresql://postgres.example.test/cards',
+            'TRUSTED_HOSTS': ['cards.example.test'],
+            'RATELIMIT_STORAGE_URI': 'rediss://redis.example.test/0',
+            'PASSWORD_RESET_EMAILS_ENABLED': False,
+        }
+        for weak_secret in ('short', 'a' * 32, 'replace-with-a-long-random-secret'):
+            with self.subTest(secret=weak_secret):
+                with self.assertRaisesRegex(RuntimeError, 'SECRET_KEY'):
+                    load_config({**base, 'SECRET_KEY': weak_secret})
+
+        with self.assertRaisesRegex(RuntimeError, 'PASSWORD_RESET_LOOKUP_KEY'):
+            load_config({
+                **base,
+                'PASSWORD_RESET_LOOKUP_KEY': 'dev-only-change-me-but-now-longer',
+            })
+
+        loaded = load_config({
+            **base,
+            'PASSWORD_RESET_LOOKUP_KEY': '7Jp4wD9mR2sK8xQ5cN1vH6bT3yF0zL4e',
+            'TWO_FACTOR_ENCRYPTION_KEY': '5Yh8qM2wC9rP4xN7kD1vL6sT3bF0zJ5a',
+        })
+        self.assertEqual(loaded['SECRET_KEY'], base['SECRET_KEY'])
 
     def test_rate_limit_values_are_validated_and_bounded(self):
         self.assertEqual(cards_app._validate_rate_limit('RATE_LIMIT_TEST', '5 per minute'), '5 per minute')

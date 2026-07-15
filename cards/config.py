@@ -27,6 +27,23 @@ DEFAULT_RATE_LIMITS = {
     'api': '120 per minute',
 }
 
+_INSECURE_SECRET_MARKERS = (
+    'change-me',
+    'changeme',
+    'dev-only',
+    'replace-with',
+    'your-secret',
+)
+
+
+def _validate_production_secret(name, value):
+    """Reject missing, placeholder, and trivially guessable production keys."""
+    if not isinstance(value, str) or len(value) < 32:
+        raise RuntimeError(f'{name} must be at least 32 characters in production.')
+    normalized = value.strip().lower()
+    if any(marker in normalized for marker in _INSECURE_SECRET_MARKERS) or len(set(value)) < 4:
+        raise RuntimeError(f'{name} must not use a placeholder or trivially weak value in production.')
+
 
 def _env_bool(name, default=False):
     value = os.environ.get(name)
@@ -242,6 +259,16 @@ def load_config(overrides=None):
     }
     config.update(overrides)
     config['IS_PRODUCTION'] = str(config.get('APP_ENV', environment_name)).lower() == 'production'
+
+    if config['IS_PRODUCTION']:
+        _validate_production_secret('SECRET_KEY', config.get('SECRET_KEY'))
+        _validate_production_secret(
+            'PASSWORD_RESET_LOOKUP_KEY', config.get('PASSWORD_RESET_LOOKUP_KEY'),
+        )
+        if config.get('TWO_FACTOR_ENCRYPTION_KEY'):
+            _validate_production_secret(
+                'TWO_FACTOR_ENCRYPTION_KEY', config['TWO_FACTOR_ENCRYPTION_KEY'],
+            )
 
     for name in ('QUIZ_ATTEMPT_MAX_AGE_SECONDS', 'MAX_ACTIVE_QUIZ_ATTEMPTS', 'MAX_QUIZ_QUESTIONS'):
         if config[name] < 1:
