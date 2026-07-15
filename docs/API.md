@@ -194,6 +194,25 @@ Response:
 - `GET`: rendered, paginated HTML admin user list. `page` and `page_size` are accepted; page size is capped at 50.
 - `POST`: redirect back to `/admin/users` with a notice describing the result.
 
+### Featured Content Administration
+
+**GET, POST** `/admin/featured`
+
+Admin-only route for managing the public decks eligible for homepage placement.
+
+GET query parameters:
+- `q`: optional deck-title or owner-username search, maximum 100 characters
+- `status`: `all`, `featured`, or `unfeatured`
+- `page` and `page_size`; page size is capped at 50
+
+POST fields:
+- `deck_id`
+- `action`: `feature` or `unfeature`
+- `csrf_token`
+
+Only public decks can be featured. Unpublishing a deck automatically removes its
+featured status, and successful changes create an audit-log event.
+
 ### Public-content moderation
 **POST** `/moderation/unpublish`
 

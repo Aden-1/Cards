@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import controls %}
+
+{% block title %}Cards | Featured Content{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Admin Console</span>
+    <h1 class="page-title">Featured public decks</h1>
+    <p class="page-description">Choose the text-only decks eligible for rotating homepage placement.</p>
+</section>
+<section class="surface p-4 fade-in">
+    <form method="get" class="toolbar-row mb-4">
+        <input class="form-control" name="q" value="{{ search_query }}" maxlength="100" placeholder="Search deck or owner">
+        <select class="form-select" name="status">
+            <option value="all" {% if selected_status == 'all' %}selected{% endif %}>All public decks</option>
+            <option value="featured" {% if selected_status == 'featured' %}selected{% endif %}>Featured only</option>
+            <option value="unfeatured" {% if selected_status == 'unfeatured' %}selected{% endif %}>Not featured</option>
+        </select>
+        <button class="btn-primary-surface" type="submit">Filter</button>
+    </form>
+    {% if decks %}
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Deck</th><th>Owner</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+            {% for deck in decks %}
+                <tr>
+                    <td><a href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">{{ deck.description }}</a></td>
+                    <td>{{ deck.owner.username }}</td>
+                    <td><span class="status-chip {{ 'success' if deck.is_featured else 'info' }}">{{ 'Featured' if deck.is_featured else 'Not featured' }}</span></td>
+                    <td>
+                        <form method="post" action="{{ url_for('admin_featured_content', q=search_query, status=selected_status, page=pagination.page, page_size=pagination.per_page) }}">
+                            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                            <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                            <input type="hidden" name="action" value="{{ 'unfeature' if deck.is_featured else 'feature' }}">
+                            <button class="{{ 'btn-danger-surface' if deck.is_featured else 'btn-primary-surface' }}" type="submit">{{ 'Remove feature' if deck.is_featured else 'Feature deck' }}</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {{ controls(pagination, pagination_endpoint, pagination_args) }}
+    {% else %}
+    <div class="empty-card">No public decks match these filters.</div>
+    {% endif %}
+</section>
+{% endblock %}

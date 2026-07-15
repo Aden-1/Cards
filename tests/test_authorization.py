@@ -1,7 +1,7 @@
 """Role and account-state authorization regression coverage."""
 
 from models import AuditLog, Deck, DeckReport, User, db
-from services import create_user
+from services import create_deck, create_user
 from tests.support import CardsTestCase
 
 
@@ -66,6 +66,96 @@ class AuthorizationTests(CardsTestCase):
         self.assertIn('audit_event=', '\n'.join(audit_logs.output))
         self.assertIn(f'"target_id":{deck_id}', '\n'.join(audit_logs.output))
         self.assertNotIn('admin-parity', '\n'.join(audit_logs.output))
+
+    def test_only_admins_can_manage_featured_public_decks(self):
+        with self.app.app_context():
+            owner = create_user('featured-owner', 'password12345')
+            public_deck = create_deck(
+                owner.user_id, 'Feature Candidate', is_public=True,
+            )
+            private_deck = create_deck(
+                owner.user_id, 'Private Candidate', is_public=False,
+                is_featured=True,
+            )
+            public_deck_id = public_deck.deck_id
+            private_deck_id = private_deck.deck_id
+            self.assertFalse(private_deck.is_featured)
+
+        self._session_for('featured-standard', 'standard')
+        self.assertEqual(self.client.get(
+            '/admin/featured', headers={'Accept': 'application/json'},
+        ).status_code, 403)
+        self._session_for('featured-moderator', 'moderator')
+        self.assertEqual(self.client.get(
+            '/admin/featured', headers={'Accept': 'application/json'},
+        ).status_code, 403)
+
+        self._session_for('featured-admin', 'admin')
+        page = self.client.get('/admin/featured?q=Feature%20Candidate')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Feature Candidate', page.data)
+        self.assertNotIn(b'Private Candidate', page.data)
+
+        featured = self.client.post(
+            '/admin/featured?q=Feature%20Candidate',
+            data={
+                'csrf_token': 'contract-csrf-token',
+                'deck_id': public_deck_id,
+                'action': 'feature',
+            },
+        )
+        self.assertEqual(featured.status_code, 302)
+        with self.app.app_context():
+            self.assertTrue(db.session.get(Deck, public_deck_id).is_featured)
+            self.assertEqual(
+                AuditLog.query.filter_by(
+                    event='deck_featured_changed', target_id=str(public_deck_id),
+                ).count(),
+                1,
+            )
+
+        unfeatured = self.client.post(
+            '/admin/featured',
+            data={
+                'csrf_token': 'contract-csrf-token',
+                'deck_id': public_deck_id,
+                'action': 'unfeature',
+            },
+        )
+        self.assertEqual(unfeatured.status_code, 302)
+        with self.app.app_context():
+            self.assertFalse(db.session.get(Deck, public_deck_id).is_featured)
+
+        self.client.post(
+            '/admin/featured',
+            data={
+                'csrf_token': 'contract-csrf-token',
+                'deck_id': public_deck_id,
+                'action': 'feature',
+            },
+        )
+
+        rejected = self.client.post(
+            '/admin/featured',
+            data={
+                'csrf_token': 'contract-csrf-token',
+                'deck_id': private_deck_id,
+                'action': 'feature',
+            },
+        )
+        self.assertEqual(rejected.status_code, 302)
+        self.assertIn('Only+public+decks+can+be+featured', rejected.headers['Location'])
+
+        unpublished = self.client.post(
+            '/moderation/unpublish',
+            json={'content_type': 'deck', 'content_id': public_deck_id},
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assertEqual(unpublished.status_code, 200)
+        with self.app.app_context():
+            deck = db.session.get(Deck, public_deck_id)
+            self.assertFalse(deck.is_public)
+            self.assertFalse(deck.is_featured)
 
     def test_report_queue_deduplicates_and_records_moderation_resolution(self):
         with self.app.app_context():

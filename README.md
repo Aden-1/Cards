@@ -91,6 +91,7 @@ GPL-3.0 license policy are documented in
 - `/saved` lists the signed-in user's bookmarked public decks
 - `/collections` organizes owned and saved decks into ordered private or public collections
 - `/admin/users` provides admin-only user management
+- `/admin/featured` lets admins curate public decks for rotating homepage placement
 - `/edit` manages decks and cards
 - `/view` shows study mode
 - `/match` runs the matching game

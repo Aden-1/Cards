@@ -638,7 +638,7 @@ def _insert_deck_graph(user_id, description, detailed_description, tags, sortabl
             tags=tags,
             sortable=sortable,
             is_public=is_public,
-            is_featured=is_featured,
+            is_featured=bool(is_public and is_featured),
         ).returning(Deck.deck_id)
     ).scalar_one()
 
@@ -1522,7 +1522,7 @@ def create_deck(user_id, description, sortable=False, is_public=False, is_featur
         description=description,
         sortable=sortable,
         is_public=is_public,
-        is_featured=is_featured,
+        is_featured=bool(is_public and is_featured),
         detailed_description=detailed_description,
         tags=tags
     )
@@ -1867,7 +1867,7 @@ def edit_deck(deck_id, description, sortable=False, is_public=False, is_featured
         deck.description = description
         deck.sortable = sortable
         deck.is_public = is_public
-        deck.is_featured = is_featured
+        deck.is_featured = bool(is_public and is_featured)
         deck.detailed_description = detailed_description
         deck.tags = tags
         _replace_deck_tags(deck, tags)

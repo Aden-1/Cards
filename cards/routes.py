@@ -1185,6 +1185,81 @@ def admin_audit_log():
     )
 
 
+@admin_required
+def admin_featured_content_route():
+    from models import Deck, User
+
+    selected_status = (request.args.get('status') or 'all').strip().lower()
+    if selected_status not in ('all', 'featured', 'unfeatured'):
+        selected_status = 'all'
+    search_query = (request.args.get('q') or '').strip()[:100]
+
+    if request.method == 'POST':
+        data = _request_data()
+        deck_id = _int_value(data.get('deck_id'))
+        action = (data.get('action') or '').strip().lower()
+        deck = db.session.get(Deck, deck_id)
+        if not deck:
+            return redirect(url_for(
+                'admin_featured_content', q=search_query, status=selected_status,
+                notice='Deck not found.', level='error',
+            ))
+        if action not in ('feature', 'unfeature'):
+            return redirect(url_for(
+                'admin_featured_content', q=search_query, status=selected_status,
+                notice='Choose a valid featured-content action.', level='error',
+            ))
+        should_feature = action == 'feature'
+        if should_feature and not deck.is_public:
+            return redirect(url_for(
+                'admin_featured_content', q=search_query, status=selected_status,
+                notice='Only public decks can be featured.', level='error',
+            ))
+        if deck.is_featured == should_feature:
+            state = 'featured' if should_feature else 'not featured'
+            return redirect(url_for(
+                'admin_featured_content', q=search_query, status=selected_status,
+                notice=f'Deck is already {state}.', level='success',
+            ))
+
+        deck.is_featured = should_feature
+        db.session.commit()
+        audit_event(
+            'deck_featured_changed', _current_user(), 'success',
+            target_type='deck', target_id=deck.deck_id, featured=should_feature,
+        )
+        state = 'featured' if should_feature else 'removed from featured content'
+        return redirect(url_for(
+            'admin_featured_content', q=search_query, status=selected_status,
+            notice=f'Deck {state}.', level='success',
+        ))
+
+    query = Deck.query.join(User, Deck.owned_by == User.user_id).options(
+        joinedload(Deck.owner),
+    ).filter(Deck.is_public == True)
+    if selected_status == 'featured':
+        query = query.filter(Deck.is_featured == True)
+    elif selected_status == 'unfeatured':
+        query = query.filter(Deck.is_featured == False)
+    if search_query:
+        escaped_query = search_query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        pattern = f'%{escaped_query}%'
+        query = query.filter(db.or_(
+            Deck.description.ilike(pattern, escape='\\'),
+            User.username.ilike(pattern, escape='\\'),
+        ))
+    pagination = _query_page(
+        query.order_by(Deck.is_featured.desc(), Deck.deck_id.asc()),
+        _requested_page(),
+        _requested_page_size(),
+    )
+    return render_template(
+        'admin_featured_content.html', decks=pagination['items'],
+        selected_status=selected_status, search_query=search_query,
+        pagination=pagination, **_pagination_context('admin_featured_content'),
+    )
+
+
 @moderator_required
 def moderation_reports_route():
     """Review and resolve user-submitted public deck reports."""
@@ -1210,6 +1285,7 @@ def moderation_reports_route():
             resolution_note = (data.get('resolution_note') or '').strip()[:500] or None
             if action == 'unpublish':
                 report.deck.is_public = False
+                report.deck.is_featured = False
                 affected_reports = DeckReport.query.filter_by(
                     deck_id=report.deck_id, status='open',
                 ).all()
@@ -1302,6 +1378,8 @@ def moderate_unpublish_route():
 
     actor = _current_user()
     content.is_public = False
+    if content_type == 'deck':
+        content.is_featured = False
     db.session.commit()
     audit_event(
         'public_content_unpublished',
@@ -3323,6 +3401,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/admin/audit-log', endpoint='admin_audit_log', view_func=admin_audit_log, methods=['GET'])
+    app.add_url_rule('/admin/featured', endpoint='admin_featured_content', view_func=_limit(admin_featured_content_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/moderation/reports', endpoint='moderation_reports', view_func=_limit(moderation_reports_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/moderation/unpublish', endpoint='moderate_unpublish', view_func=_limit(moderate_unpublish_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
