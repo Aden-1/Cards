@@ -16,9 +16,9 @@
     </div>
     {% if saved_quizzes %}
     <div class="deck-grid stagger">
-        {% for favorite, quiz in saved_quizzes %}
+        {% for favorite, quiz, question_count in saved_quizzes %}
         <article class="deck-card">
-            <div class="panel-header"><span class="status-chip public">Saved</span><span class="score-chip">{{ quiz.questions|length }} questions</span></div>
+            <div class="panel-header"><span class="status-chip public">Saved</span><span class="score-chip">{{ question_count }} questions</span></div>
             <h3 class="h4 mb-0">{{ quiz.title }}</h3>
             {% if quiz.description %}<p class="muted-copy mb-0">{{ quiz.description[:160] }}{{ '…' if quiz.description|length > 160 else '' }}</p>{% endif %}
             {% if quiz.tags %}<div class="card-rail">{% for tag in quiz.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}

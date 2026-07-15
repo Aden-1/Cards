@@ -1850,12 +1850,17 @@ def saved_decks_route():
 
 @login_required
 def saved_quizzes_route():
-    from models import Quiz, QuizFavorite
+    from models import Quiz, QuizFavorite, QuizQuestion
 
     page = _requested_page()
     per_page = _requested_page_size()
+    question_count = db.session.query(
+        db.func.count(QuizQuestion.question_id),
+    ).filter(
+        QuizQuestion.quiz_id == Quiz.quiz_id,
+    ).correlate(Quiz).scalar_subquery()
     rows = db.session.query(
-        QuizFavorite, Quiz,
+        QuizFavorite, Quiz, question_count.label('question_count'),
     ).join(
         Quiz, Quiz.quiz_id == QuizFavorite.quiz_id,
     ).filter(

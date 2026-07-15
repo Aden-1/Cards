@@ -3,9 +3,69 @@
 # The shared fixture intentionally exports the production test dependency surface.
 # ruff: noqa: F403, F405
 from tests.production_support import *
+from models import QuizFavorite
 
 
 class AccessPerformanceTests(ProductionTestCase):
+    def test_saved_quiz_question_counts_use_a_constant_query_budget(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('saved_quiz_owner', 'password12345')
+            reader = cards_app.create_user('saved_quiz_reader', 'password12345')
+            quizzes = [
+                Quiz(
+                    owned_by=owner.user_id,
+                    title=f'Saved Quiz {index:02d}',
+                    is_public=True,
+                )
+                for index in range(20)
+            ]
+            db.session.add_all(quizzes)
+            db.session.flush()
+            questions = [
+                QuizQuestion(
+                    quiz_id=quiz.quiz_id,
+                    question=f'Question {index}',
+                    type='dynamic',
+                )
+                for index, quiz in enumerate(quizzes)
+            ]
+            db.session.add_all(questions)
+            db.session.flush()
+            db.session.add_all([
+                QuizFavorite(user_id=reader.user_id, quiz_id=quiz.quiz_id)
+                for quiz in quizzes
+            ])
+            db.session.commit()
+            reader_id = reader.user_id
+            db.session.remove()
+
+            statements = []
+
+            def record_statement(
+                _conn, _cursor, statement, _parameters, _context, _executemany
+            ):
+                if statement.lstrip().upper().startswith('SELECT '):
+                    statements.append(statement)
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                self._login_session(reader_id)
+                response = self.client.get('/saved-quizzes')
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'1 questions'), 20)
+        self.assertLessEqual(len(statements), 6, statements)
+        self.assertEqual(
+            sum('from quiz_favorite' in statement.lower() for statement in statements),
+            1,
+        )
+        self.assertFalse(any(
+            statement.lstrip().lower().startswith('select quiz_question')
+            for statement in statements
+        ))
+
     def test_learn_pages_list_only_owned_decks_but_allow_direct_public_links(self):
         with cards_app.app.app_context():
             owner = cards_app.create_user(
