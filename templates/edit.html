@@ -89,6 +89,11 @@
                 <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
                 <div class="deck-actions mt-auto">
                     <a class="btn-primary-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}#deck-editor">Edit</a>
+                    <form method="post" action="{{ url_for('duplicate_deck') }}">
+                        <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                        <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                        <button class="btn-surface" type="submit">Duplicate</button>
+                    </form>
                     <details class="delete-confirm">
                         <summary class="btn-danger-surface">Delete</summary>
                         <div class="delete-confirm-panel">
@@ -174,10 +179,30 @@
             </article>
             {% if selected_deck.sortable %}<div class="small-muted">Drag one card onto another to swap order. Swapped cards are briefly highlighted.</div>{% endif %}
             {% if selected_cards %}
+            <form method="post" action="{{ url_for('bulk_cards') }}" class="editor-card" id="bulkCardForm">
+                <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
+                <div class="panel-header mb-3"><div><h3 class="h5 mb-1">Bulk card tools</h3><p class="small-muted mb-0">Select up to 100 text cards to duplicate, move, or delete in one atomic action.</p></div><button class="btn-surface" id="toggleAllCards" type="button">Select all</button></div>
+                <div class="toolbar-row">
+                    <label class="form-label mb-0" for="bulkCardAction">Action</label>
+                    <select class="form-select" id="bulkCardAction" name="action">
+                        <option value="duplicate">Duplicate selected</option>
+                        <option value="move">Move selected</option>
+                        <option value="delete">Delete selected permanently</option>
+                    </select>
+                    <label class="form-label mb-0" for="bulkTargetDeck">Destination</label>
+                    <select class="form-select" id="bulkTargetDeck" name="target_deck_id" disabled>
+                        <option value="">Choose another deck</option>
+                        {% for target_deck in bulk_target_decks %}<option value="{{ target_deck.deck_id }}">{{ target_deck.description }}</option>{% endfor %}
+                    </select>
+                    <button class="btn-primary-surface" type="submit">Apply to selected</button>
+                </div>
+            </form>
             <div class="cards-list-stack" id="editableCardsList">
                 {% for card in selected_cards %}
                 <article class="card-editor-item {% if selected_deck.sortable %}sortable-card{% endif %}" data-card-id="{{ card.card_id }}">
                     <div class="card-editor-head">
+                        <div class="form-check bulk-card-select"><input class="form-check-input" type="checkbox" form="bulkCardForm" name="card_ids" value="{{ card.card_id }}" aria-label="Select {{ card.question }}"></div>
                         <div>
                             <div class="card-item-question">{{ card.question }}</div>
                             {% if selected_deck.sortable %}<div class="small-muted mt-1" data-role="card-position">Position {{ card.position }}</div>{% endif %}
@@ -284,6 +309,38 @@ document.addEventListener('DOMContentLoaded', function() {
             if (this.open) { this.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
         });
     });
+    const bulkForm = document.getElementById('bulkCardForm');
+    const bulkAction = document.getElementById('bulkCardAction');
+    const bulkTarget = document.getElementById('bulkTargetDeck');
+    const toggleAllCards = document.getElementById('toggleAllCards');
+    const bulkCheckboxes = Array.from(document.querySelectorAll('input[name="card_ids"][form="bulkCardForm"]'));
+    function syncBulkTarget() {
+        if (!bulkAction || !bulkTarget) { return; }
+        const moving = bulkAction.value === 'move';
+        bulkTarget.disabled = !moving;
+        bulkTarget.required = moving;
+    }
+    if (bulkAction) { bulkAction.addEventListener('change', syncBulkTarget); syncBulkTarget(); }
+    if (toggleAllCards) {
+        toggleAllCards.addEventListener('click', function() {
+            const shouldSelect = bulkCheckboxes.some((checkbox) => !checkbox.checked);
+            bulkCheckboxes.forEach((checkbox) => { checkbox.checked = shouldSelect; });
+            toggleAllCards.textContent = shouldSelect ? 'Clear selection' : 'Select all';
+        });
+    }
+    if (bulkForm) {
+        bulkForm.addEventListener('submit', function(event) {
+            const selectedCount = bulkCheckboxes.filter((checkbox) => checkbox.checked).length;
+            if (!selectedCount) {
+                event.preventDefault();
+                if (window.cardsApp) { window.cardsApp.showToast('Select at least one card.', 'error'); }
+                return;
+            }
+            if (bulkAction.value === 'delete' && !window.confirm(`Delete ${selectedCount} selected card${selectedCount === 1 ? '' : 's'} permanently?`)) {
+                event.preventDefault();
+            }
+        });
+    }
     const cardsList = document.getElementById('editableCardsList');
     const sortableEnabled = {{ 'true' if selected_deck and selected_deck.sortable else 'false' }};
     if (!cardsList || !sortableEnabled) { return; }
@@ -298,7 +355,7 @@ document.addEventListener('DOMContentLoaded', function() {
         cardsList.querySelectorAll('.card-editor-item.drag-over').forEach((item) => item.classList.remove('drag-over'));
     }
     function beginDrag(event, item) {
-        if (event.button !== 0 || event.target.closest('.card-actions') || event.target.closest('.answer-list')) { return; }
+        if (event.button !== 0 || event.target.closest('.card-actions') || event.target.closest('.answer-list') || event.target.closest('.bulk-card-select')) { return; }
         const rect = item.getBoundingClientRect();
         const ghost = item.cloneNode(true);
         ghost.classList.add('drag-preview');

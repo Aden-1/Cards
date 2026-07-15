@@ -331,6 +331,35 @@ The request requires `deck_id`, `card_id`, `rating`, and a CSRF token. Cards tha
 belong to another user, do not match the supplied deck, or are not due return
 `404`.
 
+### Duplicate Deck
+
+**POST** `/decks/duplicate`
+
+Creates a private, unfeatured text-only copy owned by the signed-in user. The
+source must be a deck the user can edit. Decks are capped at 500 cards for this
+bounded copy operation.
+
+Fields:
+- `deck_id`
+- `csrf_token`
+
+### Bulk Card Actions
+
+**POST** `/cards/bulk`
+
+Atomically applies an action to as many as 100 selected cards. Every card must
+belong to the supplied editable source deck.
+
+Fields:
+- `deck_id`
+- repeated `card_ids` form fields, or a JSON `card_ids` array
+- `action`: `duplicate`, `move`, or `delete`
+- `target_deck_id`: required for `move` and must identify another editable deck
+- `csrf_token` for form requests, or `X-CSRFToken` for JSON requests
+
+Duplicate and move operations preserve all text answers. Source and destination
+positions remain dense, and resulting decks are capped at 500 cards.
+
 ### Start Quiz
 **POST** `/quiz/start`
 

@@ -1724,6 +1724,12 @@ def edit():
     deck_data = _include_selected_deck(deck_data, selected_deck_record, user_id)
     collaborators = []
     share_links = []
+    bulk_target_decks = []
+    if selected_deck:
+        bulk_target_decks = [
+            deck for deck in get_user_decks_page(user_id, 1, 50)['items']
+            if deck.deck_id != selected_deck_id
+        ]
     can_manage_sharing = _is_deck_owner(selected_deck_id, user_id)
     if can_manage_sharing:
         from models import DeckCollaborator, DeckShareLink
@@ -1741,6 +1747,7 @@ def edit():
         can_manage_sharing=can_manage_sharing,
         collaborators=collaborators,
         share_links=share_links,
+        bulk_target_decks=bulk_target_decks,
         deck_page=deck_page,
         **_pagination_context('edit'),
     )
@@ -2257,6 +2264,66 @@ def edit_card_route():
         return _redirect_with_fragment('edit', deck_id=deck_id, fragment='deck-editor', notice='Card updated', level='success')
     else:
         return jsonify({'error': 'Card not found'}), 404
+
+
+def bulk_cards_route():
+    if not _current_user():
+        return _login_required_response()
+    from services import bulk_edit_cards
+
+    data = _request_data()
+    deck_id = _int_value(data.get('deck_id'))
+    target_deck_id = _int_value(data.get('target_deck_id'))
+    action = (data.get('action') or '').strip().lower()
+    raw_card_ids = data.get('card_ids') if request.is_json else request.form.getlist('card_ids')
+    if not isinstance(raw_card_ids, (list, tuple)):
+        raw_card_ids = []
+    card_ids = [_int_value(card_id) for card_id in raw_card_ids]
+
+    if not deck_id or any(card_id is None for card_id in card_ids):
+        return jsonify({'error': 'Deck and valid card IDs are required'}), 400
+    if not _owned_deck(deck_id, _current_user_id()):
+        return jsonify({'error': 'You can only edit decks you own'}), 403
+    if action == 'move' and not _owned_deck(target_deck_id, _current_user_id()):
+        return jsonify({'error': 'You can only move cards to a deck you can edit'}), 403
+
+    try:
+        result = bulk_edit_cards(deck_id, card_ids, action, target_deck_id)
+    except ValueError as exc:
+        if _wants_json():
+            return jsonify({'error': str(exc)}), 400
+        return _redirect_with_fragment(
+            'edit', deck_id=deck_id, fragment='deck-editor',
+            notice=str(exc), level='error',
+        )
+    if _wants_json():
+        return jsonify(result)
+    action_label = {'delete': 'deleted', 'duplicate': 'duplicated', 'move': 'moved'}[action]
+    return _redirect_with_fragment(
+        'edit', deck_id=deck_id, fragment='deck-editor',
+        notice=f"{result['count']} card{'s' if result['count'] != 1 else ''} {action_label}.",
+        level='success',
+    )
+
+
+def duplicate_deck_route():
+    if not _current_user():
+        return _login_required_response()
+    from services import duplicate_deck_for_user
+
+    deck_id = _int_value(_request_data().get('deck_id'))
+    if not _owned_deck(deck_id, _current_user_id()):
+        return jsonify({'error': 'You can only duplicate decks you can edit'}), 403
+    try:
+        deck = duplicate_deck_for_user(deck_id, _current_user_id())
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if _wants_json():
+        return jsonify({'success': True, 'deck_id': deck.deck_id})
+    return _redirect_with_fragment(
+        'edit', deck_id=deck.deck_id, fragment='deck-editor',
+        notice='Private deck copy created.', level='success',
+    )
 
 
 # List cards in a deck.
@@ -3414,6 +3481,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/public_deck', endpoint='public_deck', view_func=public_deck_route, methods=['GET'])
     app.add_url_rule('/decks/<deck_slug>', endpoint='public_deck_detail', view_func=public_deck_detail_route, methods=['GET'])
     app.add_url_rule('/decks/favorite', endpoint='toggle_deck_favorite', view_func=_limit(toggle_deck_favorite_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/decks/duplicate', endpoint='duplicate_deck', view_func=_limit(duplicate_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/decks/rate', endpoint='rate_deck', view_func=_limit(rate_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/decks/report', endpoint='report_deck', view_func=_limit(report_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/creators/<username>', endpoint='creator_profile', view_func=creator_profile_route, methods=['GET'])
@@ -3462,6 +3530,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/list_cards', endpoint='list_cards', view_func=_limit(list_cards_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/get_card', endpoint='get_card', view_func=_limit(get_card_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_card', endpoint='edit_card', view_func=_limit(edit_card_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/cards/bulk', endpoint='bulk_cards', view_func=_limit(bulk_cards_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/move_card', endpoint='move_card', view_func=_limit(move_card_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/swap_cards', endpoint='swap_cards', view_func=_limit(swap_cards_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/check_reorder', endpoint='check_reorder', view_func=_limit(check_reorder_route, 'api', ['POST']), methods=['POST'])

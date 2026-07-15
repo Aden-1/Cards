@@ -76,6 +76,7 @@ MAX_QUIZ_POOL_LENGTH = 80
 MAX_QUIZ_EXPLANATION_LENGTH = 5000
 MAX_IMPORT_RAW_TEXT_BYTES = 2 * 1024 * 1024
 MAX_COLLECTION_DECKS = 100
+MAX_BULK_CARD_ACTION = 100
 ORDER_MUTATION_RETRIES = 3
 
 
@@ -2540,6 +2541,122 @@ def edit_card(card_id, question, answers):
         db.session.commit()
         return card
     return None
+
+
+def bulk_edit_cards(source_deck_id, card_ids, action, target_deck_id=None):
+    """Apply one bounded, atomic action to cards in a single editable deck."""
+    if action not in ('delete', 'duplicate', 'move'):
+        raise ValueError('Choose delete, duplicate, or move for the selected cards.')
+    if not isinstance(card_ids, (list, tuple)) or not card_ids:
+        raise ValueError('Select at least one card.')
+    if len(card_ids) > MAX_BULK_CARD_ACTION:
+        raise ValueError(f'Select at most {MAX_BULK_CARD_ACTION} cards at a time.')
+    if any(not isinstance(card_id, int) or card_id < 1 for card_id in card_ids):
+        raise ValueError('Selected card IDs must be positive integers.')
+    if len(set(card_ids)) != len(card_ids):
+        raise ValueError('Each selected card may appear only once.')
+    if action == 'move' and (not target_deck_id or target_deck_id == source_deck_id):
+        raise ValueError('Choose a different destination deck.')
+
+    db.session.rollback()
+    deck_ids = sorted({source_deck_id, target_deck_id} - {None})
+    locked_decks = Deck.query.filter(Deck.deck_id.in_(deck_ids)).order_by(
+        Deck.deck_id.asc(),
+    ).with_for_update().all()
+    deck_by_id = {deck.deck_id: deck for deck in locked_decks}
+    if source_deck_id not in deck_by_id:
+        raise ValueError('Source deck not found.')
+    if action == 'move' and target_deck_id not in deck_by_id:
+        raise ValueError('Destination deck not found.')
+
+    cards = Card.query.options(selectinload(Card.answers)).filter(
+        Card.deck_id == source_deck_id,
+        Card.card_id.in_(card_ids),
+    ).order_by(Card.position.asc(), Card.card_id.asc()).all()
+    if len(cards) != len(card_ids):
+        raise ValueError('One or more selected cards are not in the source deck.')
+
+    if action == 'delete':
+        for card in cards:
+            db.session.delete(card)
+        db.session.flush()
+        _renumber_deck_cards(source_deck_id)
+    elif action == 'duplicate':
+        existing_count = Card.query.filter_by(deck_id=source_deck_id).count()
+        if existing_count + len(cards) > MAX_IMPORT_CARD_COUNT:
+            raise ValueError(f'Decks may contain at most {MAX_IMPORT_CARD_COUNT} cards.')
+        new_cards = [
+            Card(
+                deck_id=source_deck_id,
+                question=card.question,
+                position=existing_count + offset,
+            )
+            for offset, card in enumerate(cards, start=1)
+        ]
+        db.session.add_all(new_cards)
+        db.session.flush()
+        db.session.add_all([
+            CardAnswer(card_id=new_card.card_id, answer=answer.answer)
+            for card, new_card in zip(cards, new_cards)
+            for answer in card.answers
+        ])
+    else:
+        target_count = Card.query.filter_by(deck_id=target_deck_id).count()
+        if target_count + len(cards) > MAX_IMPORT_CARD_COUNT:
+            raise ValueError(f'Decks may contain at most {MAX_IMPORT_CARD_COUNT} cards.')
+        for offset, card in enumerate(cards, start=1):
+            card.deck_id = target_deck_id
+            card.position = target_count + offset
+        db.session.flush()
+        _renumber_deck_cards(source_deck_id)
+
+    _commit_domain_error('The bulk card action could not be completed. Please try again.')
+    return {
+        'success': True,
+        'action': action,
+        'count': len(cards),
+        'source_deck_id': source_deck_id,
+        'target_deck_id': target_deck_id if action == 'move' else None,
+    }
+
+
+def duplicate_deck_for_user(source_deck_id, user_id):
+    """Create a private text-only copy of an editable deck for a user."""
+    source = _deck_query_with_content().filter(Deck.deck_id == source_deck_id).first()
+    if not source:
+        raise ValueError('Deck not found.')
+    cards = sorted(source.cards, key=lambda card: (card.position, card.card_id))
+    if len(cards) > MAX_IMPORT_CARD_COUNT:
+        raise ValueError(f'Only decks with at most {MAX_IMPORT_CARD_COUNT} cards can be duplicated.')
+    suffix = ' (Copy)'
+    source_name = source.description or 'Untitled Deck'
+    copy_name = f'{source_name[:MAX_DECK_DESCRIPTION_LENGTH - len(suffix)]}{suffix}'
+    copy_name, detailed_description, tags = _validate_deck_metadata(
+        copy_name, source.detailed_description, source.tags,
+    )
+    try:
+        deck_id = _insert_deck_graph(
+            user_id,
+            copy_name,
+            detailed_description,
+            tags,
+            source.sortable,
+            False,
+            [
+                {
+                    'position': position,
+                    'question': card.question,
+                    'answers': [answer.answer for answer in card.answers],
+                }
+                for position, card in enumerate(cards, start=1)
+            ],
+            is_featured=False,
+        )
+        _commit_domain_error('That deck could not be duplicated. Please try again.')
+        return db.session.get(Deck, deck_id)
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def get_card_from_deck(card_id, detailed=False):

@@ -24,7 +24,7 @@ API_PATHS = frozenset({
     '/create_custom_quiz', '/edit_custom_quiz', '/delete_custom_quiz',
     '/add_quiz_question', '/edit_quiz_question', '/delete_quiz_question',
     '/create_deck', '/import_deck', '/get_decks', '/delete_deck', '/edit_deck',
-    '/add_card', '/delete_card', '/match_answer', '/match_attempt',
+    '/add_card', '/delete_card', '/cards/bulk', '/decks/duplicate', '/match_answer', '/match_attempt',
     '/delete_answer', '/list_cards', '/get_card', '/edit_card', '/move_card',
     '/swap_cards', '/check_reorder',
 })
@@ -89,4 +89,3 @@ def request_payload():
             raise UnsupportedMediaType(description='Unsupported request Content-Type.')
 
     return request.values.to_dict(flat=True)
-

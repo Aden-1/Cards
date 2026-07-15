@@ -17,6 +17,100 @@ from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_bulk_routes_enforce_source_and_destination_edit_access(self):
+        owner_id = self.user_session('bulk-route-owner')
+        with self.app.app_context():
+            source = create_deck(owner_id, 'Bulk Route Source')
+            target = create_deck(owner_id, 'Bulk Route Target')
+            source_card = add_card(source.deck_id, 'Owned card', ['Owned answer'])
+            outsider = create_user('bulk-route-outsider', 'password12345')
+            outsider_deck = create_deck(outsider.user_id, 'Outsider Deck')
+            outsider_card = add_card(
+                outsider_deck.deck_id, 'Outsider card', ['Outsider answer'],
+            )
+            source_id = source.deck_id
+            target_id = target.deck_id
+            source_card_id = source_card.card_id
+            outsider_deck_id = outsider_deck.deck_id
+            outsider_card_id = outsider_card.card_id
+
+        injected = self.client.post(
+            '/cards/bulk',
+            json={
+                'deck_id': source_id,
+                'card_ids': [outsider_card_id],
+                'action': 'delete',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assert_json_error(injected, 400)
+
+        forbidden_target = self.client.post(
+            '/cards/bulk',
+            json={
+                'deck_id': source_id,
+                'target_deck_id': outsider_deck_id,
+                'card_ids': [source_card_id],
+                'action': 'move',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assert_json_error(forbidden_target, 403)
+
+        forbidden_copy = self.client.post(
+            '/decks/duplicate',
+            json={'deck_id': outsider_deck_id},
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assert_json_error(forbidden_copy, 403)
+
+        editor = self.client.get(f'/edit?deck_id={source_id}')
+        self.assertEqual(editor.status_code, 200)
+        self.assertIn(b'Bulk card tools', editor.data)
+        self.assertIn(b'Duplicate', editor.data)
+
+        form_bulk_copy = self.client.post(
+            '/cards/bulk',
+            data={
+                'csrf_token': 'contract-csrf-token',
+                'deck_id': source_id,
+                'card_ids': [source_card_id],
+                'action': 'duplicate',
+            },
+            headers={'Accept': 'application/json'},
+        )
+        self.assertEqual(form_bulk_copy.status_code, 200)
+        self.assertEqual(form_bulk_copy.get_json()['count'], 1)
+
+        copied = self.client.post(
+            '/decks/duplicate',
+            json={'deck_id': source_id},
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assertEqual(copied.status_code, 200)
+        copied_id = copied.get_json()['deck_id']
+        with self.app.app_context():
+            copied_deck = db.session.get(Deck, copied_id)
+            self.assertEqual(copied_deck.owned_by, owner_id)
+            self.assertFalse(copied_deck.is_public)
+            self.assertEqual(Card.query.filter_by(deck_id=copied_id).count(), 2)
+
+        moved = self.client.post(
+            '/cards/bulk',
+            json={
+                'deck_id': source_id,
+                'target_deck_id': target_id,
+                'card_ids': [source_card_id],
+                'action': 'move',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assertEqual(moved.status_code, 200)
+        self.assertEqual(moved.get_json()['count'], 1)
+        with self.app.app_context():
+            self.assertEqual(db.session.get(Card, source_card_id).deck_id, target_id)
+            self.assertIsNotNone(db.session.get(Card, outsider_card_id))
+
     def test_collection_workflow_orders_accessible_decks_and_protects_private_content(self):
         owner_id = self.user_session('collection-owner')
         with self.app.app_context():

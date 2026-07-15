@@ -7,6 +7,7 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 
 - Create and organize flashcard decks
 - Add cards with multiple accepted answers
+- Duplicate whole decks or bulk duplicate, move, and delete selected text cards
 - Import decks from pasted CSV or tab-delimited text
 - Export deck contents as copy/paste-ready CSV text
 - Study cards one at a time with answer reveal and keyboard shortcuts

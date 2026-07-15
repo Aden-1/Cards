@@ -258,6 +258,7 @@ rather than foreign keys so history survives source deletion.
 - Editing a card replaces its full answer set.
 - Public decks and quizzes are mirrored into the backend-specific full-text index for search by database-native triggers. Application services do not issue a second index commit, and a rolled-back content mutation rolls back its index mutation.
 - User-facing collections use stable `*_id` ordering and capped, look-ahead pagination (20 by default, 50 maximum). Featured decks are selected from a daily rotating, bounded public-featured query.
+- Bulk card mutations accept at most 100 source-validated IDs, run in one transaction, and restore dense 1-based positions after moves or deletes.
 - Search requests never create or rebuild indexes. Use `flask rebuild-public-search-index`
   explicitly after a restore or when `flask check-public-search-index --limit 100`
   identifies drift. The check is read-only and returns bounded samples of missing,

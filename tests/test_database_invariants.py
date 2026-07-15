@@ -12,10 +12,12 @@ from app import create_app
 from models import Card, CardAnswer, CardMasteryProgress, Deck, Quiz, QuizAttempt, QuizOption, QuizQuestion, User, db
 from services import (
     add_card,
+    bulk_edit_cards,
     copy_public_deck_to_user,
     create_user,
     delete_answer,
     delete_card,
+    duplicate_deck_for_user,
     move_card_in_deck,
     reorder_cards_in_deck,
     swap_cards_in_deck,
@@ -119,6 +121,72 @@ class DatabaseInvariantTests(CardsTestCase):
         positions = [position for (position,) in db.session.query(Card.position).filter_by(deck_id=deck_id).order_by(Card.position)]
         self.assertEqual(positions, [1, 2])
         self.assertEqual(len(positions), len(set(positions)))
+
+    def test_bulk_card_actions_and_deck_duplication_are_atomic_and_dense(self):
+        user = create_user('bulk-owner', 'password12345')
+        source = Deck(
+            owned_by=user.user_id, description='Bulk Source', sortable=True,
+            is_public=True,
+        )
+        target = Deck(owned_by=user.user_id, description='Bulk Target')
+        foreign = Deck(owned_by=user.user_id, description='Foreign Source')
+        db.session.add_all([source, target, foreign])
+        db.session.commit()
+        first = add_card(source.deck_id, 'First question', ['First answer'])
+        second = add_card(source.deck_id, 'Second question', ['Second A', 'Second B'])
+        foreign_card = add_card(foreign.deck_id, 'Foreign question', ['Foreign answer'])
+
+        duplicated = bulk_edit_cards(
+            source.deck_id, [second.card_id, first.card_id], 'duplicate',
+        )
+        self.assertEqual(duplicated['count'], 2)
+        source_cards = Card.query.filter_by(deck_id=source.deck_id).order_by(Card.position).all()
+        self.assertEqual([card.position for card in source_cards], [1, 2, 3, 4])
+        self.assertEqual(
+            [answer.answer for answer in source_cards[3].answers],
+            ['Second A', 'Second B'],
+        )
+
+        moved = bulk_edit_cards(
+            source.deck_id, [first.card_id, second.card_id], 'move', target.deck_id,
+        )
+        self.assertEqual(moved['count'], 2)
+        self.assertEqual(
+            [card.position for card in Card.query.filter_by(
+                deck_id=source.deck_id,
+            ).order_by(Card.position)],
+            [1, 2],
+        )
+        target_cards = Card.query.filter_by(deck_id=target.deck_id).order_by(Card.position).all()
+        self.assertEqual([card.position for card in target_cards], [1, 2])
+
+        bulk_edit_cards(target.deck_id, [first.card_id], 'delete')
+        self.assertEqual(
+            [(card.card_id, card.position) for card in Card.query.filter_by(
+                deck_id=target.deck_id,
+            ).all()],
+            [(second.card_id, 1)],
+        )
+
+        source_count = Card.query.filter_by(deck_id=source.deck_id).count()
+        foreign_count = Card.query.filter_by(deck_id=foreign.deck_id).count()
+        with self.assertRaisesRegex(ValueError, 'not in the source deck'):
+            bulk_edit_cards(source.deck_id, [foreign_card.card_id], 'delete')
+        self.assertEqual(Card.query.filter_by(deck_id=source.deck_id).count(), source_count)
+        self.assertEqual(Card.query.filter_by(deck_id=foreign.deck_id).count(), foreign_count)
+
+        copied_deck = duplicate_deck_for_user(source.deck_id, user.user_id)
+        self.assertEqual(copied_deck.description, 'Bulk Source (Copy)')
+        self.assertFalse(copied_deck.is_public)
+        self.assertFalse(copied_deck.is_featured)
+        copied_cards = Card.query.filter_by(
+            deck_id=copied_deck.deck_id,
+        ).order_by(Card.position).all()
+        self.assertEqual([card.position for card in copied_cards], [1, 2])
+        self.assertEqual(
+            [[answer.answer for answer in card.answers] for card in copied_cards],
+            [['First answer'], ['Second A', 'Second B']],
+        )
 
     def test_deleting_a_final_answer_renumbers_the_remaining_cards(self):
         user = create_user('answer-delete-owner', 'password12345')
