@@ -1,6 +1,6 @@
 """Contract tests for canonical public URLs and deck collaboration."""
 
-from models import DeckCollaborator, DeckShareLink, Quiz, db
+from models import Card, DeckCollaborator, DeckShareLink, Quiz, db
 from services import add_card, create_deck, edit_deck
 from tests.support import CardsTestCase
 
@@ -46,9 +46,11 @@ class SharingAndUrlTests(CardsTestCase):
     def test_unlisted_copy_link_and_coauthor_access(self):
         owner_id = self.user_session('sharing-owner')
         with self.app.app_context():
-            deck = create_deck(owner_id, 'Private Collaboration Deck')
-            add_card(deck.deck_id, 'Question', ['Answer'])
+            deck = create_deck(owner_id, 'Private Collaboration Deck', sortable=True)
+            original_card = add_card(deck.deck_id, 'Question', ['Answer'])
             deck_id = deck.deck_id
+            card_id = original_card.card_id
+            answer_id = original_card.answers[0].answer_id
             db.session.add(DeckShareLink(token='copy-link-token', deck_id=deck_id, permission='copy'))
             db.session.commit()
 
@@ -73,3 +75,40 @@ class SharingAndUrlTests(CardsTestCase):
             '/add_card', data={'deck_id': deck_id, 'question': 'Coauthor question', 'answers': 'Answer'}, headers=self.csrf()
         )
         self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(
+            self.client.post('/list_cards', data={'deck_id': deck_id}, headers=self.csrf()).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post('/get_card', data={'card_id': card_id}, headers=self.csrf()).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post('/match_attempt', data={
+                'answer_id': answer_id,
+                'selected_question_id': card_id,
+            }, headers=self.csrf()).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post('/master/rate', data={
+                'deck_id': deck_id,
+                'card_id': card_id,
+                'rating': 'still_learning',
+            }, headers=self.csrf()).status_code,
+            302,
+        )
+        with self.app.app_context():
+            ordered_card_ids = [
+                card.card_id for card in
+                Card.query.filter_by(deck_id=deck_id).order_by(Card.position).all()
+            ]
+        self.assertEqual(
+            self.client.post('/check_reorder', json={
+                'deck_id': deck_id,
+                'ordered_card_ids': ordered_card_ids,
+            }, headers=self.csrf()).status_code,
+            200,
+        )
+        self.assertEqual(self.client.get(f'/public_deck?deck_id={deck_id}').status_code, 200)

@@ -1183,7 +1183,7 @@ def _owned_quiz(quiz_id, user_id):
 def _accessible_answer(answer_id, user_id):
     from models import CardAnswer
     answer = db.session.get(CardAnswer, answer_id) if answer_id else None
-    if not answer or (not answer.card.deck.is_public and answer.card.deck.owned_by != user_id):
+    if not answer or not _directly_accessible_deck(answer.card.deck_id, user_id):
         return None
     return answer
 
@@ -1429,7 +1429,7 @@ def master():
 @login_required
 def master_rate_route():
     from services import normalize_mastery_strategy, record_mastery_rating
-    from models import Card, Deck
+    from models import Card
 
     data = _request_data()
     user = _current_user()
@@ -1441,8 +1441,8 @@ def master_rate_route():
     if not deck_id or not card_id:
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck and card are required.', level='error')
 
-    deck_record = db.session.get(Deck, deck_id)
-    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+    deck_record = _directly_accessible_deck(deck_id, user_id)
+    if not deck_record:
         return _redirect_with_fragment('master', fragment='mastery-practice', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
@@ -1474,7 +1474,6 @@ def master_rate_route():
 @login_required
 def master_reset_route():
     from services import normalize_mastery_strategy, reset_mastery_progress
-    from models import Deck
 
     data = _request_data()
     user = _current_user()
@@ -1484,8 +1483,8 @@ def master_reset_route():
     if not deck_id:
         return _redirect_with_fragment('master', notice='Deck is required.', level='error')
 
-    deck_record = db.session.get(Deck, deck_id)
-    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+    deck_record = _directly_accessible_deck(deck_id, user_id)
+    if not deck_record:
         return _redirect_with_fragment('master', notice='Deck not found.', level='error')
 
     strategy = normalize_mastery_strategy(data.get('strategy') or (user.mastery_strategy_preference if user else None), deck_sortable=deck_record.sortable)
@@ -1708,7 +1707,6 @@ def edit_card_route():
 # List cards in a deck.
 def list_cards_route():
     from services import list_cards_from_deck, get_deck_details
-    from models import Deck
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
@@ -1717,9 +1715,8 @@ def list_cards_route():
 
     if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
-    deck_record = db.session.get(Deck, deck_id)
     user_id = _current_user_id()
-    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+    if not _directly_accessible_deck(deck_id, user_id):
         return jsonify({'error': 'Deck not found'}), 404
     if detailed:
         deck = get_deck_details(deck_id, shuffle_cards=shuffle, shuffle_answers=shuffle)
@@ -1791,7 +1788,7 @@ def get_card_route():
         return jsonify({'error': 'Card ID is required'}), 400
     card_record = db.session.get(Card, card_id)
     user_id = _current_user_id()
-    if not card_record or (not card_record.deck.is_public and card_record.deck.owned_by != user_id):
+    if not card_record or not _directly_accessible_deck(card_record.deck_id, user_id):
         return jsonify({'error': 'Card not found'}), 404
     
     card = get_card_from_deck(card_id)
@@ -1887,9 +1884,6 @@ def delete_answer_route():
     answer = _accessible_answer(answer_id, user_id)
     if not answer:
         return jsonify({'error': 'Answer not found'}), 404
-    user_id = _current_user_id()
-    if not answer.card.deck.is_public and answer.card.deck.owned_by != user_id:
-        return jsonify({'error': 'Answer not found'}), 404
     if not _owned_deck(answer.card.deck_id, user_id):
         return jsonify({'error': 'You can only edit decks you own'}), 403
 
@@ -1977,7 +1971,6 @@ def swap_cards_route():
 # Check a submitted reorder attempt.
 def check_reorder_route():
     from services import check_deck_order
-    from models import Deck
 
     payload = _request_data()
     deck_id = _int_value(payload.get('deck_id'))
@@ -1985,9 +1978,8 @@ def check_reorder_route():
 
     if not deck_id:
         return jsonify({'error': 'Deck ID is required'}), 400
-    deck_record = db.session.get(Deck, deck_id)
     user_id = _current_user_id()
-    if not deck_record or (not deck_record.is_public and deck_record.owned_by != user_id):
+    if not _directly_accessible_deck(deck_id, user_id):
         return jsonify({'error': 'Deck not found'}), 404
 
     if not isinstance(ordered_card_ids, list):
@@ -2110,8 +2102,9 @@ def public_deck_route():
     if not deck_id:
         return redirect(url_for('search'))
 
-    deck = get_deck_with_content(deck_id)
-    if not deck or (not deck.is_public and deck.owned_by != user_id):
+    accessible_deck = _directly_accessible_deck(deck_id, user_id)
+    deck = get_deck_with_content(deck_id) if accessible_deck else None
+    if not deck:
         return redirect(url_for('search'))
     if deck.is_public:
         return redirect(url_for('public_deck_detail', deck_slug=deck_url_slug(deck)), code=301)
