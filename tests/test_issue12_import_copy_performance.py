@@ -16,10 +16,35 @@ os.environ.setdefault('SECRET_KEY', 'test-only-secret-key')
 
 from app import create_app
 from models import Card, CardAnswer, Deck, DeckTag, Quiz, QuizOption, QuizQuestion, User, db
-from services import copy_public_deck_to_user, copy_public_quiz_to_user, import_deck
+from services import (
+    copy_public_deck_to_user,
+    copy_public_quiz_to_user,
+    import_deck,
+    parse_import_file,
+    parse_imported_deck_text,
+)
 
 
 class Issue12ImportCopyPerformanceTests(unittest.TestCase):
+    def test_csv_import_preserves_quoted_multiline_fields(self):
+        raw_text = (
+            '"Question line 1\nQuestion line 2","Answer line 1\nAnswer line 2"\n'
+            '"Second question","Second answer"\n'
+        )
+
+        pasted = parse_imported_deck_text(raw_text)
+        uploaded, normalized_text = parse_import_file(raw_text.encode('utf-8'))
+
+        for parsed in (pasted, uploaded):
+            self.assertEqual(parsed['line_count'], 2)
+            self.assertEqual(parsed['invalid_lines'], 0)
+            self.assertEqual(parsed['cards'][0], {
+                'question': 'Question line 1\nQuestion line 2',
+                'answers': ['Answer line 1\nAnswer line 2'],
+            })
+            self.assertEqual(parsed['cards'][1]['question'], 'Second question')
+        self.assertEqual(parse_imported_deck_text(normalized_text)['cards'], pasted['cards'])
+
     def setUp(self):
         self.application = create_app({
             'TESTING': True,

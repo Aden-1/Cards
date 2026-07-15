@@ -250,35 +250,35 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
     }
 
 
-def parse_imported_deck_text(raw_text):
-    """Parse pasted deck text in common external formats (CSV or tab-delimited)."""
-    if raw_text is None:
-        raw_text = ''
-    if not isinstance(raw_text, str):
-        raw_text = str(raw_text)
-    if len(raw_text) > MAX_IMPORT_RAW_TEXT_BYTES:
-        raise ValueError(f'Imported deck text must be {MAX_IMPORT_RAW_TEXT_BYTES} bytes or fewer.')
-    if len(raw_text.encode('utf-8')) > MAX_IMPORT_RAW_TEXT_BYTES:
-        raise ValueError(f'Imported deck text must be {MAX_IMPORT_RAW_TEXT_BYTES} bytes or fewer.')
-    if not raw_text.strip('\ufeff \n\t'):
-        raise ValueError('Paste deck content to import.')
+def _detected_import_delimiter(raw_text):
+    for line in raw_text.splitlines():
+        if line.strip():
+            return '\t' if '\t' in line else ','
+    return ','
 
+
+def _parse_import_rows(rows, question_column=0, answer_column=None, answer_joiner=','):
+    """Validate logical CSV rows without losing embedded line breaks."""
     invalid_lines = 0
     valid_line_count = 0
     card_map = {}
     card_order = []
+    valid_rows = []
 
-    for line in io.StringIO(raw_text.lstrip('\ufeff \n\t')):
-        line = line.rstrip('\r\n')
-        if not line.strip():
+    for columns in rows:
+        if not columns or not any(column.strip() for column in columns):
             continue
-        delimiter = '\t' if '\t' in line else ','
-        columns = next(csv.reader([line], delimiter=delimiter, quotechar='"', skipinitialspace=True), [])
-        if len(columns) < 2:
+        if question_column >= len(columns):
             invalid_lines += 1
             continue
-        question = (columns[0] or '').strip()
-        answer = delimiter.join(columns[1:]).strip()
+        question = (columns[question_column] or '').strip()
+        if answer_column is None:
+            answer = answer_joiner.join(columns[question_column + 1:]).strip()
+        elif answer_column >= len(columns):
+            invalid_lines += 1
+            continue
+        else:
+            answer = (columns[answer_column] or '').strip()
         if not question or not answer:
             invalid_lines += 1
             continue
@@ -293,6 +293,7 @@ def parse_imported_deck_text(raw_text):
             if len(card_map[cleaned_question]) >= MAX_IMPORT_ANSWERS_PER_CARD:
                 raise ValueError(f'Cards may have at most {MAX_IMPORT_ANSWERS_PER_CARD} answers.')
             card_map[cleaned_question].append(cleaned_answer)
+        valid_rows.append((question, answer))
         valid_line_count += 1
 
     cards = [{'question': question, 'answers': card_map[question]} for question in card_order if card_map[question]]
@@ -303,7 +304,31 @@ def parse_imported_deck_text(raw_text):
         'cards': cards,
         'invalid_lines': invalid_lines,
         'line_count': valid_line_count + invalid_lines,
-    }
+    }, valid_rows
+
+
+def parse_imported_deck_text(raw_text):
+    """Parse pasted deck text in common external formats (CSV or tab-delimited)."""
+    if raw_text is None:
+        raw_text = ''
+    if not isinstance(raw_text, str):
+        raw_text = str(raw_text)
+    if len(raw_text) > MAX_IMPORT_RAW_TEXT_BYTES:
+        raise ValueError(f'Imported deck text must be {MAX_IMPORT_RAW_TEXT_BYTES} bytes or fewer.')
+    if len(raw_text.encode('utf-8')) > MAX_IMPORT_RAW_TEXT_BYTES:
+        raise ValueError(f'Imported deck text must be {MAX_IMPORT_RAW_TEXT_BYTES} bytes or fewer.')
+    if not raw_text.strip('\ufeff \r\n\t'):
+        raise ValueError('Paste deck content to import.')
+
+    delimiter = _detected_import_delimiter(raw_text)
+    rows = csv.reader(
+        io.StringIO(raw_text.lstrip('\ufeff\r\n')),
+        delimiter=delimiter,
+        quotechar='"',
+        skipinitialspace=True,
+    )
+    parsed, _ = _parse_import_rows(rows, answer_joiner=delimiter)
+    return parsed
 
 
 def parse_import_file(raw_bytes, question_column=0, answer_column=1):
@@ -318,17 +343,16 @@ def parse_import_file(raw_bytes, question_column=0, answer_column=1):
         question_column, answer_column = int(question_column), int(answer_column)
     except (TypeError, ValueError) as exc:
         raise ValueError('Choose valid question and answer columns.') from exc
-    rows = list(csv.reader(io.StringIO(source), delimiter='\t' if '\t' in source.splitlines()[0] else ','))
+    delimiter = _detected_import_delimiter(source)
+    rows = list(csv.reader(io.StringIO(source), delimiter=delimiter, skipinitialspace=True))
     if not rows or question_column < 0 or answer_column < 0:
         raise ValueError('The import file has no usable rows.')
-    output = io.StringIO(); writer = csv.writer(output, lineterminator='\n')
-    invalid = 0
-    for row in rows:
-        if max(question_column, answer_column) >= len(row) or not row[question_column].strip() or not row[answer_column].strip():
-            invalid += 1; continue
-        writer.writerow([row[question_column], row[answer_column]])
-    parsed = parse_imported_deck_text(output.getvalue())
-    parsed['invalid_lines'] += invalid
+    parsed, valid_rows = _parse_import_rows(
+        rows, question_column=question_column, answer_column=answer_column,
+    )
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator='\n')
+    writer.writerows(valid_rows)
     parsed['preview_rows'] = rows[:10]
     return parsed, output.getvalue()
 
