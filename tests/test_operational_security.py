@@ -61,10 +61,31 @@ class OperationalSecurityTests(CardsTestCase):
         self.assertIn('test_event', response.get_data(as_text=True))
 
     def test_sentry_scrubber_removes_credentials_and_email(self):
-        event = _before_send({'request': {'headers': {'Authorization': 'secret'}, 'data': {'email': 'person@example.test', 'safe': 'yes'}}}, None)
+        event = _before_send({
+            'request': {
+                'url': 'https://cards.example.test/reset-password?token=reset-secret',
+                'query_string': 'token=reset-secret',
+                'headers': {
+                    'Authorization': 'secret',
+                    'X-CSRFToken': 'csrf-secret',
+                },
+                'data': {
+                    'email': 'person@example.test',
+                    'new_password': 'password-secret',
+                    'safe': 'yes',
+                },
+            },
+            'message': 'delivery failed for person@example.test token=reset-secret',
+        }, None)
         self.assertEqual(event['request']['headers']['Authorization'], '[Filtered]')
+        self.assertEqual(event['request']['headers']['X-CSRFToken'], '[Filtered]')
         self.assertEqual(event['request']['data']['email'], '[Filtered]')
+        self.assertEqual(event['request']['data']['new_password'], '[Filtered]')
         self.assertEqual(event['request']['data']['safe'], 'yes')
+        self.assertEqual(event['request']['url'], 'https://cards.example.test/reset-password')
+        self.assertEqual(event['request']['query_string'], '[Filtered]')
+        self.assertNotIn('person@example.test', event['message'])
+        self.assertNotIn('reset-secret', event['message'])
 
     def test_totp_login_requires_a_second_code(self):
         with self.app.app_context():
