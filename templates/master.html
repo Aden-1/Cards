@@ -57,7 +57,7 @@
         </div>
         {% endif %}
         {% if due_reviews %}
-        <article class="surface p-3 mt-3"><span class="page-kicker">Due now</span><h3 class="h5 mb-2">{{ due_reviews|length }} scheduled review{{ '' if due_reviews|length == 1 else 's' }}</h3><div class="section-stack">{% for progress in due_reviews %}<a class="small-muted" href="{{ url_for('master', deck_id=progress.card.deck_id, strategy='spaced') }}">{{ progress.card.deck.description }} · {{ progress.card.question }}</a>{% endfor %}</div></article>
+        <article class="surface p-3 mt-3"><span class="page-kicker">Due now</span><h3 class="h5 mb-2">{{ due_reviews|length }} scheduled review{{ '' if due_reviews|length == 1 else 's' }}</h3><div class="section-stack">{% for progress in due_reviews %}<a class="small-muted" href="{{ url_for('master', deck_id=progress.card.deck_id, strategy='spaced') }}">{{ progress.card.deck.description }} · {{ progress.card.question }}</a>{% endfor %}</div><a class="btn-primary-surface mt-3" href="{{ url_for('review_queue', restart=1) }}">Review all due cards</a></article>
         {% endif %}
     </aside>
     <section class="section-stack" id="mastery-practice">

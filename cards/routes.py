@@ -1904,6 +1904,75 @@ def master_reset_route():
     return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice', notice='Mastery progress reset for this deck.', level='success')
 
 
+@login_required
+def review_queue_route():
+    from services import get_due_review_cards
+
+    if request.args.get('restart') == '1':
+        session.pop('review_seen_card_ids', None)
+
+    due_reviews = get_due_review_cards(_current_user_id(), limit=50)
+    due_ids = {progress.card_id for progress in due_reviews}
+    seen_ids = [
+        card_id for card_id in session.get('review_seen_card_ids', [])
+        if isinstance(card_id, int) and card_id in due_ids
+    ]
+    session['review_seen_card_ids'] = seen_ids
+    seen_id_set = set(seen_ids)
+    pending_reviews = [
+        progress for progress in due_reviews
+        if progress.card_id not in seen_id_set
+    ]
+
+    return render_template(
+        'review_queue.html',
+        current_review=pending_reviews[0] if pending_reviews else None,
+        due_count=len(due_reviews),
+        remaining_count=len(pending_reviews),
+        completed_count=len(due_reviews) - len(pending_reviews),
+    )
+
+
+@login_required
+def review_queue_rate_route():
+    from models import CardMasteryProgress
+    from services import record_mastery_rating
+
+    data = _request_data()
+    card_id = _int_value(data.get('card_id'))
+    deck_id = _int_value(data.get('deck_id'))
+    rating = (data.get('rating') or '').strip()
+    progress = CardMasteryProgress.query.filter_by(
+        user_id=_current_user_id(),
+        card_id=card_id,
+    ).first()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if (
+        not progress
+        or progress.card.deck_id != deck_id
+        or not progress.next_review_at
+        or progress.next_review_at > now
+    ):
+        return jsonify({'error': 'Due review not found'}), 404
+
+    result = record_mastery_rating(_current_user_id(), deck_id, card_id, rating)
+    if not result.get('success'):
+        return redirect(url_for(
+            'review_queue',
+            notice=result.get('error', 'Could not save rating.'),
+            level='error',
+        ))
+
+    seen_ids = [
+        stored_id for stored_id in session.get('review_seen_card_ids', [])
+        if isinstance(stored_id, int)
+    ]
+    if card_id not in seen_ids:
+        seen_ids.append(card_id)
+    session['review_seen_card_ids'] = seen_ids[-50:]
+    return redirect(url_for('review_queue'))
+
+
 # Deck routes.
 
 # Handle deck creation.
@@ -3259,6 +3328,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
     app.add_url_rule('/master', endpoint='master', view_func=master, methods=['GET'])
+    app.add_url_rule('/review', endpoint='review_queue', view_func=review_queue_route, methods=['GET'])
     app.add_url_rule('/match', endpoint='match', view_func=match)
     app.add_url_rule('/reorder', endpoint='reorder', view_func=reorder)
     app.add_url_rule('/search', endpoint='search', view_func=_limit(search_route, 'search', ['GET']))
@@ -3293,6 +3363,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/score_quiz', endpoint='score_quiz', view_func=_limit(score_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/master/rate', endpoint='master_rate', view_func=_limit(master_rate_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/master/reset', endpoint='master_reset', view_func=_limit(master_reset_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/review/rate', endpoint='review_queue_rate', view_func=_limit(review_queue_rate_route, 'content_mutation', ['POST']), methods=['POST'])
 
     # Deck operations
     app.add_url_rule('/create_deck', endpoint='create_deck', view_func=_limit(create_deck_route, 'content_mutation', ['POST']), methods=['POST'])

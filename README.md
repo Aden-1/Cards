@@ -95,6 +95,7 @@ GPL-3.0 license policy are documented in
 - `/view` shows study mode
 - `/match` runs the matching game
 - `/master` runs mastery mode with persistent per-card progress
+- `/review` works through due cards from every deck in one scheduled review pass
 - `/reorder` runs the ordering game
 - `/search` finds public decks and quizzes
 - `/public_deck` and `/public_quiz` show read-only public content detail pages

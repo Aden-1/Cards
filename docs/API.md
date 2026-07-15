@@ -296,6 +296,22 @@ Response:
 - Rendered HTML launcher page. Selecting or opening a source does not create a
   server-side attempt.
 
+### Due Review Queue
+
+**GET** `/review`
+
+Shows up to 50 currently due cards across the signed-in user's decks. The queue
+tracks cards reviewed during the current pass so an immediately rescheduled card
+does not repeat until the learner explicitly starts another pass with
+`?restart=1`.
+
+**POST** `/review/rate`
+
+Records `dont_know`, `still_learning`, or `understood` for the current due card.
+The request requires `deck_id`, `card_id`, `rating`, and a CSRF token. Cards that
+belong to another user, do not match the supplied deck, or are not due return
+`404`.
+
 ### Start Quiz
 **POST** `/quiz/start`
 

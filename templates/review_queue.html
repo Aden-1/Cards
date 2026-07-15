@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Cards | Due Review{% endblock %}
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Scheduled Practice</span>
+    <h1 class="page-title">Due review queue</h1>
+    <p class="page-description">Work through scheduled cards across all of your decks in one focused pass.</p>
+</section>
+<section class="metrics-grid stagger mb-4">
+    <article class="metric-card"><span class="metric-value">{{ due_count }}</span><span class="metric-label">Due now</span></article>
+    <article class="metric-card"><span class="metric-value">{{ completed_count }}</span><span class="metric-label">Reviewed this pass</span></article>
+    <article class="metric-card"><span class="metric-value">{{ remaining_count }}</span><span class="metric-label">Remaining this pass</span></article>
+</section>
+{% if current_review %}
+<section class="master-card current fade-in">
+    <div class="panel-header">
+        <div><span class="page-kicker">{{ current_review.card.deck.description }}</span><h2 class="h4 mb-0">{{ current_review.card.question }}</h2></div>
+        <span class="score-chip">{{ remaining_count }} remaining</span>
+    </div>
+    <details class="detail-panel mt-4">
+        <summary class="btn-surface">Reveal accepted answers</summary>
+        <div class="answer-list mt-3">{% for answer in current_review.card.answers %}<div class="answer-row"><span class="answer-row-text">{{ answer.answer }}</span></div>{% endfor %}</div>
+    </details>
+    <div class="master-actions mt-4">
+        {% for rating, label, button_class in [('dont_know', "Don't Know", 'btn-danger-surface'), ('still_learning', 'Still Learning', 'btn-surface'), ('understood', 'Understood', 'btn-primary-surface')] %}
+        <form method="post" action="{{ url_for('review_queue_rate') }}">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <input type="hidden" name="deck_id" value="{{ current_review.card.deck_id }}">
+            <input type="hidden" name="card_id" value="{{ current_review.card_id }}">
+            <input type="hidden" name="rating" value="{{ rating }}">
+            <button class="{{ button_class }}" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+    </div>
+</section>
+{% elif due_count %}
+<section class="completion-message fade-in">
+    <h2 class="h3">This review pass is complete.</h2>
+    <p>You reviewed every card that was due when this pass began. Cards rated “Don’t Know” remain scheduled and can be revisited in a new pass.</p>
+    <a class="btn-primary-surface" href="{{ url_for('review_queue', restart=1) }}">Start another due pass</a>
+</section>
+{% else %}
+<section class="completion-message fade-in">
+    <h2 class="h3">Nothing is due right now.</h2>
+    <p>Your scheduled cards are caught up.</p>
+    <a class="btn-surface" href="{{ url_for('dashboard') }}">Return to Dashboard</a>
+</section>
+{% endif %}
+{% endblock %}
