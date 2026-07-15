@@ -1,4 +1,4 @@
-"""Issue 12 bounded import/copy diagnostics.
+"""Import and public-copy correctness, atomicity, and query-budget coverage.
 
 The old ORM graph produced 1,003 statements on SQLite. Card correlation now
 uses the new deck's unique positions, so a 500-card import remains a constant
@@ -25,7 +25,7 @@ from services import (
 )
 
 
-class Issue12ImportCopyPerformanceTests(unittest.TestCase):
+class ImportCopyTests(unittest.TestCase):
     def test_csv_import_preserves_quoted_multiline_fields(self):
         raw_text = (
             '"Question line 1\nQuestion line 2","Answer line 1\nAnswer line 2"\n'
