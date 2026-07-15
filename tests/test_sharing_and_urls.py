@@ -7,6 +7,7 @@ from models import (
     Deck,
     DeckCollaborator,
     DeckFavorite,
+    DeckRating,
     DeckShareLink,
     Quiz,
     QuizCollaborator,
@@ -31,6 +32,63 @@ class SharingAndUrlTests(CardsTestCase):
                 user_id=user_id,
                 auth_version=auth_version,
                 csrf_token='contract-csrf-token',
+            )
+
+    def test_public_deck_uses_compact_visual_community_controls(self):
+        owner_id = self.user_session('public-layout-owner')
+        with self.app.app_context():
+            deck = create_deck(
+                owner_id, 'Organized Public Deck',
+                detailed_description='A clear description for this deck.',
+                tags='science, review', is_public=True,
+            )
+            add_card(deck.deck_id, 'Question', ['Answer'])
+            viewer = create_user('public-layout-viewer', 'password12345')
+            db.session.add_all([
+                DeckFavorite(user_id=viewer.user_id, deck_id=deck.deck_id),
+                DeckRating(user_id=viewer.user_id, deck_id=deck.deck_id, rating=3),
+            ])
+            db.session.commit()
+            deck_id = deck.deck_id
+            viewer_id = viewer.user_id
+
+        self._switch_user(viewer_id)
+        response = self.client.get(f'/decks/organized-public-deck-{deck_id}')
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+
+        ordered_rows = [
+            'public-deck-heading-row',
+            'public-deck-facts-row',
+            'public-deck-description-row',
+            'public-deck-tags-row',
+            'public-deck-actions-row',
+        ]
+        row_positions = [page.index(row) for row in ordered_rows]
+        self.assertEqual(row_positions, sorted(row_positions))
+        self.assertIn('bookmark-icon-button is-bookmarked', page)
+        self.assertIn('title="Remove this deck from your bookmarks"', page)
+        self.assertEqual(page.count('class="star-rating-button'), 5)
+        self.assertEqual(page.count('class="star-rating-button is-selected"'), 3)
+        self.assertIn('name="rating"', page)
+        self.assertIn('value="3"', page)
+        self.assertIn('aria-pressed="true"', page)
+        self.assertNotIn('id="deckRating"', page)
+        self.assertNotIn('<details', page)
+        self.assertIn('data-bs-target="#reportDeckModal"', page)
+        self.assertIn('id="reportDeckModal"', page)
+        self.assertIn('action="/decks/report"', page)
+        for label in ('Study', 'Copy Deck', 'Back', 'Report'):
+            self.assertIn(f'>{label}<', page)
+
+        rated = self.client.post(
+            '/decks/rate', data={'deck_id': deck_id, 'rating': '4'},
+            headers=self.csrf(),
+        )
+        self.assertEqual(rated.status_code, 302)
+        with self.app.app_context():
+            self.assertEqual(
+                db.session.get(DeckRating, (viewer_id, deck_id)).rating, 4,
             )
 
     def test_bulk_routes_enforce_source_and_destination_edit_access(self):

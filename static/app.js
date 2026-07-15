@@ -339,6 +339,9 @@
           }
           button.dataset.locked = 'true';
           button.disabled = true;
+          if (button.dataset.preserveSubmitLabel === 'true') {
+            return;
+          }
           if (button.tagName === 'BUTTON') {
             button.dataset.originalText = button.textContent;
             button.textContent = button.dataset.loadingText || 'Saving...';

@@ -5,48 +5,123 @@
 {% block content %}
 <section class="page-intro">
     <span class="page-kicker">{{ 'Unlisted Deck Preview' if is_unlisted else 'Public Deck Preview' }}</span>
-    <h1 class="page-title">{{ deck.description }}</h1>
-    <p class="page-description">Study the deck, open a game mode, or copy it into your own collection.</p>
+    <p class="page-description mb-0">Study the deck or copy it into your own collection.</p>
 </section>
 <section class="section-stack fade-in">
-    <article class="public-card">
-        <div class="panel-header">
-            <div>
-                <h2 class="h3 mb-1">Deck Details</h2>
-                <p class="muted-copy mb-0">{{ deck.cards|length }} card{{ '' if deck.cards|length == 1 else 's' }}</p>
+    <article class="public-card public-deck-overview">
+        <div class="public-deck-row public-deck-heading-row">
+            <div class="public-deck-heading-main">
+                {% if deck.is_public %}
+                    {% if current_user %}
+                    <form method="post" action="{{ url_for('toggle_deck_favorite') }}" class="bookmark-form">
+                        <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                        <button
+                            class="bookmark-icon-button{{ ' is-bookmarked' if is_favorite else '' }}"
+                            type="submit"
+                            title="{{ 'Remove this deck from your bookmarks' if is_favorite else 'Bookmark this deck' }}"
+                            aria-label="{{ 'Remove this deck from your bookmarks' if is_favorite else 'Bookmark this deck' }}"
+                            data-preserve-submit-label="true"
+                        >
+                            <svg class="bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M6.75 3.25h10.5a1 1 0 0 1 1 1v16.1a.4.4 0 0 1-.64.32L12 16.46l-5.61 4.21a.4.4 0 0 1-.64-.32V4.25a1 1 0 0 1 1-1Z"/>
+                            </svg>
+                        </button>
+                    </form>
+                    {% else %}
+                    <a
+                        class="bookmark-icon-button"
+                        href="{{ url_for('login', next=request.full_path) }}"
+                        title="Log in to bookmark this deck"
+                        aria-label="Log in to bookmark this deck"
+                    >
+                        <svg class="bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M6.75 3.25h10.5a1 1 0 0 1 1 1v16.1a.4.4 0 0 1-.64.32L12 16.46l-5.61 4.21a.4.4 0 0 1-.64-.32V4.25a1 1 0 0 1 1-1Z"/>
+                        </svg>
+                    </a>
+                    {% endif %}
+                {% endif %}
+                <h1 class="public-deck-title">{{ deck.description }}</h1>
             </div>
             <span class="status-chip {{ 'public' if deck.is_public else 'private' }}">{{ 'Unlisted' if is_unlisted else ('Public' if deck.is_public else 'Private') }}</span>
         </div>
-        {% if deck.detailed_description %}<p class="muted-copy mb-0">{{ deck.detailed_description }}</p>{% endif %}
-        {% if deck.is_public %}<p class="small-muted mb-0">Created by <a href="{{ url_for('creator_profile', username=deck.owner.username) }}">{{ deck.owner.username }}</a> · {{ average_rating }} / 5 from {{ rating_count }} rating{{ '' if rating_count == 1 else 's' }}</p>{% endif %}
-        {% if deck.tags %}<div class="card-rail">{% for tag in deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
-        <div class="deck-actions">
-            <a class="btn-primary-surface" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
-            <a class="btn-surface" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
-            {% if deck.sortable %}
-            <a class="btn-surface" href="{{ url_for('reorder', deck_id=deck.deck_id) }}">Reorder</a>
+
+        <div class="public-deck-row public-deck-facts-row">
+            <span class="deck-fact"><strong>{{ deck.cards|length }}</strong> card{{ '' if deck.cards|length == 1 else 's' }}</span>
+            {% if deck.is_public %}
+            <span class="deck-fact deck-rating-summary">
+                <span>Deck rating</span>
+                {% if rating_count %}
+                <strong>{{ average_rating }} / 5</strong>
+                <span class="small-muted">({{ rating_count }} rating{{ '' if rating_count == 1 else 's' }})</span>
+                {% else %}
+                <strong>Not rated yet</strong>
+                {% endif %}
+            </span>
+            {% if current_user %}
+            <form method="post" action="{{ url_for('rate_deck') }}" class="deck-star-rating" aria-label="Rate this deck from 1 to 5 stars">
+                <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                <span class="small-muted rating-prompt">Your rating</span>
+                <span class="star-button-group" role="group" aria-label="Choose a deck rating">
+                    {% for score in range(1, 6) %}
+                    <button
+                        class="star-rating-button{{ ' is-selected' if my_rating and score <= my_rating else '' }}"
+                        type="submit"
+                        name="rating"
+                        value="{{ score }}"
+                        title="Rate this deck {{ score }} out of 5 stars"
+                        aria-label="Rate this deck {{ score }} out of 5 stars"
+                        aria-pressed="{{ 'true' if my_rating == score else 'false' }}"
+                        data-preserve-submit-label="true"
+                    ><span aria-hidden="true">★</span></button>
+                    {% endfor %}
+                </span>
+            </form>
+            {% else %}
+            <a class="small-muted deck-rating-login" href="{{ url_for('login', next=request.full_path) }}">Log in to rate</a>
             {% endif %}
+            {% endif %}
+        </div>
+
+        <div class="public-deck-row public-deck-description-row">
+            <p class="muted-copy mb-0">{{ deck.detailed_description or 'No description has been added for this deck.' }}</p>
+            {% if deck.is_public %}
+            <p class="small-muted mb-0 public-deck-creator">Created by <a href="{{ url_for('creator_profile', username=deck.owner.username) }}">{{ deck.owner.username }}</a></p>
+            {% endif %}
+        </div>
+
+        <div class="public-deck-row public-deck-tags-row">
+            <span class="small-muted row-label">Tags</span>
+            {% if deck.tags %}
+            <div class="card-rail">
+                {% for tag in deck.tags.split(',') %}
+                    {% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <span class="small-muted">No tags</span>
+            {% endif %}
+        </div>
+
+        <div class="public-deck-row public-deck-actions-row">
+            <a class="btn-primary-surface" href="{{ url_for('view', deck_id=deck.deck_id) }}">Study</a>
             {% if deck.owned_by == user_id %}
-            <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
+            <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit Deck</a>
             {% elif current_user and can_copy %}
             <form method="post" action="{{ url_for('copy_public_deck') }}">
                 <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
                 {% if share_token %}<input type="hidden" name="share_token" value="{{ share_token }}">{% endif %}
-                <button class="btn-surface" type="submit">Copy To My Decks</button>
+                <button class="btn-surface" type="submit">Copy Deck</button>
             </form>
             {% elif not current_user and can_copy %}
             <a class="btn-surface" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
             {% endif %}
-            <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back To Search</a>
+            <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back</a>
+            {% if deck.is_public and current_user and deck.owned_by != user_id %}
+            <button class="btn-danger-surface" type="button" data-bs-toggle="modal" data-bs-target="#reportDeckModal">Report</button>
+            {% endif %}
         </div>
-        {% if deck.is_public and current_user %}
-        <div class="toolbar-row mt-3">
-            <form method="post" action="{{ url_for('toggle_deck_favorite') }}"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><button class="btn-surface" type="submit">{{ 'Remove Bookmark' if is_favorite else 'Bookmark Deck' }}</button></form>
-            <form method="post" action="{{ url_for('rate_deck') }}" class="toolbar-row"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><label class="small-muted" for="deckRating">Your rating</label><select class="form-select" id="deckRating" name="rating">{% for score in range(1, 6) %}<option value="{{ score }}" {% if score == my_rating %}selected{% endif %}>{{ score }} star{{ '' if score == 1 else 's' }}</option>{% endfor %}</select><button class="btn-surface" type="submit">Save rating</button></form>
-            <details><summary class="btn-ghost-surface">Report</summary><div class="detail-panel"><form method="post" action="{{ url_for('report_deck') }}" class="section-stack"><input type="hidden" name="deck_id" value="{{ deck.deck_id }}"><select class="form-select" name="reason"><option value="inaccurate">Inaccurate</option><option value="spam">Spam</option><option value="copyright">Copyright concern</option><option value="other">Other</option></select><input class="form-control" name="detail" maxlength="500" placeholder="Optional detail"><button class="btn-danger-surface" type="submit">Submit report</button></form></div></details>
-        </div>
-        {% endif %}
     </article>
+
     <article class="surface p-4">
         <div class="panel-header mb-3"><h2 class="h3 mb-0">Cards</h2></div>
         {% if deck.cards %}
@@ -65,4 +140,41 @@
         {% endif %}
     </article>
 </section>
+
+{% if deck.is_public and current_user and deck.owned_by != user_id %}
+<div class="modal fade deck-report-modal" id="reportDeckModal" tabindex="-1" aria-labelledby="reportDeckModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="post" action="{{ url_for('report_deck') }}" class="modal-content">
+            <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+            <div class="modal-header">
+                <div>
+                    <span class="page-kicker mb-2">Community safety</span>
+                    <h2 class="modal-title h4" id="reportDeckModalTitle">Report {{ deck.description }}</h2>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close report form"></button>
+            </div>
+            <div class="modal-body section-stack">
+                <p class="muted-copy mb-0">Tell the moderation team why this deck needs review.</p>
+                <div>
+                    <label class="form-label" for="deckReportReason">Reason</label>
+                    <select class="form-select" id="deckReportReason" name="reason" required>
+                        <option value="inaccurate">Inaccurate</option>
+                        <option value="spam">Spam</option>
+                        <option value="copyright">Copyright concern</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label" for="deckReportDetail">Additional details <span class="small-muted">(optional)</span></label>
+                    <textarea class="form-control" id="deckReportDetail" name="detail" rows="4" maxlength="500" placeholder="Share any context that will help the moderation team."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost-surface" type="button" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn-danger-surface" type="submit">Submit Report</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
