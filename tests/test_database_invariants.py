@@ -10,7 +10,15 @@ from sqlalchemy.exc import IntegrityError
 
 from app import create_app
 from models import Card, CardAnswer, CardMasteryProgress, Deck, Quiz, QuizAttempt, QuizOption, QuizQuestion, User, db
-from services import add_card, copy_public_deck_to_user, create_user, delete_card, move_card_in_deck, reorder_cards_in_deck
+from services import (
+    add_card,
+    copy_public_deck_to_user,
+    create_user,
+    delete_card,
+    move_card_in_deck,
+    reorder_cards_in_deck,
+    swap_cards_in_deck,
+)
 from tests.support import CardsTestCase
 
 
@@ -101,6 +109,8 @@ class DatabaseInvariantTests(CardsTestCase):
         cards = [add_card(deck.deck_id, f'Question {index}', [f'Answer {index}']) for index in range(3)]
         card_ids = [card.card_id for card in cards]
         self.assertEqual([db.session.get(Card, card_id).position for card_id in card_ids], [1, 2, 3])
+        self.assertTrue(swap_cards_in_deck(card_ids[0], card_ids[1])['swapped'])
+        self.assertEqual([db.session.get(Card, card_id).position for card_id in card_ids], [2, 1, 3])
         self.assertTrue(move_card_in_deck(card_ids[2], 'up')['moved'])
         deck_id = deck.deck_id
         self.assertTrue(reorder_cards_in_deck(deck_id, [card_ids[2], card_ids[0], card_ids[1]])['success'])

@@ -105,7 +105,10 @@ def _renumber_deck_cards(deck_id):
 def _swap_positions(first_card, second_card):
     first_position = first_card.position
     second_position = second_card.position
-    temporary_position = max(first_position, second_position) + 1
+    deck_max_position = db.session.query(func.max(Card.position)).filter(
+        Card.deck_id == first_card.deck_id
+    ).scalar() or 0
+    temporary_position = deck_max_position + 1
     first_card.position = temporary_position
     db.session.flush()
     second_card.position = first_position
