@@ -1,11 +1,170 @@
 """Contract tests for canonical public URLs and deck collaboration."""
 
-from models import Card, Deck, DeckCollaborator, DeckFavorite, DeckShareLink, Quiz, db
-from services import add_card, create_deck, edit_deck, get_match_game_data
+from models import (
+    Card,
+    CuratedCollection,
+    CuratedCollectionDeck,
+    Deck,
+    DeckCollaborator,
+    DeckFavorite,
+    DeckShareLink,
+    Quiz,
+    User,
+    db,
+)
+from services import add_card, create_deck, create_user, edit_deck, get_match_game_data
 from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_collection_workflow_orders_accessible_decks_and_protects_private_content(self):
+        owner_id = self.user_session('collection-owner')
+        with self.app.app_context():
+            owned_public = create_deck(owner_id, 'Owned Public', is_public=True)
+            owned_private = create_deck(owner_id, 'Owned Private')
+            external_owner = create_user('external-collection-owner', 'password12345')
+            external_public = create_deck(
+                external_owner.user_id, 'External Public', is_public=True,
+            )
+            external_private = create_deck(
+                external_owner.user_id, 'External Private', is_public=False,
+            )
+            db.session.add(DeckFavorite(
+                user_id=owner_id, deck_id=external_public.deck_id,
+            ))
+            db.session.commit()
+            deck_ids = {
+                'owned_public': owned_public.deck_id,
+                'owned_private': owned_private.deck_id,
+                'external_public': external_public.deck_id,
+                'external_private': external_private.deck_id,
+            }
+
+        created = self.client.post(
+            '/collections/create',
+            data={
+                'title': 'Exam Preparation',
+                'description': 'An ordered review plan.',
+                'is_public': 'yes',
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(created.status_code, 302)
+        with self.app.app_context():
+            collection = CuratedCollection.query.filter_by(owned_by=owner_id).one()
+            collection_id = collection.collection_id
+
+        for deck_id in (
+            deck_ids['owned_public'],
+            deck_ids['owned_private'],
+            deck_ids['external_public'],
+        ):
+            added = self.client.post(
+                '/collections/decks/add',
+                data={'collection_id': collection_id, 'deck_id': deck_id},
+                headers=self.csrf(),
+            )
+            self.assertEqual(added.status_code, 302)
+
+        denied_private = self.client.post(
+            '/collections/decks/add',
+            data={
+                'collection_id': collection_id,
+                'deck_id': deck_ids['external_private'],
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(denied_private.status_code, 302)
+        self.assertIn('Choose+an+accessible+deck', denied_private.headers['Location'])
+
+        moved = self.client.post(
+            '/collections/decks/move',
+            data={
+                'collection_id': collection_id,
+                'deck_id': deck_ids['external_public'],
+                'direction': 'up',
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(moved.status_code, 302)
+        with self.app.app_context():
+            ordered_ids = [
+                entry.deck_id for entry in CuratedCollectionDeck.query.filter_by(
+                    collection_id=collection_id,
+                ).order_by(CuratedCollectionDeck.position).all()
+            ]
+            self.assertEqual(ordered_ids, [
+                deck_ids['owned_public'],
+                deck_ids['external_public'],
+                deck_ids['owned_private'],
+            ])
+
+        manager = self.client.get(f'/collections?collection_id={collection_id}')
+        self.assertEqual(manager.status_code, 200)
+        self.assertIn(b'Owned Private', manager.data)
+        self.assertIn(b'External Public', manager.data)
+
+        owner_preview = self.client.get(f'/collections/{collection_id}')
+        self.assertEqual(owner_preview.status_code, 200)
+        self.assertIn(b'Owned Private', owner_preview.data)
+
+        with self.client.session_transaction() as current_session:
+            current_session.clear()
+        public_page = self.client.get(f'/collections/{collection_id}')
+        self.assertEqual(public_page.status_code, 200)
+        self.assertIn(b'Owned Public', public_page.data)
+        self.assertIn(b'External Public', public_page.data)
+        self.assertNotIn(b'Owned Private', public_page.data)
+        self.assertIn(b'Exam Preparation', self.client.get('/creators/collection-owner').data)
+
+        self.user_session('collection-intruder')
+        unauthorized = self.client.post(
+            '/collections/edit',
+            data={
+                'collection_id': collection_id,
+                'title': 'Hijacked',
+                'description': '',
+                'is_public': 'yes',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assertEqual(unauthorized.status_code, 404)
+        with self.app.app_context():
+            self.assertEqual(
+                db.session.get(CuratedCollection, collection_id).title,
+                'Exam Preparation',
+            )
+
+        with self.app.app_context():
+            owner_auth_version = db.session.get(User, owner_id).auth_version
+        with self.client.session_transaction() as current_session:
+            current_session.update(
+                user_id=owner_id,
+                auth_version=owner_auth_version,
+                csrf_token='contract-csrf-token',
+            )
+        removed = self.client.post(
+            '/collections/decks/remove',
+            data={
+                'collection_id': collection_id,
+                'deck_id': deck_ids['external_public'],
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(removed.status_code, 302)
+        deleted = self.client.post(
+            '/collections/delete',
+            data={'collection_id': collection_id},
+            headers=self.csrf(),
+        )
+        self.assertEqual(deleted.status_code, 302)
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(CuratedCollection, collection_id))
+            self.assertEqual(
+                CuratedCollectionDeck.query.filter_by(collection_id=collection_id).count(),
+                0,
+            )
+
     def test_saved_deck_library_is_paginated_user_scoped_and_public_only(self):
         owner_id = self.user_session('bookmark-owner')
         with self.app.app_context():

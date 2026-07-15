@@ -89,6 +89,7 @@ GPL-3.0 license policy are documented in
 - `/theme` saves the signed-in user's light/dark preference
 - `/dashboard` shows a signed-in user's progress and recommended study deck
 - `/saved` lists the signed-in user's bookmarked public decks
+- `/collections` organizes owned and saved decks into ordered private or public collections
 - `/admin/users` provides admin-only user management
 - `/edit` manages decks and cards
 - `/view` shows study mode
@@ -97,6 +98,7 @@ GPL-3.0 license policy are documented in
 - `/reorder` runs the ordering game
 - `/search` finds public decks and quizzes
 - `/public_deck` and `/public_quiz` show read-only public content detail pages
+- `/collections/<id>` shows a public collection or its owner-only private preview
 - `/quiz` launches deck or custom quizzes
 - `/edit_quiz` manages custom quizzes
 

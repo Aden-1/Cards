@@ -96,6 +96,23 @@ the resolving moderator sets `resolved_by` to `NULL`; deleting the reporter or
 reported deck removes its report. The `(status, created_at)` index supports the
 oldest-first moderation queue.
 
+### CuratedCollection
+```python
+class CuratedCollection(db.Model):
+    collection_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    owned_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    title = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    is_public = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+```
+
+`CuratedCollectionDeck` uses `(collection_id, deck_id)` as its composite primary
+key and stores a positive, one-based `position`. Service mutations maintain
+dense ordering and cap each collection at 100 decks. Public rendering filters
+entry visibility independently from collection visibility, preventing a deck
+that later becomes private from leaking through a public collection.
+
 ### Card
 ```python
 class Card(db.Model):

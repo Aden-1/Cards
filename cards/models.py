@@ -183,7 +183,12 @@ class CuratedCollection(db.Model):
     description = db.Column(db.String(500), nullable=True)
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
-    entries = db.relationship('CuratedCollectionDeck', backref='collection', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    owner = db.relationship('User')
+    entries = db.relationship(
+        'CuratedCollectionDeck', backref='collection', lazy=True,
+        cascade='all, delete-orphan', passive_deletes=True,
+        order_by='CuratedCollectionDeck.position',
+    )
 
 
 class CuratedCollectionDeck(db.Model):

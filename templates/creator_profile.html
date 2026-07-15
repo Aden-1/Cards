@@ -24,5 +24,9 @@
         <div class="public-grid mt-3">{% for quiz in quizzes %}<article class="public-card"><h3 class="h5">{{ quiz.title }}</h3><a class="btn-surface" href="{{ url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)) }}">View quiz</a></article>{% else %}<p class="muted-copy">No public quizzes yet.</p>{% endfor %}</div>
         {{ profile_pages(quiz_page, 'quiz_page', {'name': 'deck_page', 'page': deck_page.page}, 'Quizzes') }}
     </article>
+    <article class="surface p-4">
+        <h2 class="h3">Public Collections</h2>
+        <div class="public-grid mt-3">{% for collection in collections %}<article class="public-card"><h3 class="h5">{{ collection.title }}</h3><p class="small-muted">{{ collection.description or 'Curated deck collection' }}</p><a class="btn-surface" href="{{ url_for('public_collection', collection_id=collection.collection_id) }}">View collection</a></article>{% else %}<p class="muted-copy">No public collections yet.</p>{% endfor %}</div>
+    </article>
 </section>
 {% endblock %}

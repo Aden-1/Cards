@@ -60,6 +60,33 @@ public, newest bookmark first. Accepts `page` and `page_size`; page size is
 capped at 50. Bookmarks belonging to other users and decks that have become
 private are never rendered.
 
+### Collections
+**GET** `/collections`
+
+Requires login. Lists the signed-in user's collections and manages one selected
+collection through the `collection_id` query parameter. Candidate decks include
+owned decks and bookmarked public decks. Collection pages are bounded to 50
+rows, and each collection is capped at 100 decks.
+
+Mutation routes, all login- and CSRF-protected:
+- `POST /collections/create`: `title`, optional `description`, optional `is_public`
+- `POST /collections/edit`: the same fields plus `collection_id`
+- `POST /collections/delete`: `collection_id`
+- `POST /collections/decks/add`: `collection_id`, `deck_id`
+- `POST /collections/decks/remove`: `collection_id`, `deck_id`
+- `POST /collections/decks/move`: `collection_id`, `deck_id`, and `direction` (`up` or `down`)
+
+Only the owner can mutate a collection. A collection may contain owned private
+decks or public decks. Public collection pages never expose a private deck to
+someone other than that deck's owner.
+
+### Collection Detail
+**GET** `/collections/<collection_id>`
+
+Returns an ordered public collection. Private collections return 404 except to
+their owner, who receives a private preview. Public creator profiles include up
+to 20 of the creator's newest public collections.
+
 ### Register
 **GET, POST** `/register`
 

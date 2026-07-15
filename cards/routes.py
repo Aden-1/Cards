@@ -14,7 +14,7 @@ from flask import Response, abort, current_app, g, jsonify, redirect, render_tem
 from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from .api_contract import api_error, api_response, is_api_request, request_payload
 from .static_assets import asset_url, asset_version, is_current_asset_version
 from .config import validate_rate_limit
@@ -1410,6 +1410,212 @@ def saved_decks_route():
     )
 
 
+@login_required
+def collections_route():
+    """Manage the signed-in user's ordered deck collections."""
+    from models import CuratedCollection, CuratedCollectionDeck, Deck, DeckFavorite
+
+    user_id = _current_user_id()
+    page = _requested_page()
+    per_page = _requested_page_size()
+    query = CuratedCollection.query.options(
+        selectinload(CuratedCollection.entries).joinedload(CuratedCollectionDeck.deck),
+    ).filter_by(
+        owned_by=user_id,
+    ).order_by(
+        CuratedCollection.created_at.desc(), CuratedCollection.collection_id.desc(),
+    )
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    collections = rows[:per_page]
+    selected_id = _int_value(request.args.get('collection_id'))
+    selected_collection = next(
+        (collection for collection in collections if collection.collection_id == selected_id),
+        None,
+    )
+    if selected_id and not selected_collection:
+        selected_collection = CuratedCollection.query.options(
+            selectinload(CuratedCollection.entries).joinedload(CuratedCollectionDeck.deck),
+        ).filter_by(collection_id=selected_id, owned_by=user_id).first()
+    if not selected_collection and collections:
+        selected_collection = collections[0]
+
+    available_decks = []
+    selected_entries = []
+    hidden_entries = []
+    if selected_collection:
+        selected_entries = [
+            entry for entry in selected_collection.entries
+            if entry.deck.is_public or entry.deck.owned_by == user_id
+        ]
+        hidden_entries = [
+            entry for entry in selected_collection.entries
+            if not entry.deck.is_public and entry.deck.owned_by != user_id
+        ]
+        selected_deck_ids = {entry.deck_id for entry in selected_collection.entries}
+        owned_decks = Deck.query.filter_by(owned_by=user_id).order_by(
+            Deck.description.asc(), Deck.deck_id.asc(),
+        ).limit(50).all()
+        saved_public_decks = Deck.query.join(
+            DeckFavorite, DeckFavorite.deck_id == Deck.deck_id,
+        ).filter(
+            DeckFavorite.user_id == user_id,
+            Deck.is_public == True,
+        ).order_by(
+            DeckFavorite.created_at.desc(), Deck.deck_id.desc(),
+        ).limit(50).all()
+        seen = set()
+        for deck in [*owned_decks, *saved_public_decks]:
+            if deck.deck_id in selected_deck_ids or deck.deck_id in seen:
+                continue
+            seen.add(deck.deck_id)
+            available_decks.append(deck)
+
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+    return render_template(
+        'collections.html', collections=collections,
+        selected_collection=selected_collection, available_decks=available_decks,
+        selected_entries=selected_entries, hidden_entries=hidden_entries,
+        pagination=pagination, **_pagination_context('collections'),
+    )
+
+
+@login_required
+def create_collection_route():
+    from services import create_curated_collection
+
+    data = _request_data()
+    try:
+        collection = create_curated_collection(
+            _current_user_id(), data.get('title'), data.get('description'),
+            _as_bool(data.get('is_public')),
+        )
+    except ValueError as exc:
+        return redirect(url_for('collections', notice=str(exc), level='error'))
+    return redirect(url_for(
+        'collections', collection_id=collection.collection_id,
+        notice='Collection created.', level='success',
+    ))
+
+
+@login_required
+def edit_collection_route():
+    from services import edit_curated_collection
+
+    data = _request_data()
+    collection_id = _int_value(data.get('collection_id'))
+    try:
+        collection = edit_curated_collection(
+            collection_id, _current_user_id(), data.get('title'), data.get('description'),
+            _as_bool(data.get('is_public')),
+        )
+    except ValueError as exc:
+        return redirect(url_for(
+            'collections', collection_id=collection_id, notice=str(exc), level='error',
+        ))
+    if not collection:
+        return jsonify({'error': 'Collection not found'}), 404
+    return redirect(url_for(
+        'collections', collection_id=collection.collection_id,
+        notice='Collection saved.', level='success',
+    ))
+
+
+@login_required
+def delete_collection_route():
+    from services import delete_curated_collection
+
+    collection_id = _int_value(_request_data().get('collection_id'))
+    if not delete_curated_collection(collection_id, _current_user_id()):
+        return jsonify({'error': 'Collection not found'}), 404
+    return redirect(url_for(
+        'collections', notice='Collection deleted.', level='success',
+    ))
+
+
+@login_required
+def add_collection_deck_route():
+    from services import add_deck_to_collection
+
+    data = _request_data()
+    collection_id = _int_value(data.get('collection_id'))
+    try:
+        add_deck_to_collection(
+            collection_id, _int_value(data.get('deck_id')), _current_user_id(),
+        )
+    except ValueError as exc:
+        return redirect(url_for(
+            'collections', collection_id=collection_id, notice=str(exc), level='error',
+        ))
+    return redirect(url_for(
+        'collections', collection_id=collection_id,
+        notice='Deck added to collection.', level='success',
+    ))
+
+
+@login_required
+def remove_collection_deck_route():
+    from services import remove_deck_from_collection
+
+    data = _request_data()
+    collection_id = _int_value(data.get('collection_id'))
+    if not remove_deck_from_collection(
+        collection_id, _int_value(data.get('deck_id')), _current_user_id(),
+    ):
+        return jsonify({'error': 'Collection entry not found'}), 404
+    return redirect(url_for(
+        'collections', collection_id=collection_id,
+        notice='Deck removed from collection.', level='success',
+    ))
+
+
+@login_required
+def move_collection_deck_route():
+    from services import move_collection_deck
+
+    data = _request_data()
+    collection_id = _int_value(data.get('collection_id'))
+    try:
+        moved = move_collection_deck(
+            collection_id, _int_value(data.get('deck_id')), _current_user_id(),
+            (data.get('direction') or '').strip().lower(),
+        )
+    except ValueError as exc:
+        return redirect(url_for(
+            'collections', collection_id=collection_id, notice=str(exc), level='error',
+        ))
+    return redirect(url_for(
+        'collections', collection_id=collection_id,
+        notice='Collection order updated.' if moved else 'Deck is already at the edge.',
+        level='success' if moved else 'info',
+    ))
+
+
+def public_collection_route(collection_id):
+    from models import CuratedCollection, CuratedCollectionDeck
+
+    collection = CuratedCollection.query.options(
+        selectinload(CuratedCollection.entries).joinedload(CuratedCollectionDeck.deck),
+        joinedload(CuratedCollection.owner),
+    ).filter_by(collection_id=collection_id).first_or_404()
+    user_id = _current_user_id()
+    is_owner = collection.owned_by == user_id
+    if not collection.is_public and not is_owner:
+        abort(404)
+    visible_entries = [
+        entry for entry in collection.entries
+        if entry.deck.is_public or entry.deck.owned_by == user_id
+    ]
+    return render_template(
+        'public_collection.html', collection=collection,
+        entries=visible_entries, is_owner=is_owner,
+    )
+
+
 # Deck editor.
 # Render the deck editor page.
 def edit():
@@ -2419,7 +2625,7 @@ def report_deck_route():
 
 
 def creator_profile_route(username):
-    from models import Deck, Quiz, User
+    from models import CuratedCollection, Deck, Quiz, User
     try:
         normalized_username = canonical_username(username)
     except ValueError:
@@ -2436,10 +2642,15 @@ def creator_profile_route(username):
         max(1, _int_value(request.args.get('quiz_page')) or 1),
         per_page,
     )
+    collections = CuratedCollection.query.filter_by(
+        owned_by=creator.user_id, is_public=True,
+    ).order_by(
+        CuratedCollection.created_at.desc(), CuratedCollection.collection_id.desc(),
+    ).limit(20).all()
     return render_template(
         'creator_profile.html', creator=creator,
         decks=deck_page['items'], quizzes=quiz_page['items'],
-        deck_page=deck_page, quiz_page=quiz_page,
+        collections=collections, deck_page=deck_page, quiz_page=quiz_page,
     )
 
 
@@ -2938,6 +3149,14 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/dashboard', endpoint='dashboard', view_func=dashboard, methods=['GET'])
     app.add_url_rule('/saved', endpoint='saved_decks', view_func=saved_decks_route, methods=['GET'])
+    app.add_url_rule('/collections', endpoint='collections', view_func=collections_route, methods=['GET'])
+    app.add_url_rule('/collections/<int:collection_id>', endpoint='public_collection', view_func=public_collection_route, methods=['GET'])
+    app.add_url_rule('/collections/create', endpoint='create_collection', view_func=_limit(create_collection_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/collections/edit', endpoint='edit_collection', view_func=_limit(edit_collection_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/collections/delete', endpoint='delete_collection', view_func=_limit(delete_collection_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/collections/decks/add', endpoint='add_collection_deck', view_func=_limit(add_collection_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/collections/decks/remove', endpoint='remove_collection_deck', view_func=_limit(remove_collection_deck_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/collections/decks/move', endpoint='move_collection_deck', view_func=_limit(move_collection_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])

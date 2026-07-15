@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Cards | {{ collection.title }}{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">{{ 'Private Collection Preview' if not collection.is_public else 'Public Collection' }}</span>
+    <h1 class="page-title">{{ collection.title }}</h1>
+    <p class="page-description">{{ collection.description or 'An ordered collection of study decks.' }}</p>
+    <p class="small-muted">Curated by <a href="{{ url_for('creator_profile', username=collection.owner.username) }}">{{ collection.owner.username }}</a></p>
+</section>
+
+<section class="surface p-4 p-lg-5 fade-in">
+    <div class="panel-header mb-4">
+        <div><h2 class="h3 mb-1">Decks</h2><p class="muted-copy mb-0">{{ entries|length }} visible deck{{ '' if entries|length == 1 else 's' }}</p></div>
+        {% if is_owner %}<a class="btn-surface" href="{{ url_for('collections', collection_id=collection.collection_id) }}">Manage Collection</a>{% endif %}
+    </div>
+    {% if entries %}
+    <div class="deck-grid stagger">
+        {% for entry in entries %}
+        <article class="deck-card">
+            <div class="panel-header"><span class="score-chip">{{ entry.position }}</span><span class="status-chip {{ 'public' if entry.deck.is_public else 'private' }}">{{ 'Public' if entry.deck.is_public else 'Private' }}</span></div>
+            <h3 class="h4 mb-0">{{ entry.deck.description }}</h3>
+            <p class="muted-copy mb-0">{{ entry.deck.detailed_description or 'Study deck' }}</p>
+            <div class="deck-actions mt-auto">
+                {% if entry.deck.is_public %}<a class="btn-primary-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(entry.deck)) }}">View Deck</a>{% else %}<a class="btn-primary-surface" href="{{ url_for('view', deck_id=entry.deck.deck_id) }}">Study</a>{% endif %}
+                <a class="btn-surface" href="{{ url_for('match', deck_id=entry.deck.deck_id) }}">Match</a>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-card">This collection has no visible decks.</div>
+    {% endif %}
+</section>
+{% endblock %}

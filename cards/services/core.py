@@ -31,6 +31,8 @@ from ..models import (
     Card,
     CardAnswer,
     CardMasteryProgress,
+    CuratedCollection,
+    CuratedCollectionDeck,
     Deck,
     DeckCollaborator,
     DeckShareLink,
@@ -72,6 +74,7 @@ MAX_QUIZ_OPTIONS_PER_QUESTION = 5
 MAX_QUIZ_POOL_LENGTH = 80
 MAX_QUIZ_EXPLANATION_LENGTH = 5000
 MAX_IMPORT_RAW_TEXT_BYTES = 2 * 1024 * 1024
+MAX_COLLECTION_DECKS = 100
 ORDER_MUTATION_RETRIES = 3
 
 
@@ -158,6 +161,129 @@ def _validate_quiz_metadata(title, description=None, tags=None):
         _validate_text_length('Quiz description', description, MAX_QUIZ_DESCRIPTION_LENGTH),
         _validate_text_length('Quiz tags', tags, MAX_QUIZ_TAGS_LENGTH),
     )
+
+
+def _validate_collection_metadata(title, description=None):
+    return (
+        _validate_text_length('Collection title', title, 120, required=True),
+        _validate_text_length('Collection description', description, 500),
+    )
+
+
+def create_curated_collection(user_id, title, description=None, is_public=False):
+    title, description = _validate_collection_metadata(title, description)
+    collection = CuratedCollection(
+        owned_by=user_id,
+        title=title,
+        description=description or None,
+        is_public=bool(is_public),
+    )
+    db.session.add(collection)
+    db.session.commit()
+    return collection
+
+
+def edit_curated_collection(collection_id, user_id, title, description=None, is_public=False):
+    collection = CuratedCollection.query.filter_by(
+        collection_id=collection_id, owned_by=user_id,
+    ).first()
+    if not collection:
+        return None
+    title, description = _validate_collection_metadata(title, description)
+    collection.title = title
+    collection.description = description or None
+    collection.is_public = bool(is_public)
+    db.session.commit()
+    return collection
+
+
+def delete_curated_collection(collection_id, user_id):
+    collection = CuratedCollection.query.filter_by(
+        collection_id=collection_id, owned_by=user_id,
+    ).first()
+    if not collection:
+        return False
+    db.session.delete(collection)
+    db.session.commit()
+    return True
+
+
+def add_deck_to_collection(collection_id, deck_id, user_id):
+    collection = CuratedCollection.query.filter_by(
+        collection_id=collection_id, owned_by=user_id,
+    ).first()
+    deck = db.session.get(Deck, deck_id)
+    if not collection:
+        raise ValueError('Collection not found.')
+    if not deck or (deck.owned_by != user_id and not deck.is_public):
+        raise ValueError('Choose an accessible deck.')
+    existing = db.session.get(CuratedCollectionDeck, (collection_id, deck_id))
+    if existing:
+        return existing
+    entry_count = CuratedCollectionDeck.query.filter_by(
+        collection_id=collection_id,
+    ).count()
+    if entry_count >= MAX_COLLECTION_DECKS:
+        raise ValueError(f'Collections may contain at most {MAX_COLLECTION_DECKS} decks.')
+    entry = CuratedCollectionDeck(
+        collection_id=collection_id, deck_id=deck_id, position=entry_count + 1,
+    )
+    db.session.add(entry)
+    db.session.commit()
+    return entry
+
+
+def _renumber_collection_entries(collection_id):
+    entries = CuratedCollectionDeck.query.filter_by(
+        collection_id=collection_id,
+    ).order_by(
+        CuratedCollectionDeck.position.asc(), CuratedCollectionDeck.deck_id.asc(),
+    ).all()
+    for position, entry in enumerate(entries, 1):
+        entry.position = position
+    return entries
+
+
+def remove_deck_from_collection(collection_id, deck_id, user_id):
+    collection = CuratedCollection.query.filter_by(
+        collection_id=collection_id, owned_by=user_id,
+    ).first()
+    if not collection:
+        return False
+    entry = db.session.get(CuratedCollectionDeck, (collection_id, deck_id))
+    if not entry:
+        return False
+    db.session.delete(entry)
+    db.session.flush()
+    _renumber_collection_entries(collection_id)
+    db.session.commit()
+    return True
+
+
+def move_collection_deck(collection_id, deck_id, user_id, direction):
+    if direction not in ('up', 'down'):
+        raise ValueError('Direction must be up or down.')
+    collection = CuratedCollection.query.filter_by(
+        collection_id=collection_id, owned_by=user_id,
+    ).first()
+    if not collection:
+        raise ValueError('Collection not found.')
+    entries = _renumber_collection_entries(collection_id)
+    current_index = next(
+        (index for index, entry in enumerate(entries) if entry.deck_id == deck_id),
+        None,
+    )
+    if current_index is None:
+        raise ValueError('Deck is not in this collection.')
+    target_index = current_index - 1 if direction == 'up' else current_index + 1
+    if not 0 <= target_index < len(entries):
+        db.session.commit()
+        return False
+    current = entries[current_index]
+    target = entries[target_index]
+    current.position, target.position = target.position, current.position
+    db.session.commit()
+    return True
 
 
 def _validate_card_payload(question, answers):

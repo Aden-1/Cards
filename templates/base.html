@@ -59,6 +59,7 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('account') }}">Account Settings</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('saved_decks') }}">Saved Decks</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('collections') }}">Collections</a></li>
                             <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
                             {% if current_user.is_admin %}
                             <li><a class="dropdown-item" href="{{ url_for('admin_users') }}">Admin Users</a></li>

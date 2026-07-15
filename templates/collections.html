@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import controls %}
+
+{% block title %}Cards | Collections{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Personal Library</span>
+    <h1 class="page-title">Curated collections</h1>
+    <p class="page-description">Organize owned and saved text-based decks into ordered private or public lists.</p>
+</section>
+
+<section class="section-stack fade-in">
+    <article class="surface p-4">
+        <div class="panel-header mb-3">
+            <div><h2 class="h3 mb-1">Your collections</h2><p class="muted-copy mb-0">Choose one to manage its decks.</p></div>
+        </div>
+        {% if collections %}
+        <div class="card-rail">
+            {% for collection in collections %}
+            <a class="tag-chip {{ 'active' if selected_collection and selected_collection.collection_id == collection.collection_id else '' }}" href="{{ url_for('collections', collection_id=collection.collection_id) }}">{{ collection.title }} · {{ collection.entries|length }}</a>
+            {% endfor %}
+        </div>
+        {{ controls(pagination, pagination_endpoint, pagination_args) }}
+        {% else %}
+        <div class="empty-card">Create your first collection below.</div>
+        {% endif %}
+    </article>
+
+    <article class="surface p-4">
+        <div class="panel-header mb-3"><div><span class="page-kicker">New</span><h2 class="h3 mb-1">Create a collection</h2></div></div>
+        <form method="post" action="{{ url_for('create_collection') }}" class="section-stack">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <div><label class="form-label" for="newCollectionTitle">Title</label><input class="form-control" id="newCollectionTitle" name="title" maxlength="120" required></div>
+            <div><label class="form-label" for="newCollectionDescription">Description</label><textarea class="form-control" id="newCollectionDescription" name="description" rows="2" maxlength="500"></textarea></div>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="is_public" value="yes"><span class="form-check-label">Make this collection public</span></label>
+            <button class="btn-primary-surface" type="submit">Create Collection</button>
+        </form>
+    </article>
+
+    {% if selected_collection %}
+    <article class="surface p-4" id="collection-editor">
+        <div class="panel-header mb-3">
+            <div><span class="page-kicker">Manage</span><h2 class="h3 mb-1">{{ selected_collection.title }}</h2></div>
+            <span class="status-chip {{ 'public' if selected_collection.is_public else 'private' }}">{{ 'Public' if selected_collection.is_public else 'Private' }}</span>
+        </div>
+        <form method="post" action="{{ url_for('edit_collection') }}" class="section-stack">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}">
+            <div><label class="form-label" for="collectionTitle">Title</label><input class="form-control" id="collectionTitle" name="title" value="{{ selected_collection.title }}" maxlength="120" required></div>
+            <div><label class="form-label" for="collectionDescription">Description</label><textarea class="form-control" id="collectionDescription" name="description" rows="2" maxlength="500">{{ selected_collection.description or '' }}</textarea></div>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="is_public" value="yes" {% if selected_collection.is_public %}checked{% endif %}><span class="form-check-label">Make this collection public</span></label>
+            <div class="toolbar-row"><button class="btn-primary-surface" type="submit">Save Collection</button><a class="btn-surface" href="{{ url_for('public_collection', collection_id=selected_collection.collection_id) }}">{{ 'View public page' if selected_collection.is_public else 'Preview private page' }}</a></div>
+        </form>
+
+        <div class="mt-4">
+            <h3 class="h5">Ordered decks</h3>
+            {% if hidden_entries %}<div class="alert alert-warning">{{ hidden_entries|length }} deck{{ '' if hidden_entries|length == 1 else 's' }} became private and are hidden because you do not own them.</div>{% endif %}
+            <div class="section-stack">
+                {% for entry in selected_entries %}
+                <div class="answer-row">
+                    <span class="score-chip">{{ entry.position }}</span>
+                    <span class="answer-row-text"><strong>{{ entry.deck.description }}</strong><span class="small-muted"> · {{ 'Public' if entry.deck.is_public else 'Private owned deck' }}</span></span>
+                    <div class="toolbar-row">
+                        <form method="post" action="{{ url_for('move_collection_deck') }}"><input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}"><input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}"><input type="hidden" name="deck_id" value="{{ entry.deck_id }}"><button class="btn-surface" type="submit" name="direction" value="up" aria-label="Move {{ entry.deck.description }} up">↑</button><button class="btn-surface" type="submit" name="direction" value="down" aria-label="Move {{ entry.deck.description }} down">↓</button></form>
+                        <form method="post" action="{{ url_for('remove_collection_deck') }}"><input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}"><input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}"><input type="hidden" name="deck_id" value="{{ entry.deck_id }}"><button class="btn-ghost-surface" type="submit">Remove</button></form>
+                    </div>
+                </div>
+                {% else %}
+                <div class="empty-card">This collection has no visible decks yet.</div>
+                {% endfor %}
+                {% for entry in hidden_entries %}
+                <div class="answer-row"><span class="answer-row-text">Unavailable private deck</span><form method="post" action="{{ url_for('remove_collection_deck') }}"><input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}"><input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}"><input type="hidden" name="deck_id" value="{{ entry.deck_id }}"><button class="btn-ghost-surface" type="submit">Remove unavailable deck</button></form></div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <form method="post" action="{{ url_for('add_collection_deck') }}" class="toolbar-row mt-4">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}">
+            <label class="form-label mb-0" for="collectionDeck">Add an owned or saved deck</label>
+            <select class="form-select" id="collectionDeck" name="deck_id" required><option value="">Choose a deck</option>{% for deck in available_decks %}<option value="{{ deck.deck_id }}">{{ deck.description }}{% if not deck.is_public %} (private){% endif %}</option>{% endfor %}</select>
+            <button class="btn-surface" type="submit" {% if not available_decks %}disabled{% endif %}>Add Deck</button>
+        </form>
+
+        <form method="post" action="{{ url_for('delete_collection') }}" class="mt-4">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <input type="hidden" name="collection_id" value="{{ selected_collection.collection_id }}">
+            <button class="btn-danger-surface" type="submit">Delete Collection</button>
+        </form>
+    </article>
+    {% endif %}
+</section>
+{% endblock %}
