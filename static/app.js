@@ -289,7 +289,22 @@
         form.appendChild(input);
       }
 
-      form.addEventListener('submit', function () {
+      form.addEventListener('submit', function (event) {
+        const submitter = event.submitter;
+        let submitIntent = form.querySelector('input[data-submit-intent="true"]');
+        if (submitter && submitter.name) {
+          if (!submitIntent) {
+            submitIntent = document.createElement('input');
+            submitIntent.type = 'hidden';
+            submitIntent.dataset.submitIntent = 'true';
+            form.appendChild(submitIntent);
+          }
+          submitIntent.name = submitter.name;
+          submitIntent.value = submitter.value;
+        } else if (submitIntent) {
+          submitIntent.remove();
+        }
+
         const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
         submitButtons.forEach((button) => {
           if (button.dataset.locked === 'true') {

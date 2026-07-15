@@ -95,6 +95,16 @@ class BrowserSecurityTests(unittest.TestCase):
         self.assertIn('element.replaceChildren(richTextFragment(value))', renderer)
         self.assertNotIn('element.innerHTML = value', renderer)
 
+    def test_form_lock_preserves_named_submitter_before_disabling_buttons(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root / 'static' / 'app.js').read_text(encoding='utf-8')
+
+        preserve_index = script.index('submitIntent.value = submitter.value;')
+        disable_index = script.index('button.disabled = true;', preserve_index)
+        self.assertLess(preserve_index, disable_index)
+        self.assertIn("submitIntent.type = 'hidden';", script)
+        self.assertIn("submitIntent.name = submitter.name;", script)
+
     def test_static_assets_use_content_hash_urls_and_immutable_cache_headers(self):
         response = self.client.get('/')
         page = response.get_data(as_text=True)
