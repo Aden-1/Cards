@@ -1084,6 +1084,16 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(keyword_args['retry'].max, 3)
         self.assertEqual(keyword_args['retry'].intervals, [30, 120, 300])
 
+    def test_delivery_retry_stays_retryable_while_a_stale_lease_exists(self):
+        import jobs
+
+        fake_redis = mock.Mock()
+        fake_redis.exists.return_value = False
+        fake_redis.set.return_value = False
+        with mock.patch('cards.workers.jobs._password_reset_redis', return_value=fake_redis):
+            with self.assertRaisesRegex(jobs.PasswordResetDeliveryError, 'DeliveryInProgress'):
+                jobs._claim_delivery('stale-worker-request')
+
     def test_password_reset_core_enqueues_worker_when_unpatched(self):
         with mock.patch(
             'cards.workers.jobs.enqueue_password_reset_email', return_value='job-123'

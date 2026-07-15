@@ -16,6 +16,7 @@ _TARGET_DIGEST_PATTERN = re.compile(r'^[0-9a-f]{64}$')
 _LOCAL_DELIVERED_REQUESTS = set()
 _LOCAL_INFLIGHT_REQUESTS = set()
 _LOCAL_STATE_LOCK = threading.Lock()
+_DELIVERY_ALREADY_SENT = object()
 
 
 class PasswordResetDeliveryError(RuntimeError):
@@ -138,18 +139,23 @@ def _claim_delivery(request_id):
     redis = _password_reset_redis()
     if redis is None:
         with _LOCAL_STATE_LOCK:
-            if request_id in _LOCAL_DELIVERED_REQUESTS or request_id in _LOCAL_INFLIGHT_REQUESTS:
-                return None
+            if request_id in _LOCAL_DELIVERED_REQUESTS:
+                return _DELIVERY_ALREADY_SENT
+            if request_id in _LOCAL_INFLIGHT_REQUESTS:
+                raise PasswordResetDeliveryError('DeliveryInProgress')
             _LOCAL_INFLIGHT_REQUESTS.add(request_id)
         return ('local', None)
 
     app = _application()
     prefix = f"{app.config['PASSWORD_RESET_KEY_PREFIX']}:{request_id}"
     if redis.exists(f'{prefix}:sent'):
-        return None
+        return _DELIVERY_ALREADY_SENT
     lock_seconds = app.config['PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS'] + 30
     if not redis.set(f'{prefix}:sending', '1', nx=True, ex=lock_seconds):
-        return None
+        # A retry that arrives while a crashed worker's lease is still alive
+        # must remain retryable. Treating this as a completed duplicate can
+        # otherwise acknowledge the only retry before the lease expires.
+        raise PasswordResetDeliveryError('DeliveryInProgress')
     return (redis, prefix)
 
 
@@ -208,7 +214,7 @@ def deliver_password_reset_email(target_digest, request_id):
             raise PasswordResetDeliveryError('ResetUrlNotConfigured')
 
         claim = _claim_delivery(request_id)
-        if claim is None:
+        if claim is _DELIVERY_ALREADY_SENT:
             app.logger.info('password_reset_delivery_skipped request_id=%s reason=duplicate', request_id)
             return
 
@@ -252,7 +258,7 @@ def deliver_account_email(user_id, delivery_type, request_id):
         if not app.config['PASSWORD_RESET_EMAILS_ENABLED']:
             raise PasswordResetDeliveryError('EmailDisabled')
         claim = _claim_delivery(f'{delivery_type}-{request_id}')
-        if claim is None:
+        if claim is _DELIVERY_ALREADY_SENT:
             return
         try:
             if delivery_type == 'verification':
