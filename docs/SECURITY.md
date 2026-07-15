@@ -36,3 +36,13 @@ email addresses, and other secrets are excluded.
 The response CSP uses `style-src 'self'` with no `unsafe-inline`. Templates
 contain no inline style attributes or style blocks. Styles are served from
 content-versioned static CSS; script blocks retain per-response nonces.
+
+Offline support is fail-closed for private data. Only successful anonymous
+pages from an endpoint allowlist receive `X-Cards-Public: 1`, and the service
+worker requires that response marker before caching. Authenticated HTML,
+unlisted share links, account pages, and mutation responses remain `no-store`.
+
+The unauthenticated `/api/v1` surface is read-only and filters every query to
+public records. Public quiz detail omits options, accepted answers, correctness,
+and explanations so the API cannot be used as an answer key. All endpoints are
+bounded and rate limited.

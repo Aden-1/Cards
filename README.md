@@ -26,6 +26,9 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Copy public decks and public quizzes into your own account
 - Save and rate public quizzes, report unsafe or inaccurate quizzes, and review saved quizzes later
 - Share unlisted quizzes with view/copy links and invite co-authors while retaining owner-only access control
+- Configure a local-time daily in-app study reminder
+- Reopen recently visited anonymous public pages offline through a bounded text-only service-worker cache
+- Read public decks and quiz prompts through a paginated, versioned JSON API
 - Admin users can review accounts and manage roles
 
 Cards intentionally remains text-only: deck cards and quiz content do not accept
@@ -97,6 +100,7 @@ GPL-3.0 license policy are documented in
 - `/theme` saves the signed-in user's light/dark preference
 - `/dashboard` shows a signed-in user's progress and recommended study deck
 - `/saved` lists the signed-in user's bookmarked public decks
+- `/saved-quizzes` lists the signed-in user's bookmarked public quizzes
 - `/collections` organizes owned and saved decks into ordered private or public collections
 - `/admin/users` provides admin-only user management
 - `/admin/featured` lets admins curate public decks for rotating homepage placement
@@ -112,6 +116,8 @@ GPL-3.0 license policy are documented in
 - `/quiz` launches deck or custom quizzes
 - `/quiz/history` shows a signed-in learner's retained quiz scores and question outcomes
 - `/edit_quiz` manages custom quizzes
+- `/api/v1/decks` and `/api/v1/quizzes` provide bounded public JSON indexes and detail resources
+- `/service-worker.js` enables offline fallback and recently visited anonymous public-page access
 
 ## Local Development Notes
 

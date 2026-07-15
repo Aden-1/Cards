@@ -9,6 +9,7 @@ import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from flask import Response, abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
@@ -394,6 +395,17 @@ def _set_security_headers(response):
             # Unversioned URLs remain safe during development and can never
             # pin a changed asset in a shared cache.
             response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    elif (
+        response.mimetype == 'text/html'
+        and not _current_user()
+        and request.endpoint in {
+            'index', 'search', 'public_deck_detail', 'public_quiz_detail',
+            'public_collection', 'creator_profile',
+        }
+        and response.status_code == 200
+    ):
+        response.headers['Cache-Control'] = 'public, max-age=60'
+        response.headers['X-Cards-Public'] = '1'
     elif response.mimetype == 'text/html':
         # Pages contain a per-response CSP nonce and may contain CSRF tokens or
         # user-specific navigation/data. Do not permit shared or browser disk
@@ -603,6 +615,124 @@ def readyz():
         current_app.logger.exception('database_readiness_check_failed')
         db.session.rollback()
         return api_error('Service not ready.', 503)
+
+
+def _public_api_response(payload):
+    response = api_response(payload)
+    response.headers['Cache-Control'] = 'public, max-age=60'
+    return response
+
+
+def api_v1_decks_route():
+    from models import Card, Deck
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = db.session.query(
+        Deck, db.func.count(Card.card_id).label('card_count'),
+    ).outerjoin(Card, Card.deck_id == Deck.deck_id).filter(
+        Deck.is_public == True,
+    ).group_by(Deck.deck_id).order_by(
+        Deck.deck_id.desc(),
+    ).limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    data = [{
+        'id': deck.deck_id,
+        'title': deck.description,
+        'description': deck.detailed_description,
+        'tags': [tag.strip() for tag in (deck.tags or '').split(',') if tag.strip()],
+        'sortable': deck.sortable,
+        'card_count': int(card_count or 0),
+        'url': url_for('public_deck_detail', deck_slug=deck_url_slug(deck)),
+    } for deck, card_count in rows[:per_page]]
+    return _public_api_response({
+        'api_version': 'v1', 'data': data,
+        'pagination': {'page': page, 'page_size': per_page, 'has_next': has_next},
+    })
+
+
+def api_v1_deck_detail_route(deck_id):
+    from models import Card, Deck
+
+    deck = Deck.query.options(
+        selectinload(Deck.cards).selectinload(Card.answers),
+    ).filter_by(deck_id=deck_id, is_public=True).first()
+    if not deck:
+        return api_error('Public deck not found.', 404)
+    cards = [{
+        'id': card.card_id, 'position': card.position,
+        'question': card.question,
+        'answers': [answer.answer for answer in sorted(
+            card.answers, key=lambda item: item.answer_id,
+        )],
+    } for card in sorted(deck.cards, key=lambda item: (item.position, item.card_id))]
+    return _public_api_response({
+        'api_version': 'v1',
+        'data': {
+            'id': deck.deck_id, 'title': deck.description,
+            'description': deck.detailed_description,
+            'tags': [tag.strip() for tag in (deck.tags or '').split(',') if tag.strip()],
+            'sortable': deck.sortable, 'cards': cards,
+        },
+    })
+
+
+def api_v1_quizzes_route():
+    from models import Quiz, QuizQuestion
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = db.session.query(
+        Quiz, db.func.count(QuizQuestion.question_id).label('question_count'),
+    ).outerjoin(QuizQuestion, QuizQuestion.quiz_id == Quiz.quiz_id).filter(
+        Quiz.is_public == True,
+    ).group_by(Quiz.quiz_id).order_by(
+        Quiz.quiz_id.desc(),
+    ).limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    data = [{
+        'id': quiz.quiz_id, 'title': quiz.title,
+        'description': quiz.description,
+        'tags': [tag.strip() for tag in (quiz.tags or '').split(',') if tag.strip()],
+        'question_count': int(question_count or 0),
+        'url': url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)),
+    } for quiz, question_count in rows[:per_page]]
+    return _public_api_response({
+        'api_version': 'v1', 'data': data,
+        'pagination': {'page': page, 'page_size': per_page, 'has_next': has_next},
+    })
+
+
+def api_v1_quiz_detail_route(quiz_id):
+    from models import Quiz
+
+    quiz = Quiz.query.options(
+        selectinload(Quiz.questions),
+    ).filter_by(quiz_id=quiz_id, is_public=True).first()
+    if not quiz:
+        return api_error('Public quiz not found.', 404)
+    questions = [{
+        'id': question.question_id, 'question': question.question,
+        'type': question.type, 'answer_mode': question.answer_mode,
+        'pool': question.pool,
+    } for question in sorted(quiz.questions, key=lambda item: item.question_id)]
+    return _public_api_response({
+        'api_version': 'v1',
+        'data': {
+            'id': quiz.quiz_id, 'title': quiz.title,
+            'description': quiz.description,
+            'tags': [tag.strip() for tag in (quiz.tags or '').split(',') if tag.strip()],
+            'questions': questions,
+        },
+    })
+
+
+def service_worker_route():
+    worker_path = Path(current_app.static_folder) / 'service-worker.js'
+    response = Response(worker_path.read_bytes(), mimetype='application/javascript')
+    response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
 
 
 def _complete_login(user):
@@ -1065,6 +1195,26 @@ def update_theme_route():
     from models import db
     db.session.commit()
     return jsonify({'success': True, 'theme': user.theme_preference})
+
+
+@login_required
+def update_study_reminder_route():
+    data = _request_data()
+    enabled = _as_bool(data.get('enabled', False))
+    reminder_time = str(data.get('reminder_time') or '').strip()
+    match = re.fullmatch(r'([01]\d|2[0-3]):([0-5]\d)', reminder_time)
+    if not match:
+        return render_template(
+            'account.html', user=_current_user(),
+            error='Choose a valid reminder time.',
+        ), 400
+    user = _current_user()
+    user.study_reminder_enabled = enabled
+    user.study_reminder_minutes = int(match.group(1)) * 60 + int(match.group(2))
+    db.session.commit()
+    return redirect(url_for(
+        'account', notice='Study reminder updated.', level='success',
+    ))
 
 
 @admin_required
@@ -3839,6 +3989,11 @@ def register_routes(app, app_limiter=None):
         return {
             'current_user': user,
             'active_theme': (user.theme_preference if user else None),
+            'study_reminder': ({
+                'enabled': user.study_reminder_enabled,
+                'minutes': user.study_reminder_minutes,
+                'time': f'{user.study_reminder_minutes // 60:02d}:{user.study_reminder_minutes % 60:02d}',
+            } if user else {'enabled': False, 'minutes': 1080, 'time': '18:00'}),
             'csrf_token': _csrf_token,
             'ensure_csrf_token': _ensure_csrf_token,
             'csrf_token_required': csrf_token_required,
@@ -3861,6 +4016,11 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/collections/decks/move', endpoint='move_collection_deck', view_func=_limit(move_collection_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
+    app.add_url_rule('/service-worker.js', endpoint='service_worker', view_func=service_worker_route, methods=['GET'])
+    app.add_url_rule('/api/v1/decks', endpoint='api_v1_decks', view_func=_limit(api_v1_decks_route, 'api', ['GET']), methods=['GET'])
+    app.add_url_rule('/api/v1/decks/<int:deck_id>', endpoint='api_v1_deck_detail', view_func=_limit(api_v1_deck_detail_route, 'api', ['GET']), methods=['GET'])
+    app.add_url_rule('/api/v1/quizzes', endpoint='api_v1_quizzes', view_func=_limit(api_v1_quizzes_route, 'api', ['GET']), methods=['GET'])
+    app.add_url_rule('/api/v1/quizzes/<int:quiz_id>', endpoint='api_v1_quiz_detail', view_func=_limit(api_v1_quiz_detail_route, 'api', ['GET']), methods=['GET'])
     app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=_anonymous_sensitive_limit(login, 'login', ['POST'], _login_target_key), methods=['GET', 'POST'])
@@ -3878,6 +4038,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/account/two-factor/recovery-codes', endpoint='regenerate_two_factor_recovery_codes', view_func=_limit(regenerate_two_factor_recovery_codes_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/account/two-factor/disable', endpoint='disable_two_factor', view_func=_limit(disable_two_factor_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/reminder', endpoint='update_study_reminder', view_func=_limit(update_study_reminder_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/admin/audit-log', endpoint='admin_audit_log', view_func=admin_audit_log, methods=['GET'])
     app.add_url_rule('/admin/featured', endpoint='admin_featured_content', view_func=_limit(admin_featured_content_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])

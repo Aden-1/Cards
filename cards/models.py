@@ -30,6 +30,8 @@ class User(db.Model):
     theme_preference = db.Column(db.String(10), nullable=False, default='dark', server_default=db.text("'dark'"))
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced', server_default=db.text("'spaced'"))
     match_strategy_preference = db.Column(db.String(30), nullable=False, default='standard_shuffle', server_default=db.text("'standard_shuffle'"))
+    study_reminder_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
+    study_reminder_minutes = db.Column(db.Integer, nullable=False, default=1080, server_default=db.text('1080'))
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.text('true'))
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -45,6 +47,8 @@ class User(db.Model):
         CheckConstraint("theme_preference IN ('light', 'dark')", name='ck_user_theme_preference'),
         CheckConstraint("mastery_strategy_preference IN ('linear', 'weakest_first', 'spaced', 'mastery_mix', 'random')", name='ck_user_mastery_strategy'),
         CheckConstraint("match_strategy_preference IN ('standard_shuffle', 'retry_misses', 'progressive_build', 'reverse_pressure', 'timed_recovery', 'weakest_first', 'mastery_mix')", name='ck_user_match_strategy'),
+        CheckConstraint('study_reminder_enabled IS TRUE OR study_reminder_enabled IS FALSE', name='ck_user_study_reminder_enabled_boolean'),
+        CheckConstraint('study_reminder_minutes BETWEEN 0 AND 1439', name='ck_user_study_reminder_minutes_range'),
         CheckConstraint('auth_version >= 0', name='ck_user_auth_version_nonnegative'),
         CheckConstraint('email_verification_version >= 0', name='ck_user_email_verification_version_nonnegative'),
         CheckConstraint("two_factor_method IN ('none', 'email', 'totp')", name='ck_user_two_factor_method'),

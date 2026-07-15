@@ -43,6 +43,7 @@ def is_api_request():
         or wants_json_response()
         or request.endpoint in JSON_RESPONSE_ENDPOINTS
         or request.path in API_PATHS
+        or request.path.startswith('/api/')
     )
 
 

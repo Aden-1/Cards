@@ -1,0 +1,9 @@
+{
+  "name": "Cards Focused Learning System",
+  "short_name": "Cards",
+  "description": "A text-only flashcard and quiz study app.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#111827"
+}

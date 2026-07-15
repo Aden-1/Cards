@@ -17,6 +17,15 @@
         </div>
     </article>
     <article class="auth-card">
+        <div><span class="page-kicker">Study Routine</span><h2 class="h3 mb-2">Daily reminder</h2><p class="muted-copy">Show a text reminder in Cards after your chosen local time. It can be dismissed for the rest of the day on this device.</p></div>
+        <form method="post" action="{{ url_for('update_study_reminder') }}" class="section-stack">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <div class="form-check"><input class="form-check-input" type="checkbox" id="studyReminderEnabled" name="enabled" value="yes" {% if user.study_reminder_enabled %}checked{% endif %}><label class="form-check-label" for="studyReminderEnabled">Enable daily reminder</label></div>
+            <div><label class="form-label" for="studyReminderTime">Reminder time</label><input class="form-control" type="time" id="studyReminderTime" name="reminder_time" value="{{ study_reminder.time }}" required><div class="form-text">Uses the local time on your current device.</div></div>
+            <button class="btn-primary-surface" type="submit">Save Reminder</button>
+        </form>
+    </article>
+    <article class="auth-card">
         <div><span class="page-kicker">Security</span><h2 class="h3 mb-2">Email verification</h2>{% if user.email_verified_at %}<p class="muted-copy mb-0">{{ user.email }} is verified.</p>{% elif user.email %}<p class="muted-copy mb-2">{{ user.email }} has not been verified yet.</p><form method="post" action="{{ url_for('resend_email_verification') }}"><input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}"><button class="btn-surface" type="submit">Send verification link</button></form>{% else %}<p class="muted-copy mb-0">Add an email address to verify it and use email two-factor authentication.</p>{% endif %}</div>
     </article>
     <article class="auth-card">

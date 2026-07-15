@@ -49,6 +49,8 @@ class User(db.Model):
     theme_preference = db.Column(db.String(10), nullable=False, default='dark')
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced')
     match_strategy_preference = db.Column(db.String(30), nullable=False, default='standard_shuffle')
+    study_reminder_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    study_reminder_minutes = db.Column(db.Integer, nullable=False, default=1080)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -70,6 +72,10 @@ class Deck(db.Model):
     is_public = db.Column(db.Boolean, default=False)
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan')
 ```
+
+`study_reminder_minutes` stores a local-device wall-clock minute from 0 through
+1439. The browser performs the local-time comparison; the server stores no
+location or time-zone data.
 
 `DeckTag` has a composite primary key of `(deck_id, tag_normalized)` and a
 `(tag_normalized, deck_id)` index. It is backfilled by migration and maintained

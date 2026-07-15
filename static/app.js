@@ -3,6 +3,7 @@
   const appConfig = window.cardsConfig || {};
   const isAuthenticated = Boolean(appConfig.isAuthenticated);
   const userTheme = typeof appConfig.userTheme === 'string' ? appConfig.userTheme : '';
+  const studyReminder = appConfig.studyReminder || {};
   let savedTheme = '';
   try {
     savedTheme = localStorage.getItem('cards-theme') || '';
@@ -366,6 +367,28 @@
           setMobileNavOpen(false);
           mobileNavToggle.focus();
         }
+      });
+    }
+
+    const reminder = document.getElementById('studyReminder');
+    if (reminder && studyReminder.enabled) {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      let dismissedDate = '';
+      try { dismissedDate = localStorage.getItem('cards-study-reminder-dismissed') || ''; } catch (error) {}
+      if (currentMinutes >= Number(studyReminder.minutes) && dismissedDate !== today) {
+        reminder.hidden = false;
+      }
+      document.getElementById('dismissStudyReminder')?.addEventListener('click', function () {
+        reminder.hidden = true;
+        try { localStorage.setItem('cards-study-reminder-dismissed', today); } catch (error) {}
+      });
+    }
+
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register('/service-worker.js').catch(function () {
+        // Offline support is optional; a failed registration must not affect study flows.
       });
     }
 

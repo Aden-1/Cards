@@ -100,8 +100,9 @@ class BrowserSecurityTests(unittest.TestCase):
         page = response.get_data(as_text=True)
         asset_urls = re.findall(r'(/static/[^"\']+\?v=[0-9a-f]{16})', page)
 
-        self.assertEqual(response.headers['Cache-Control'], 'no-store, private')
-        self.assertEqual(len(asset_urls), 4)
+        self.assertEqual(response.headers['Cache-Control'], 'public, max-age=60')
+        self.assertEqual(response.headers['X-Cards-Public'], '1')
+        self.assertEqual(len(asset_urls), 5)
         self.assertEqual(page.count('defer'), 2)
         self.assertIn("script-src 'self' 'nonce-", response.headers['Content-Security-Policy'])
         response.close()
@@ -123,6 +124,17 @@ class BrowserSecurityTests(unittest.TestCase):
             self.assertEqual(not_modified.status_code, 304, asset_url)
             not_modified.close()
             asset_response.close()
+
+        with cards_app.app.app_context():
+            user = cards_app.create_user('private-cache-user', 'password12345')
+            user_id = user.user_id
+        self._login_session(user_id)
+        authenticated_page = self.client.get('/')
+        self.assertEqual(
+            authenticated_page.headers['Cache-Control'], 'no-store, private',
+        )
+        self.assertNotIn('X-Cards-Public', authenticated_page.headers)
+        authenticated_page.close()
 
     def test_stale_versioned_static_urls_redirect_to_the_current_hash(self):
         response = self.client.get('/static/app.css?v=0000000000000000')

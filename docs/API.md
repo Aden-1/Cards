@@ -790,6 +790,24 @@ Response:
 
 ---
 
+## Versioned Public Read API
+
+The `/api/v1` namespace is a rate-limited, read-only foundation for text-based
+integrations. It requires no account, exposes only public records, returns
+`api_version: "v1"`, and uses a short public cache lifetime. List endpoints
+accept bounded `page` and `page_size` parameters (maximum 50).
+
+- `GET /api/v1/decks` returns public deck metadata and card counts.
+- `GET /api/v1/decks/<deck_id>` returns public deck metadata and text cards.
+- `GET /api/v1/quizzes` returns public quiz metadata and question counts.
+- `GET /api/v1/quizzes/<quiz_id>` returns question prompts, types, answer modes,
+  and pools, but deliberately omits options, accepted answers, correctness, and
+  explanations.
+
+Successful responses use `{ "api_version": "v1", "data": ... }`; errors use
+the shared `{ "error": "public message" }` contract. Private or missing IDs
+return `404` without revealing which case applies.
+
 ## Quiz Routes
 
 ### Create Custom Quiz

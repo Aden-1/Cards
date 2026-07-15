@@ -1,10 +1,90 @@
 """Focused JSON/API contract tests, independent of the browser readiness suite."""
 
-from services import create_custom_quiz
+from models import Deck, Quiz, QuizOption, QuizQuestion, User, db
+from services import add_card, create_custom_quiz, create_deck
 from tests.support import CardsTestCase
 
 
 class ApiContractTests(CardsTestCase):
+    def test_versioned_public_read_api_is_paginated_text_only_and_visibility_safe(self):
+        owner_id = self.user_session('api-v1-owner')
+        with self.app.app_context():
+            public_deck = create_deck(
+                owner_id, 'Public API Deck', detailed_description='Text only',
+                tags='api, study', is_public=True,
+            )
+            add_card(public_deck.deck_id, 'Public question', ['Public answer'])
+            create_deck(owner_id, 'Private API Deck', is_public=False)
+            public_quiz = Quiz(
+                owned_by=owner_id, title='Public API Quiz', is_public=True,
+            )
+            private_quiz = Quiz(
+                owned_by=owner_id, title='Private API Quiz', is_public=False,
+            )
+            db.session.add_all([public_quiz, private_quiz])
+            db.session.flush()
+            question = QuizQuestion(
+                quiz_id=public_quiz.quiz_id, question='API quiz question',
+                type='static', answer_mode='choice', explanation='Secret explanation',
+            )
+            db.session.add(question)
+            db.session.flush()
+            db.session.add_all([
+                QuizOption(question_id=question.question_id, text='Correct secret', is_correct=True),
+                QuizOption(question_id=question.question_id, text='Distractor', is_correct=False),
+            ])
+            db.session.commit()
+            deck_id = public_deck.deck_id
+            quiz_id = public_quiz.quiz_id
+            private_deck_id = Deck.query.filter_by(description='Private API Deck').one().deck_id
+            private_quiz_id = private_quiz.quiz_id
+
+        decks = self.client.get('/api/v1/decks?page_size=1')
+        self.assertEqual(decks.status_code, 200)
+        self.assertEqual(decks.get_json()['api_version'], 'v1')
+        self.assertEqual(decks.get_json()['data'][0]['title'], 'Public API Deck')
+        self.assertNotIn('Private API Deck', decks.get_data(as_text=True))
+        self.assertIn('public', decks.headers['Cache-Control'])
+        deck = self.client.get(f'/api/v1/decks/{deck_id}')
+        self.assertEqual(deck.get_json()['data']['cards'][0]['answers'], ['Public answer'])
+        self.assert_json_error(self.client.get(f'/api/v1/decks/{private_deck_id}'), 404)
+
+        quizzes = self.client.get('/api/v1/quizzes')
+        self.assertIn('Public API Quiz', quizzes.get_data(as_text=True))
+        self.assertNotIn('Private API Quiz', quizzes.get_data(as_text=True))
+        quiz = self.client.get(f'/api/v1/quizzes/{quiz_id}')
+        quiz_text = quiz.get_data(as_text=True)
+        self.assertIn('API quiz question', quiz_text)
+        self.assertNotIn('Correct secret', quiz_text)
+        self.assertNotIn('Secret explanation', quiz_text)
+        self.assert_json_error(self.client.get(f'/api/v1/quizzes/{private_quiz_id}'), 404)
+
+    def test_study_reminder_preference_and_service_worker_contract(self):
+        user_id = self.user_session('reminder-user')
+        updated = self.client.post(
+            '/account/reminder',
+            data={'enabled': 'yes', 'reminder_time': '07:45'},
+            headers=self.csrf(),
+        )
+        self.assertEqual(updated.status_code, 302)
+        with self.app.app_context():
+            user = db.session.get(User, user_id)
+            self.assertTrue(user.study_reminder_enabled)
+            self.assertEqual(user.study_reminder_minutes, 465)
+        page = self.client.get('/account')
+        self.assertIn(b'value="07:45"', page.data)
+        invalid = self.client.post(
+            '/account/reminder',
+            data={'enabled': 'yes', 'reminder_time': '25:00'},
+            headers=self.csrf(),
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+        worker = self.client.get('/service-worker.js')
+        self.assertEqual(worker.status_code, 200)
+        self.assertEqual(worker.headers['Service-Worker-Allowed'], '/')
+        self.assertIn('no-cache', worker.headers['Cache-Control'])
+        self.assertIn(b'X-Cards-Public', worker.data)
     def test_auth_required_json_mutation_has_safe_401(self):
         response = self.client.post(
             '/create_deck',

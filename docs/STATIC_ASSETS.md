@@ -18,10 +18,17 @@ behavior. Direct or unversioned `/static/...` requests receive
 redirected to the current content-hash URL, preventing an origin response
 from associating new bytes with an old immutable URL.
 
-HTML responses are `no-store, private` because pages include a per-response
-CSP nonce and may include CSRF tokens, authenticated navigation, or user data.
-This prevents shared caches from serving one user's page or token to another
-user.
+Authenticated, private, unlisted-token, and CSRF-bearing HTML responses are
+`no-store, private`. A small allowlist of anonymous public pages receives
+`Cache-Control: public, max-age=60` and `X-Cards-Public: 1`. The service worker
+will cache only navigation responses carrying that explicit marker; it cannot
+cache account pages, private content, or share-token pages. Runtime public-page
+storage is capped at 40 entries, while the text-only offline fallback and core
+CSS/JavaScript use a separately versioned cache.
+
+`/service-worker.js` is served with `Service-Worker-Allowed: /` and `no-cache`
+so updates are revalidated. The web manifest intentionally contains no image
+or video assets.
 
 ## Deployment workflow
 

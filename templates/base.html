@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{% block title %}Cards{% endblock %}</title>
+    <meta name="theme-color" content="#111827">
+    <link rel="manifest" href="{{ asset_url('manifest.webmanifest') }}">
     <link href="{{ asset_url('vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
     <link href="{{ asset_url('app.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
@@ -105,6 +107,14 @@
         </div>
     </div>
 </header>
+{% if current_user %}
+<aside id="studyReminder" class="app-shell mt-3" hidden aria-live="polite">
+    <div class="alert alert-info panel-header mb-0">
+        <div><strong>Time for a focused review.</strong> <span>Continue with cards that are due today.</span></div>
+        <div class="toolbar-row"><a class="btn-primary-surface" href="{{ url_for('review_queue') }}">Review now</a><button id="dismissStudyReminder" class="btn-ghost-surface" type="button">Later today</button></div>
+    </div>
+</aside>
+{% endif %}
 <main>
     <div class="app-shell">
         {% block content %}{% endblock %}
@@ -121,7 +131,8 @@
 window.cardsCsrfToken = {{ (ensure_csrf_token() if csrf_token_required else '') | tojson }};
 window.cardsConfig = {
     isAuthenticated: {{ 'true' if current_user else 'false' }},
-    userTheme: {{ (active_theme or '') | tojson }}
+    userTheme: {{ (active_theme or '') | tojson }},
+    studyReminder: {{ study_reminder | tojson }}
 };
 </script>
 <script nonce="{{ csp_nonce }}" src="{{ asset_url('app.js') }}" defer></script>
