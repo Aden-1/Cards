@@ -73,6 +73,38 @@ def _include_selected_quiz(items, selected_quiz):
     return [selected_quiz] + items[:-1]
 
 
+def _master_round_state(deck_id, card_ids):
+    """Load a compact seen-card bitset bound to the current deck graph."""
+    fingerprint = hashlib.sha256(
+        ','.join(str(card_id) for card_id in card_ids).encode('ascii')
+    ).hexdigest()[:16]
+    state = session.get('master_round_state')
+    seen_bits = 0
+    if (
+        isinstance(state, dict)
+        and state.get('deck_id') == deck_id
+        and state.get('fingerprint') == fingerprint
+    ):
+        encoded_bits = state.get('seen_bits')
+        max_hex_length = max(1, (len(card_ids) + 3) // 4)
+        if (
+            isinstance(encoded_bits, str)
+            and len(encoded_bits) <= max_hex_length
+            and re.fullmatch(r'[0-9a-f]+', encoded_bits)
+        ):
+            seen_bits = int(encoded_bits, 16)
+    return seen_bits, fingerprint
+
+
+def _store_master_round_state(deck_id, fingerprint, seen_bits):
+    session.pop('master_seen_cards', None)
+    session['master_round_state'] = {
+        'deck_id': deck_id,
+        'fingerprint': fingerprint,
+        'seen_bits': format(seen_bits, 'x'),
+    }
+
+
 def _redirect_with_fragment(endpoint, fragment=None, **values):
     target = url_for(endpoint, **values)
     if fragment:
@@ -1354,23 +1386,29 @@ def master():
 
     if mastery_snapshot:
         remaining_card_ids = [card['card_id'] for card in mastery_snapshot['queue']]
-        seen_map = session.get('master_seen_cards', {})
-        deck_key = str(selected_deck_id)
-        seen_in_round = [int(card_id) for card_id in seen_map.get(deck_key, [])]
-        unseen_ids = [card_id for card_id in remaining_card_ids if card_id not in seen_in_round]
+        all_card_ids = [card['card_id'] for card in mastery_snapshot['cards']]
+        card_indexes = {card_id: index for index, card_id in enumerate(all_card_ids)}
+        seen_bits, fingerprint = _master_round_state(selected_deck_id, all_card_ids)
+        unseen_ids = [
+            card_id for card_id in remaining_card_ids
+            if not seen_bits & (1 << card_indexes[card_id])
+        ]
 
         if remaining_card_ids and not unseen_ids:
             # One full pass finished; start the next pass using only unmastered cards.
             round_restarted = True
-            seen_in_round = []
-            seen_map[deck_key] = seen_in_round
-            session['master_seen_cards'] = seen_map
+            seen_bits = 0
             unseen_ids = list(remaining_card_ids)
+
+        _store_master_round_state(selected_deck_id, fingerprint, seen_bits)
 
         if unseen_ids:
             selected_master_card = next((card for card in mastery_snapshot['cards'] if card['card_id'] == unseen_ids[0]), None)
         else:
             selected_master_card = None
+    else:
+        session.pop('master_seen_cards', None)
+        session.pop('master_round_state', None)
 
     return render_template(
         'master.html',
@@ -1391,7 +1429,7 @@ def master():
 @login_required
 def master_rate_route():
     from services import normalize_mastery_strategy, record_mastery_rating
-    from models import Deck
+    from models import Card, Deck
 
     data = _request_data()
     user = _current_user()
@@ -1414,13 +1452,21 @@ def master_rate_route():
     if not result.get('success'):
         return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice', notice=result.get('error', 'Could not save rating.'), level='error')
 
-    seen_map = session.get('master_seen_cards', {})
-    deck_key = str(deck_id)
-    deck_seen = [int(existing) for existing in seen_map.get(deck_key, [])]
-    if card_id not in deck_seen:
-        deck_seen.append(card_id)
-    seen_map[deck_key] = deck_seen
-    session['master_seen_cards'] = seen_map
+    all_card_ids = [
+        stored_card_id for (stored_card_id,) in
+        db.session.query(Card.card_id)
+        .filter(Card.deck_id == deck_id)
+        .order_by(Card.position, Card.card_id)
+        .all()
+    ]
+    seen_bits, fingerprint = _master_round_state(deck_id, all_card_ids)
+    try:
+        card_index = all_card_ids.index(card_id)
+    except ValueError:
+        card_index = None
+    if card_index is not None:
+        seen_bits |= 1 << card_index
+    _store_master_round_state(deck_id, fingerprint, seen_bits)
 
     return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice')
 
@@ -1446,9 +1492,8 @@ def master_reset_route():
     user.mastery_strategy_preference = strategy
 
     reset_mastery_progress(user_id=user_id, deck_id=deck_id)
-    seen_map = session.get('master_seen_cards', {})
-    seen_map.pop(str(deck_id), None)
-    session['master_seen_cards'] = seen_map
+    session.pop('master_seen_cards', None)
+    session.pop('master_round_state', None)
     return _redirect_with_fragment('master', deck_id=deck_id, strategy=strategy, fragment='mastery-practice', notice='Mastery progress reset for this deck.', level='success')
 
 
