@@ -21,6 +21,12 @@ dedicated moderation route; they cannot access account administration or
 private-content mutation on behalf of another user. Public registration always
 creates a standard user.
 
+Quiz co-authors may edit metadata and questions but cannot delete the quiz,
+manage collaborators, or create/revoke unlisted links. Only the owner has those
+permissions. Unlisted quiz tokens grant only their stored `view` or `copy`
+capability and do not confer editing access. Quiz reports are visible only to
+moderators and admins.
+
 Account and moderation mutations emit structured audit events containing IDs,
 resource types, outcome, and bounded metadata only. Passwords, reset tokens,
 email addresses, and other secrets are excluded.

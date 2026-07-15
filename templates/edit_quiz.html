@@ -32,6 +32,7 @@
                 <div class="score-chip">{{ q.question_count }} Question{% if q.question_count != 1 %}s{% endif %}</div>
                 <div class="deck-actions mt-auto">
                     <a class="btn-primary-surface" href="{{ url_for('edit_quiz_route', quiz_id=q.quiz_id) }}#quiz-editor">Edit</a>
+                    {% if q.owned_by == current_user.user_id %}
                     <details class="delete-confirm">
                         <summary class="btn-danger-surface">Delete</summary>
                         <div class="delete-confirm-panel">
@@ -45,6 +46,7 @@
                             </div>
                         </div>
                     </details>
+                    {% endif %}
                 </div>
             </article>
             {% endfor %}
@@ -83,6 +85,57 @@
                     <div class="form-actions"><button class="btn-primary-surface" type="submit">Add Question</button></div>
                 </form>
             </article>
+            {% if can_manage_quiz_sharing %}
+            <article class="editor-card">
+                <h3 class="h5 mb-3">Sharing and co-authors</h3>
+                <p class="muted-copy">Create an unlisted text-only link or invite another user to help edit this quiz.</p>
+                <form method="post" action="{{ url_for('create_quiz_share_link') }}" class="toolbar-row mb-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                    <label class="visually-hidden" for="quizSharePermission">Link permission</label>
+                    <select class="form-select" id="quizSharePermission" name="permission"><option value="view">View only</option><option value="copy">View and copy</option></select>
+                    <button class="btn-primary-surface" type="submit">Create link</button>
+                </form>
+                {% if quiz_share_links %}
+                <div class="section-stack mb-4">
+                    {% for link in quiz_share_links %}
+                    <div class="answer-row">
+                        <a href="{{ url_for('shared_quiz', token=link.token, _external=True) }}">{{ url_for('shared_quiz', token=link.token, _external=True) }}</a>
+                        <span class="status-chip info">{{ link.permission }}</span>
+                        <form method="post" action="{{ url_for('delete_quiz_share_link') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                            <input type="hidden" name="token" value="{{ link.token }}">
+                            <button class="btn-danger-surface" type="submit">Revoke</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <form method="post" action="{{ url_for('add_quiz_collaborator') }}" class="toolbar-row mb-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                    <label class="visually-hidden" for="quizCollaboratorUsername">Username</label>
+                    <input class="form-control" id="quizCollaboratorUsername" name="username" required placeholder="Username">
+                    <button class="btn-primary-surface" type="submit">Add co-author</button>
+                </form>
+                {% if quiz_collaborators %}
+                <div class="section-stack">
+                    {% for collaborator in quiz_collaborators %}
+                    <div class="answer-row">
+                        <span>{{ collaborator.user.username }}</span>
+                        <form method="post" action="{{ url_for('remove_quiz_collaborator') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="quiz_id" value="{{ selected_quiz.quiz_id }}">
+                            <input type="hidden" name="user_id" value="{{ collaborator.user_id }}">
+                            <button class="btn-danger-surface" type="submit">Remove</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+            {% endif %}
             {% if selected_quiz.questions %}
             <div class="cards-list-stack">
                 {% for q in selected_quiz.questions %}

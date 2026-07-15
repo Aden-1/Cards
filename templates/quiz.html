@@ -78,6 +78,7 @@
     <form method="post" action="{{ url_for('start_quiz') }}" class="form-actions">
         <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
         <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+        {% if quiz_share_token %}<input type="hidden" name="quiz_share_token" value="{{ quiz_share_token }}">{% endif %}
         <label class="form-label" for="ready_time_limit">Timer</label><select class="form-select" id="ready_time_limit" name="time_limit_seconds"><option value="0">No timer</option><option value="300">5 minutes</option><option value="600">10 minutes</option><option value="1200">20 minutes</option><option value="1800">30 minutes</option></select>
         <button class="btn-primary-surface" type="submit">Start Quiz</button>
     </form>
@@ -114,11 +115,13 @@
             <form id="retakeQuizForm" method="post" action="{{ url_for('start_quiz') }}" hidden>
                 <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
                 <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+                {% if quiz_share_token %}<input type="hidden" name="quiz_share_token" value="{{ quiz_share_token }}">{% endif %}
                 <button type="submit" class="btn-surface">Retake Quiz</button>
             </form>
             <form id="retryMissedQuizForm" method="post" action="{{ url_for('start_quiz') }}" hidden>
                 <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
                 <input type="hidden" name="quiz_source" value="{{ selected_source }}">
+                {% if quiz_share_token %}<input type="hidden" name="quiz_share_token" value="{{ quiz_share_token }}">{% endif %}
                 <input type="hidden" name="retry_question_ids" id="retryQuestionIds">
                 <button type="submit" class="btn-primary-surface">Retry Missed Questions</button>
             </form>

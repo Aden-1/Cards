@@ -40,9 +40,11 @@ from ..models import (
     MatchPairProgress,
     Quiz,
     QuizAttempt,
+    QuizCollaborator,
     QuizOption,
     QuizQuestion,
     QuizResult,
+    QuizShareLink,
     User,
     db,
 )
@@ -592,12 +594,30 @@ def get_accessible_custom_quizzes_page(user_id=None, page=1, per_page=DEFAULT_PA
     if user_id is None:
         query = query.filter(Quiz.is_public == True)
     else:
-        query = query.filter((Quiz.owned_by == user_id) | (Quiz.is_public == True))
+        query = query.outerjoin(
+            QuizCollaborator,
+            and_(
+                QuizCollaborator.quiz_id == Quiz.quiz_id,
+                QuizCollaborator.user_id == user_id,
+            ),
+        ).filter(
+            (Quiz.owned_by == user_id)
+            | (QuizCollaborator.user_id == user_id)
+            | (Quiz.is_public == True)
+        ).distinct()
     return _page_rows(query.order_by(Quiz.quiz_id.asc()), _attach_quiz_question_counts, page, per_page)
 
 
 def get_user_custom_quizzes_page(user_id, page=1, per_page=DEFAULT_PAGE_SIZE):
-    query = _quiz_query_with_question_counts().filter(Quiz.owned_by == user_id).order_by(Quiz.quiz_id.asc())
+    query = _quiz_query_with_question_counts().outerjoin(
+        QuizCollaborator,
+        and_(
+            QuizCollaborator.quiz_id == Quiz.quiz_id,
+            QuizCollaborator.user_id == user_id,
+        ),
+    ).filter(
+        (Quiz.owned_by == user_id) | (QuizCollaborator.user_id == user_id)
+    ).distinct().order_by(Quiz.quiz_id.asc())
     return _page_rows(query, _attach_quiz_question_counts, page, per_page)
 
 def create_custom_quiz(user_id, title, is_public=False, description=None, tags=None):
@@ -802,9 +822,13 @@ def _load_copyable_deck(source_deck_id):
     return get_deck_with_content(source_deck_id)
 
 
-def copy_public_quiz_to_user(source_quiz_id, user_id):
+def copy_public_quiz_to_user(source_quiz_id, user_id, share_token=None):
     try:
         source_quiz = _load_copyable_quiz(source_quiz_id)
+        if not source_quiz and share_token:
+            share = db.session.get(QuizShareLink, share_token)
+            if share and share.quiz_id == source_quiz_id and share.permission == 'copy':
+                source_quiz = get_quiz_with_content(source_quiz_id)
         if not source_quiz:
             return None
 

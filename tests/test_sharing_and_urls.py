@@ -9,6 +9,11 @@ from models import (
     DeckFavorite,
     DeckShareLink,
     Quiz,
+    QuizCollaborator,
+    QuizFavorite,
+    QuizRating,
+    QuizReport,
+    QuizShareLink,
     User,
     db,
 )
@@ -17,6 +22,17 @@ from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def _switch_user(self, user_id):
+        with self.app.app_context():
+            auth_version = db.session.get(User, user_id).auth_version
+        with self.client.session_transaction() as current_session:
+            current_session.clear()
+            current_session.update(
+                user_id=user_id,
+                auth_version=auth_version,
+                csrf_token='contract-csrf-token',
+            )
+
     def test_bulk_routes_enforce_source_and_destination_edit_access(self):
         owner_id = self.user_session('bulk-route-owner')
         with self.app.app_context():
@@ -420,6 +436,140 @@ class SharingAndUrlTests(CardsTestCase):
         response = self.client.get(f'/public_quiz?quiz_id={quiz_id}', follow_redirects=False)
         self.assertEqual(response.status_code, 301)
         self.assertIn(f'/quizzes/python-basics-quiz-{quiz_id}', response.headers['Location'])
+
+    def test_quiz_unlisted_copy_links_and_coauthor_permissions(self):
+        owner_id = self.user_session('quiz-sharing-owner')
+        with self.app.app_context():
+            collaborator = create_user('quiz-sharing-coauthor', 'password12345')
+            quiz = Quiz(
+                owned_by=owner_id, title='Private Shared Quiz', is_public=False,
+            )
+            db.session.add(quiz)
+            db.session.commit()
+            collaborator_id = collaborator.user_id
+            quiz_id = quiz.quiz_id
+
+        added = self.client.post(
+            '/quizzes/collaborators',
+            data={'quiz_id': quiz_id, 'username': 'quiz-sharing-coauthor'},
+            headers=self.csrf(),
+        )
+        self.assertEqual(added.status_code, 302)
+        created_link = self.client.post(
+            '/quizzes/share',
+            data={'quiz_id': quiz_id, 'permission': 'copy'},
+            headers=self.csrf(),
+        )
+        self.assertEqual(created_link.status_code, 302)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(
+                QuizCollaborator, (quiz_id, collaborator_id),
+            ))
+            share_link = QuizShareLink.query.filter_by(quiz_id=quiz_id).one()
+            share_token = share_link.token
+
+        self._switch_user(collaborator_id)
+        editor = self.client.get(f'/edit_quiz?quiz_id={quiz_id}')
+        self.assertEqual(editor.status_code, 200)
+        self.assertIn(b'Private Shared Quiz', editor.data)
+        self.assertNotIn(b'Sharing and co-authors', editor.data)
+        edited = self.client.post(
+            '/edit_custom_quiz',
+            data={
+                'quiz_id': quiz_id, 'title': 'Co-authored Quiz',
+                'description': 'Edited together', 'tags': 'teamwork',
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(edited.status_code, 302)
+        self.assert_json_error(self.client.post(
+            '/delete_custom_quiz', data={'quiz_id': quiz_id},
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        ), 403)
+        self.assert_json_error(self.client.post(
+            '/quizzes/share', data={'quiz_id': quiz_id, 'permission': 'view'},
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        ), 403)
+
+        viewer_id = self.user_session('quiz-sharing-viewer')
+        shared = self.client.get(f'/sq/{share_token}')
+        self.assertEqual(shared.status_code, 200)
+        self.assertIn(b'Co-authored Quiz', shared.data)
+        copied = self.client.post(
+            '/copy_public_quiz',
+            data={'quiz_id': quiz_id, 'share_token': share_token},
+            headers=self.csrf(),
+        )
+        self.assertEqual(copied.status_code, 302)
+        with self.app.app_context():
+            copy = Quiz.query.filter_by(
+                owned_by=viewer_id, title='Co-authored Quiz (Copy)',
+            ).one()
+            self.assertFalse(copy.is_public)
+
+    def test_quiz_favorites_ratings_reports_and_moderation(self):
+        owner_id = self.user_session('quiz-community-owner')
+        with self.app.app_context():
+            quiz = Quiz(
+                owned_by=owner_id, title='Community Quiz', is_public=True,
+            )
+            db.session.add(quiz)
+            db.session.commit()
+            quiz_id = quiz.quiz_id
+
+        reader_id = self.user_session('quiz-community-reader')
+        self.assertEqual(self.client.post(
+            '/quizzes/favorite', data={'quiz_id': quiz_id}, headers=self.csrf(),
+        ).status_code, 302)
+        self.assertEqual(self.client.post(
+            '/quizzes/rate', data={'quiz_id': quiz_id, 'rating': 5},
+            headers=self.csrf(),
+        ).status_code, 302)
+        self.assertEqual(self.client.post(
+            '/quizzes/report',
+            data={'quiz_id': quiz_id, 'reason': 'inaccurate', 'detail': 'Check answer.'},
+            headers=self.csrf(),
+        ).status_code, 302)
+        self.assertEqual(self.client.post(
+            '/quizzes/report',
+            data={'quiz_id': quiz_id, 'reason': 'inaccurate'},
+            headers=self.csrf(),
+        ).status_code, 302)
+        saved = self.client.get('/saved-quizzes')
+        self.assertEqual(saved.status_code, 200)
+        self.assertIn(b'Community Quiz', saved.data)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(QuizFavorite, (reader_id, quiz_id)))
+            self.assertEqual(
+                db.session.get(QuizRating, (reader_id, quiz_id)).rating, 5,
+            )
+            report = QuizReport.query.filter_by(
+                user_id=reader_id, quiz_id=quiz_id,
+            ).one()
+            report_id = report.report_id
+            moderator = create_user('quiz-community-moderator', 'password12345')
+            moderator.role = 'moderator'
+            db.session.commit()
+            moderator_id = moderator.user_id
+
+        self._switch_user(moderator_id)
+        queue = self.client.get('/moderation/quiz-reports')
+        self.assertEqual(queue.status_code, 200)
+        self.assertIn(b'Community Quiz', queue.data)
+        moderated = self.client.post(
+            '/moderation/quiz-reports',
+            data={
+                'report_id': report_id, 'action': 'unpublish',
+                'resolution_note': 'Removed pending correction.',
+            },
+            headers=self.csrf(),
+        )
+        self.assertEqual(moderated.status_code, 302)
+        with self.app.app_context():
+            self.assertFalse(db.session.get(Quiz, quiz_id).is_public)
+            report = db.session.get(QuizReport, report_id)
+            self.assertEqual(report.status, 'resolved')
+            self.assertEqual(report.resolved_by, moderator_id)
 
     def test_unlisted_copy_link_and_coauthor_access(self):
         owner_id = self.user_session('sharing-owner')

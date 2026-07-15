@@ -180,6 +180,13 @@ class Quiz(db.Model):
     questions = db.relationship('QuizQuestion', backref='quiz', lazy=True, cascade='all, delete-orphan')
 ```
 
+Quiz community state is normalized into `QuizCollaborator`, `QuizShareLink`,
+`QuizFavorite`, `QuizRating`, and `QuizReport`. Collaborators have an explicit
+composite `(quiz_id, user_id)` identity; unlisted links use a random token and
+an enforced `view` or `copy` permission. Favorites and ratings are unique per
+user/quiz, ratings are constrained to 1–5, and reports retain their moderator
+resolution state and audit-safe user references.
+
 ### QuizQuestion
 ```python
 class QuizQuestion(db.Model):
@@ -245,6 +252,7 @@ rather than foreign keys so history survives source deletion.
 - `Card` 1:N `CardMasteryProgress`
 - `CardAnswer` 1:N `MatchPairProgress`
 - `Quiz` 1:N `QuizQuestion`
+- `Quiz` 1:N `QuizCollaborator`, `QuizShareLink`, `QuizFavorite`, `QuizRating`, and `QuizReport`
 - `QuizQuestion` 1:N `QuizOption`
 - `User` 1:N optional `QuizAttempt`
 

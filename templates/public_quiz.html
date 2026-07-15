@@ -15,24 +15,33 @@
                 <h2 class="h3 mb-1">Quiz Details</h2>
                 <p class="muted-copy mb-0">{{ quiz.questions|length }} question{{ '' if quiz.questions|length == 1 else 's' }}</p>
             </div>
-            <span class="status-chip public">Public</span>
+            <span class="status-chip {{ 'public' if quiz.is_public else 'private' }}">{{ 'Public' if quiz.is_public else 'Unlisted' }}</span>
         </div>
         {% if quiz.description %}<p class="muted-copy mb-0">{{ quiz.description }}</p>{% endif %}
         {% if quiz.tags %}<div class="card-rail">{% for tag in quiz.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
         <div class="deck-actions">
-            <a class="btn-primary-surface" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take Quiz</a>
-            {% if quiz.owned_by == user_id %}
+            <a class="btn-primary-surface" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id, quiz_share_token=(share_token|default('')) or None) }}">Take Quiz</a>
+            {% if can_edit %}
             <a class="btn-surface" href="{{ url_for('edit_quiz_route', quiz_id=quiz.quiz_id) }}">Edit</a>
-            {% elif current_user %}
+            {% elif current_user and can_copy %}
             <form method="post" action="{{ url_for('copy_public_quiz') }}">
                 <input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}">
+                {% if share_token %}<input type="hidden" name="share_token" value="{{ share_token }}">{% endif %}
                 <button class="btn-surface" type="submit">Copy To My Quizzes</button>
             </form>
-            {% else %}
+            {% elif not current_user and can_copy %}
             <a class="btn-surface" href="{{ url_for('login', next=request.full_path) }}">Log In To Copy</a>
             {% endif %}
             <a class="btn-ghost-surface" href="{{ url_for('search') }}">Back To Search</a>
         </div>
+        {% if quiz.is_public %}<div class="small-muted">{{ average_rating }} average from {{ rating_count }} rating{{ '' if rating_count == 1 else 's' }}</div>{% endif %}
+        {% if current_user and quiz.is_public %}
+        <div class="toolbar-row">
+            <form method="post" action="{{ url_for('toggle_quiz_favorite') }}"><input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}"><button class="btn-surface" type="submit">{{ 'Remove Save' if is_favorite else 'Save Quiz' }}</button></form>
+            <form method="post" action="{{ url_for('rate_quiz') }}" class="toolbar-row"><input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}"><label class="small-muted" for="quizRating">Your rating</label><select class="form-select" id="quizRating" name="rating">{% for score in range(1, 6) %}<option value="{{ score }}" {% if score == my_rating %}selected{% endif %}>{{ score }} star{{ '' if score == 1 else 's' }}</option>{% endfor %}</select><button class="btn-surface" type="submit">Save rating</button></form>
+            {% if not can_edit %}<details><summary class="btn-ghost-surface">Report</summary><div class="detail-panel"><form method="post" action="{{ url_for('report_quiz') }}" class="section-stack"><input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}"><select class="form-select" name="reason"><option value="inaccurate">Inaccurate</option><option value="spam">Spam</option><option value="copyright">Copyright concern</option><option value="other">Other</option></select><input class="form-control" name="detail" maxlength="500" placeholder="Optional detail"><button class="btn-danger-surface" type="submit">Submit report</button></form></div></details>{% endif %}
+        </div>
+        {% endif %}
     </article>
     <article class="surface p-4">
         <div class="panel-header mb-3"><h2 class="h3 mb-0">Questions</h2></div>

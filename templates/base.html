@@ -60,6 +60,7 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('account') }}">Account Settings</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('saved_decks') }}">Saved Decks</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('saved_quizzes') }}">Saved Quizzes</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('collections') }}">Collections</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('quiz_history') }}">Quiz History</a></li>
                             <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
@@ -70,6 +71,7 @@
                             {% endif %}
                             {% if current_user.role in ('moderator', 'admin') %}
                             <li><a class="dropdown-item" href="{{ url_for('moderation_reports') }}">Moderation Reports</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('moderation_quiz_reports') }}">Quiz Reports</a></li>
                             {% endif %}
                             <li><hr class="dropdown-divider"></li>
                             <li>

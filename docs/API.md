@@ -303,6 +303,31 @@ Response:
 Response:
 - Rendered HTML page for a visible quiz, or redirect to `/search` if the quiz is missing/inaccessible.
 
+Canonical public quiz pages use `GET /quizzes/<quiz_slug>`. An unlisted
+`GET /sq/<token>` link may expose a private quiz for viewing and, when its
+stored permission is `copy`, copying. It never grants edit authority.
+
+### Quiz community actions
+
+- `GET /saved-quizzes` lists the signed-in user's currently public bookmarks.
+- `POST /quizzes/favorite` toggles one public quiz bookmark.
+- `POST /quizzes/rate` creates or replaces the user's 1–5 rating.
+- `POST /quizzes/report` creates one open report per user and public quiz.
+- `GET, POST /moderation/quiz-reports` lets moderators filter, resolve,
+  dismiss, reopen, or unpublish reported quizzes.
+
+All mutations require authentication and CSRF validation.
+
+### Quiz sharing and co-authors
+
+- `POST /quizzes/share` creates an owner-only `view` or `copy` link.
+- `POST /quizzes/share/revoke` revokes an owner-created link.
+- `POST /quizzes/collaborators` adds an active user as a co-author.
+- `POST /quizzes/collaborators/remove` removes a co-author.
+
+Co-authors may use the quiz and question editing routes. Only the owner may
+delete the quiz or manage its links and co-authors.
+
 ### Quiz Launcher
 **GET** `/quiz`
 - Query params:

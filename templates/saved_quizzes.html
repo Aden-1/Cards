@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import controls %}
+
+{% block title %}Cards | Saved Quizzes{% endblock %}
+
+{% block content %}
+<section class="page-intro">
+    <span class="page-kicker">Personal Library</span>
+    <h1 class="page-title">Saved quizzes</h1>
+    <p class="page-description">Return to public quizzes you bookmarked for later practice.</p>
+</section>
+<section class="surface p-4 p-lg-5 fade-in">
+    <div class="panel-header mb-4">
+        <div><h2 class="h3 mb-1">Bookmarks</h2><p class="muted-copy mb-0">{{ saved_quizzes|length }} saved quiz{{ '' if saved_quizzes|length == 1 else 'zes' }} on this page</p></div>
+        <a class="btn-surface" href="{{ url_for('search') }}">Find public quizzes</a>
+    </div>
+    {% if saved_quizzes %}
+    <div class="deck-grid stagger">
+        {% for favorite, quiz in saved_quizzes %}
+        <article class="deck-card">
+            <div class="panel-header"><span class="status-chip public">Saved</span><span class="score-chip">{{ quiz.questions|length }} questions</span></div>
+            <h3 class="h4 mb-0">{{ quiz.title }}</h3>
+            {% if quiz.description %}<p class="muted-copy mb-0">{{ quiz.description[:160] }}{{ '…' if quiz.description|length > 160 else '' }}</p>{% endif %}
+            {% if quiz.tags %}<div class="card-rail">{% for tag in quiz.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}</div>{% endif %}
+            <p class="small-muted mb-0">Saved {{ favorite.created_at }}</p>
+            <div class="deck-actions mt-auto">
+                <a class="btn-primary-surface" href="{{ url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)) }}">View</a>
+                <a class="btn-surface" href="{{ url_for('quiz', custom_quiz_id=quiz.quiz_id) }}">Take quiz</a>
+                <form method="post" action="{{ url_for('toggle_quiz_favorite') }}">
+                    <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                    <input type="hidden" name="quiz_id" value="{{ quiz.quiz_id }}">
+                    <button class="btn-ghost-surface" type="submit">Remove</button>
+                </form>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {{ controls(pagination, pagination_endpoint, pagination_args) }}
+    {% else %}<div class="empty-card">You have no saved public quizzes yet.</div>{% endif %}
+</section>
+{% endblock %}

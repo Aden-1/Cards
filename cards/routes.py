@@ -1361,6 +1361,95 @@ def moderation_reports_route():
 
 
 @moderator_required
+def moderation_quiz_reports_route():
+    from models import QuizReport
+
+    if request.method == 'POST':
+        data = _request_data()
+        report_id = _int_value(data.get('report_id'))
+        action = (data.get('action') or '').strip().lower()
+        report = db.session.get(QuizReport, report_id)
+        if not report:
+            return jsonify({'error': 'Report not found'}), 404
+        actor = _current_user()
+        if action == 'reopen':
+            report.status = 'open'
+            report.resolved_by = None
+            report.resolved_at = None
+            report.resolution_note = None
+        elif action in ('resolve', 'dismiss', 'unpublish'):
+            if report.status != 'open':
+                return jsonify({
+                    'error': 'Only open reports can be resolved or dismissed',
+                }), 400
+            resolution_note = (data.get('resolution_note') or '').strip()[:500] or None
+            if action == 'unpublish':
+                report.quiz.is_public = False
+                affected_reports = QuizReport.query.filter_by(
+                    quiz_id=report.quiz_id, status='open',
+                ).all()
+            else:
+                affected_reports = [report]
+            resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            for affected_report in affected_reports:
+                affected_report.status = (
+                    'dismissed' if action == 'dismiss' else 'resolved'
+                )
+                affected_report.resolved_by = actor.user_id
+                affected_report.resolved_at = resolved_at
+                affected_report.resolution_note = resolution_note
+        else:
+            return jsonify({'error': 'Choose a valid moderation action'}), 400
+        db.session.commit()
+        audit_event(
+            f'quiz_report_{action}', actor, 'success',
+            target_type='quiz_report', target_id=report.report_id,
+            quiz_id=report.quiz_id, status=report.status,
+        )
+        if _wants_json():
+            return jsonify({
+                'success': True, 'report_id': report.report_id,
+                'status': report.status,
+            })
+        return redirect(url_for(
+            'moderation_quiz_reports',
+            status=request.args.get('status', 'open'),
+            reason=request.args.get('reason', ''),
+            notice='Report updated.', level='success',
+        ))
+
+    selected_status = (request.args.get('status') or 'open').strip().lower()
+    selected_reason = (request.args.get('reason') or '').strip().lower()
+    if selected_status not in ('open', 'resolved', 'dismissed', 'all'):
+        selected_status = 'open'
+    if selected_reason not in ('spam', 'copyright', 'inaccurate', 'other', ''):
+        selected_reason = ''
+    query = QuizReport.query.options(
+        joinedload(QuizReport.quiz), joinedload(QuizReport.reporter),
+        joinedload(QuizReport.resolver),
+    )
+    if selected_status != 'all':
+        query = query.filter(QuizReport.status == selected_status)
+    if selected_reason:
+        query = query.filter(QuizReport.reason == selected_reason)
+    query = query.order_by(
+        QuizReport.created_at.asc(), QuizReport.report_id.asc(),
+    )
+    pagination = _query_page(
+        query, _requested_page(), _requested_page_size(),
+    )
+    counts = dict(
+        db.session.query(QuizReport.status, db.func.count(QuizReport.report_id))
+        .group_by(QuizReport.status).all()
+    )
+    return render_template(
+        'moderation_quiz_reports.html', reports=pagination['items'], counts=counts,
+        selected_status=selected_status, selected_reason=selected_reason,
+        pagination=pagination, **_pagination_context('moderation_quiz_reports'),
+    )
+
+
+@moderator_required
 def moderate_unpublish_route():
     """The only public-content mutation granted to moderators."""
     from models import Deck, Quiz
@@ -1421,10 +1510,40 @@ def _directly_accessible_deck(deck_id, user_id):
 
 
 def _owned_quiz(quiz_id, user_id):
+    from models import Quiz, QuizCollaborator
+    if not quiz_id or not user_id:
+        return None
+    return Quiz.query.outerjoin(
+        QuizCollaborator, QuizCollaborator.quiz_id == Quiz.quiz_id,
+    ).filter(
+        Quiz.quiz_id == quiz_id,
+        (Quiz.owned_by == user_id) | (QuizCollaborator.user_id == user_id),
+    ).first()
+
+
+def _is_quiz_owner(quiz_id, user_id):
     from models import Quiz
+    return bool(
+        quiz_id and user_id
+        and Quiz.query.filter_by(quiz_id=quiz_id, owned_by=user_id).first()
+    )
+
+
+def _directly_accessible_quiz(quiz_id, user_id):
+    from models import Quiz, QuizCollaborator
     if not quiz_id:
         return None
-    return Quiz.query.filter_by(quiz_id=quiz_id, owned_by=user_id).first()
+    quiz = db.session.get(Quiz, quiz_id)
+    is_collaborator = bool(
+        user_id and QuizCollaborator.query.filter_by(
+            quiz_id=quiz_id, user_id=user_id,
+        ).first()
+    )
+    if not quiz or (
+        quiz.owned_by != user_id and not is_collaborator and not quiz.is_public
+    ):
+        return None
+    return quiz
 
 
 def _accessible_answer(answer_id, user_id):
@@ -1486,6 +1605,35 @@ def saved_decks_route():
     return render_template(
         'saved_decks.html', saved_decks=saved_decks, pagination=pagination,
         **_pagination_context('saved_decks'),
+    )
+
+
+@login_required
+def saved_quizzes_route():
+    from models import Quiz, QuizFavorite
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = db.session.query(
+        QuizFavorite, Quiz,
+    ).join(
+        Quiz, Quiz.quiz_id == QuizFavorite.quiz_id,
+    ).filter(
+        QuizFavorite.user_id == _current_user_id(),
+        Quiz.is_public == True,
+    ).order_by(
+        QuizFavorite.created_at.desc(), QuizFavorite.quiz_id.desc(),
+    ).limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1,
+        'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+    return render_template(
+        'saved_quizzes.html', saved_quizzes=rows[:per_page],
+        pagination=pagination, **_pagination_context('saved_quizzes'),
     )
 
 
@@ -2667,12 +2815,13 @@ def public_quiz_route():
     if not quiz_id:
         return redirect(url_for('search'))
 
-    quiz = get_quiz_with_content(quiz_id)
-    if not quiz or (not quiz.is_public and quiz.owned_by != user_id):
+    accessible_quiz = _directly_accessible_quiz(quiz_id, user_id)
+    quiz = get_quiz_with_content(quiz_id) if accessible_quiz else None
+    if not quiz:
         return redirect(url_for('search'))
     if quiz.is_public:
         return redirect(url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)), code=301)
-    return render_template('public_quiz.html', quiz=quiz, user_id=user_id)
+    return _render_public_quiz(quiz, can_copy=False)
 
 
 def public_quiz_detail_route(quiz_slug):
@@ -2685,7 +2834,27 @@ def public_quiz_detail_route(quiz_slug):
     canonical_slug = quiz_url_slug(quiz)
     if quiz_slug != canonical_slug:
         return redirect(url_for('public_quiz_detail', quiz_slug=canonical_slug), code=301)
-    return render_template('public_quiz.html', quiz=quiz, user_id=_current_user_id())
+    return _render_public_quiz(quiz, can_copy=True)
+
+
+def _render_public_quiz(quiz, *, can_copy, **extra):
+    from models import QuizFavorite, QuizRating
+
+    user_id = _current_user_id()
+    rating_count, average_rating = db.session.query(
+        db.func.count(QuizRating.user_id), db.func.avg(QuizRating.rating),
+    ).filter_by(quiz_id=quiz.quiz_id).one()
+    rating = db.session.get(QuizRating, (user_id, quiz.quiz_id)) if user_id else None
+    return render_template(
+        'public_quiz.html', quiz=quiz, user_id=user_id, can_copy=can_copy,
+        can_edit=bool(_owned_quiz(quiz.quiz_id, user_id)),
+        is_favorite=bool(
+            user_id and db.session.get(QuizFavorite, (user_id, quiz.quiz_id))
+        ),
+        my_rating=rating.rating if rating else None,
+        rating_count=int(rating_count or 0),
+        average_rating=round(float(average_rating or 0), 1), **extra,
+    )
 
 
 # Copy a public quiz to the current user's account.
@@ -2700,7 +2869,10 @@ def copy_public_quiz_route():
         return redirect(url_for('search'))
 
     try:
-        copied_quiz = copy_public_quiz_to_user(source_quiz_id, user_id=_current_user_id())
+        copied_quiz = copy_public_quiz_to_user(
+            source_quiz_id, user_id=_current_user_id(),
+            share_token=(data.get('share_token') or '').strip() or None,
+        )
     except ValueError:
         return redirect(url_for('search'))
     if not copied_quiz:
@@ -2713,6 +2885,109 @@ def copy_public_quiz_route():
         notice='Quiz copied to your account',
         level='success',
     )
+
+
+def shared_quiz_route(token):
+    from models import QuizShareLink
+    from services import get_quiz_with_content
+
+    share_link = db.session.get(QuizShareLink, token)
+    quiz = get_quiz_with_content(share_link.quiz_id) if share_link else None
+    if not quiz:
+        return redirect(url_for('search'))
+    return _render_public_quiz(
+        quiz, can_copy=share_link.permission == 'copy',
+        share_token=share_link.token, is_unlisted=True,
+    )
+
+
+def toggle_quiz_favorite_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import Quiz, QuizFavorite
+
+    quiz_id = _int_value(_request_data().get('quiz_id'))
+    quiz = db.session.get(Quiz, quiz_id)
+    if not quiz or not quiz.is_public:
+        return jsonify({'error': 'Public quiz not found.'}), 404
+    favorite = db.session.get(QuizFavorite, (_current_user_id(), quiz_id))
+    if favorite:
+        db.session.delete(favorite)
+    else:
+        db.session.add(QuizFavorite(user_id=_current_user_id(), quiz_id=quiz_id))
+    db.session.commit()
+    return redirect(
+        request.referrer
+        or url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz))
+    )
+
+
+def rate_quiz_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import Quiz, QuizRating
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    rating = _int_value(data.get('rating'))
+    quiz = db.session.get(Quiz, quiz_id)
+    if not quiz or not quiz.is_public or rating not in range(1, 6):
+        return jsonify({
+            'error': 'A public quiz and a rating from 1 to 5 are required.',
+        }), 400
+    record = db.session.get(QuizRating, (_current_user_id(), quiz_id))
+    if record:
+        record.rating = rating
+    else:
+        db.session.add(QuizRating(
+            user_id=_current_user_id(), quiz_id=quiz_id, rating=rating,
+        ))
+    db.session.commit()
+    return redirect(
+        request.referrer
+        or url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz))
+    )
+
+
+def report_quiz_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import Quiz, QuizReport
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    reason = (data.get('reason') or '').strip()
+    detail = (data.get('detail') or '').strip()[:500]
+    quiz = db.session.get(Quiz, quiz_id)
+    if (
+        not quiz or not quiz.is_public
+        or reason not in ('spam', 'copyright', 'inaccurate', 'other')
+    ):
+        return jsonify({'error': 'A valid public quiz report is required.'}), 400
+    user_id = _current_user_id()
+    if _owned_quiz(quiz_id, user_id):
+        return jsonify({'error': 'You cannot report a quiz you can edit.'}), 400
+    existing = QuizReport.query.filter_by(
+        user_id=user_id, quiz_id=quiz_id, status='open',
+    ).first()
+    if existing:
+        return redirect(url_for(
+            'public_quiz_detail', quiz_slug=quiz_url_slug(quiz),
+            notice='You already have an open report for this quiz.', level='info',
+        ))
+    report = QuizReport(
+        user_id=user_id, quiz_id=quiz_id, reason=reason, detail=detail or None,
+    )
+    db.session.add(report)
+    db.session.commit()
+    audit_event(
+        'quiz_report_submitted', _current_user(), 'info',
+        target_type='quiz_report', target_id=report.report_id, quiz_id=quiz_id,
+    )
+    return redirect(url_for(
+        'public_quiz_detail', quiz_slug=quiz_url_slug(quiz),
+        notice='Report submitted for moderator review.', level='success',
+    ))
 
 
 # Public deck detail (read-only).
@@ -2963,8 +3238,16 @@ def _quiz_launcher_context(source_data):
         if selected_source.startswith('deck:'):
             selected_source = ''
     from models import Quiz, db
-    selected_quiz_record = db.session.get(Quiz, selected_custom_quiz_id) if selected_custom_quiz_id else None
-    if not selected_quiz_record or (not selected_quiz_record.is_public and selected_quiz_record.owned_by != user_id):
+    quiz_share_token = (source_data.get('quiz_share_token') or '').strip()
+    selected_quiz_record = _directly_accessible_quiz(
+        selected_custom_quiz_id, user_id,
+    )
+    if not selected_quiz_record and quiz_share_token and selected_custom_quiz_id:
+        from models import QuizShareLink
+        share_link = db.session.get(QuizShareLink, quiz_share_token)
+        if share_link and share_link.quiz_id == selected_custom_quiz_id:
+            selected_quiz_record = db.session.get(Quiz, selected_custom_quiz_id)
+    if not selected_quiz_record:
         selected_custom_quiz_id = None
         if selected_source.startswith('custom:'):
             selected_source = ''
@@ -2989,6 +3272,7 @@ def _quiz_launcher_context(source_data):
         'deck_page': deck_page,
         'quiz_page': quiz_page,
         'available_question_pools': available_question_pools,
+        'quiz_share_token': quiz_share_token if selected_custom_quiz_id else '',
         **_pagination_context('quiz'),
     }
 
@@ -3074,6 +3358,104 @@ def remove_deck_collaborator_route():
         db.session.delete(collaborator)
         db.session.commit()
     return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Co-author removed.', level='success')
+
+
+def create_quiz_share_link_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import QuizShareLink
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    permission = (data.get('permission') or 'view').strip().lower()
+    if not _is_quiz_owner(quiz_id, _current_user_id()) or permission not in ('view', 'copy'):
+        return jsonify({'error': 'Only the quiz owner can create a share link.'}), 403
+    share_link = QuizShareLink(
+        token=secrets.token_urlsafe(32), quiz_id=quiz_id, permission=permission,
+    )
+    db.session.add(share_link)
+    db.session.commit()
+    return _redirect_with_fragment(
+        'edit_quiz_route', quiz_id=quiz_id, fragment='quiz-sharing',
+        notice='Unlisted quiz share link created.', level='success',
+    )
+
+
+def delete_quiz_share_link_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import QuizShareLink
+
+    token = (_request_data().get('token') or '').strip()
+    share_link = db.session.get(QuizShareLink, token)
+    if not share_link or not _is_quiz_owner(
+        share_link.quiz_id, _current_user_id(),
+    ):
+        return jsonify({'error': 'Share link not found.'}), 404
+    quiz_id = share_link.quiz_id
+    db.session.delete(share_link)
+    db.session.commit()
+    return _redirect_with_fragment(
+        'edit_quiz_route', quiz_id=quiz_id, fragment='quiz-sharing',
+        notice='Quiz share link revoked.', level='success',
+    )
+
+
+def add_quiz_collaborator_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import QuizCollaborator, User
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    if not _is_quiz_owner(quiz_id, _current_user_id()):
+        return jsonify({'error': 'Only the quiz owner can manage collaborators.'}), 403
+    try:
+        username = canonical_username(data.get('username'))
+    except ValueError:
+        username = None
+    collaborator = User.query.filter_by(
+        canonical_username=username,
+    ).first() if username else None
+    if (
+        not collaborator or collaborator.user_id == _current_user_id()
+        or not collaborator.is_active
+    ):
+        return _redirect_with_fragment(
+            'edit_quiz_route', quiz_id=quiz_id, fragment='quiz-sharing',
+            notice='Active user not found.', level='error',
+        )
+    if not db.session.get(QuizCollaborator, (quiz_id, collaborator.user_id)):
+        db.session.add(QuizCollaborator(
+            quiz_id=quiz_id, user_id=collaborator.user_id,
+        ))
+        db.session.commit()
+    return _redirect_with_fragment(
+        'edit_quiz_route', quiz_id=quiz_id, fragment='quiz-sharing',
+        notice='Quiz co-author added.', level='success',
+    )
+
+
+def remove_quiz_collaborator_route():
+    if not _current_user():
+        return _login_required_response()
+    from models import QuizCollaborator
+
+    data = _request_data()
+    quiz_id = _int_value(data.get('quiz_id'))
+    collaborator_id = _int_value(data.get('user_id'))
+    if not _is_quiz_owner(quiz_id, _current_user_id()):
+        return jsonify({'error': 'Only the quiz owner can manage collaborators.'}), 403
+    collaborator = db.session.get(
+        QuizCollaborator, (quiz_id, collaborator_id),
+    )
+    if collaborator:
+        db.session.delete(collaborator)
+        db.session.commit()
+    return _redirect_with_fragment(
+        'edit_quiz_route', quiz_id=quiz_id, fragment='quiz-sharing',
+        notice='Quiz co-author removed.', level='success',
+    )
 
 
 def start_quiz_route():
@@ -3254,12 +3636,24 @@ def edit_quiz_route():
     selected_quiz_id = _int_value(request.args.get('quiz_id'))
     selected_quiz = None
     if selected_quiz_id:
-        selected_quiz = get_quiz_with_content(selected_quiz_id)
-        if selected_quiz and selected_quiz.owned_by != user_id:
-            selected_quiz = None
+        selected_quiz = (
+            get_quiz_with_content(selected_quiz_id)
+            if _owned_quiz(selected_quiz_id, user_id) else None
+        )
     quizzes = _include_selected_quiz(quizzes, selected_quiz)
             
     quiz_analytics = None
+    quiz_collaborators = []
+    quiz_share_links = []
+    can_manage_quiz_sharing = _is_quiz_owner(selected_quiz_id, user_id)
+    if can_manage_quiz_sharing:
+        from models import QuizCollaborator, QuizShareLink
+        quiz_collaborators = QuizCollaborator.query.filter_by(
+            quiz_id=selected_quiz_id,
+        ).order_by(QuizCollaborator.created_at.asc()).all()
+        quiz_share_links = QuizShareLink.query.filter_by(
+            quiz_id=selected_quiz_id,
+        ).order_by(QuizShareLink.created_at.desc()).all()
     if selected_quiz:
         from models import QuizResult
 
@@ -3276,6 +3670,9 @@ def edit_quiz_route():
     return render_template(
         'edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz,
         quiz_analytics=quiz_analytics, quiz_page=quiz_page,
+        quiz_collaborators=quiz_collaborators,
+        quiz_share_links=quiz_share_links,
+        can_manage_quiz_sharing=can_manage_quiz_sharing,
         **_pagination_context('edit_quiz_route'),
     )
 
@@ -3322,7 +3719,7 @@ def delete_custom_quiz_route():
         return _login_required_response()
     from services import delete_custom_quiz
     quiz_id = _int_value(_request_data().get('quiz_id'))
-    if not _owned_quiz(quiz_id, _current_user_id()):
+    if not _is_quiz_owner(quiz_id, _current_user_id()):
         return jsonify({'error': 'You can only delete quizzes you own'}), 403
     delete_custom_quiz(quiz_id)
     return redirect(url_for('edit_quiz_route'))
@@ -3453,6 +3850,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/dashboard', endpoint='dashboard', view_func=dashboard, methods=['GET'])
     app.add_url_rule('/saved', endpoint='saved_decks', view_func=saved_decks_route, methods=['GET'])
+    app.add_url_rule('/saved-quizzes', endpoint='saved_quizzes', view_func=saved_quizzes_route, methods=['GET'])
     app.add_url_rule('/collections', endpoint='collections', view_func=collections_route, methods=['GET'])
     app.add_url_rule('/collections/<int:collection_id>', endpoint='public_collection', view_func=public_collection_route, methods=['GET'])
     app.add_url_rule('/collections/create', endpoint='create_collection', view_func=_limit(create_collection_route, 'content_mutation', ['POST']), methods=['POST'])
@@ -3484,6 +3882,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/admin/audit-log', endpoint='admin_audit_log', view_func=admin_audit_log, methods=['GET'])
     app.add_url_rule('/admin/featured', endpoint='admin_featured_content', view_func=_limit(admin_featured_content_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/moderation/reports', endpoint='moderation_reports', view_func=_limit(moderation_reports_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/moderation/quiz-reports', endpoint='moderation_quiz_reports', view_func=_limit(moderation_quiz_reports_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/moderation/unpublish', endpoint='moderate_unpublish', view_func=_limit(moderate_unpublish_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
@@ -3507,7 +3906,15 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/decks/collaborators/remove', endpoint='remove_deck_collaborator', view_func=_limit(remove_deck_collaborator_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/public_quiz', endpoint='public_quiz', view_func=public_quiz_route, methods=['GET'])
     app.add_url_rule('/quizzes/<quiz_slug>', endpoint='public_quiz_detail', view_func=public_quiz_detail_route, methods=['GET'])
+    app.add_url_rule('/quizzes/favorite', endpoint='toggle_quiz_favorite', view_func=_limit(toggle_quiz_favorite_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/rate', endpoint='rate_quiz', view_func=_limit(rate_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/report', endpoint='report_quiz', view_func=_limit(report_quiz_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/sq/<token>', endpoint='shared_quiz', view_func=shared_quiz_route, methods=['GET'])
     app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=_limit(copy_public_quiz_route, 'public_copy', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/share', endpoint='create_quiz_share_link', view_func=_limit(create_quiz_share_link_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/share/revoke', endpoint='delete_quiz_share_link', view_func=_limit(delete_quiz_share_link_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/collaborators', endpoint='add_quiz_collaborator', view_func=_limit(add_quiz_collaborator_route, 'content_mutation', ['POST']), methods=['POST'])
+    app.add_url_rule('/quizzes/collaborators/remove', endpoint='remove_quiz_collaborator', view_func=_limit(remove_quiz_collaborator_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
     app.add_url_rule('/quiz/history', endpoint='quiz_history', view_func=quiz_history_route, methods=['GET'])
     app.add_url_rule('/quiz/history/<int:result_id>', endpoint='quiz_result_detail', view_func=quiz_result_detail_route, methods=['GET'])

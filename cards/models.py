@@ -282,9 +282,72 @@ class Quiz(db.Model):
     tags = db.Column(db.String(255), nullable=True)
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'), index=True)
     questions = db.relationship('QuizQuestion', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    collaborators = db.relationship('QuizCollaborator', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    share_links = db.relationship('QuizShareLink', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
 
     __table_args__ = (
         CheckConstraint('is_public IS TRUE OR is_public IS FALSE', name='ck_quiz_is_public_boolean'),
+    )
+
+
+class QuizCollaborator(db.Model):
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id', ondelete='CASCADE'), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    user = db.relationship('User')
+
+
+class QuizShareLink(db.Model):
+    token = db.Column(db.String(64), primary_key=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id', ondelete='CASCADE'), nullable=False, index=True)
+    permission = db.Column(db.String(10), nullable=False, default='view', server_default=db.text("'view'"))
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("permission IN ('view', 'copy')", name='ck_quiz_share_link_permission'),
+    )
+
+
+class QuizFavorite(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id', ondelete='CASCADE'), primary_key=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+
+class QuizRating(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), primary_key=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id', ondelete='CASCADE'), primary_key=True)
+    rating = db.Column(db.Integer, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (CheckConstraint('rating BETWEEN 1 AND 5', name='ck_quiz_rating_range'),)
+
+
+class QuizReport(db.Model):
+    report_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.quiz_id', ondelete='CASCADE'), nullable=False, index=True)
+    reason = db.Column(db.String(30), nullable=False)
+    detail = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='open', server_default=db.text("'open'"), index=True)
+    resolved_by = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='SET NULL'), nullable=True, index=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolution_note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    quiz = db.relationship('Quiz')
+    reporter = db.relationship('User', foreign_keys=[user_id])
+    resolver = db.relationship('User', foreign_keys=[resolved_by])
+
+    __table_args__ = (
+        CheckConstraint(
+            "reason IN ('spam', 'copyright', 'inaccurate', 'other')",
+            name='ck_quiz_report_reason',
+        ),
+        CheckConstraint(
+            "status IN ('open', 'resolved', 'dismissed')",
+            name='ck_quiz_report_status',
+        ),
+        db.Index('ix_quiz_report_status_created_at', 'status', 'created_at'),
     )
 
 class QuizQuestion(db.Model):

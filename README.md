@@ -24,6 +24,8 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Register accounts, optionally add recovery emails, manage account settings, and save theme/study preferences
 - Browse featured public decks and popular tags from the home page
 - Copy public decks and public quizzes into your own account
+- Save and rate public quizzes, report unsafe or inaccurate quizzes, and review saved quizzes later
+- Share unlisted quizzes with view/copy links and invite co-authors while retaining owner-only access control
 - Admin users can review accounts and manage roles
 
 Cards intentionally remains text-only: deck cards and quiz content do not accept
