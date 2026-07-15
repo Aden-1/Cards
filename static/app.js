@@ -414,17 +414,24 @@
 
     const reminder = document.getElementById('studyReminder');
     if (reminder && studyReminder.enabled) {
+      const reminderStorageKey = studyReminder.scope
+        ? 'cards-study-reminder-dismissed:' + studyReminder.scope
+        : null;
       const now = new Date();
       const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
       let dismissedDate = '';
-      try { dismissedDate = localStorage.getItem('cards-study-reminder-dismissed') || ''; } catch (error) {}
+      if (reminderStorageKey) {
+        try { dismissedDate = localStorage.getItem(reminderStorageKey) || ''; } catch (error) {}
+      }
       if (currentMinutes >= Number(studyReminder.minutes) && dismissedDate !== today) {
         reminder.hidden = false;
       }
       document.getElementById('dismissStudyReminder')?.addEventListener('click', function () {
         reminder.hidden = true;
-        try { localStorage.setItem('cards-study-reminder-dismissed', today); } catch (error) {}
+        if (reminderStorageKey) {
+          try { localStorage.setItem(reminderStorageKey, today); } catch (error) {}
+        }
       });
     }
 

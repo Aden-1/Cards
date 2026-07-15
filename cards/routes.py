@@ -520,6 +520,16 @@ def _ensure_csrf_token():
     return token
 
 
+def _study_reminder_scope(user):
+    if not user:
+        return ''
+    return hmac.new(
+        current_app.config['SECRET_KEY'].encode('utf-8'),
+        f'study-reminder:{user.user_id}'.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()[:24]
+
+
 def _page_needs_csrf_token(user=None):
     if user:
         return True
@@ -4129,7 +4139,11 @@ def register_routes(app, app_limiter=None):
                 'enabled': user.study_reminder_enabled,
                 'minutes': user.study_reminder_minutes,
                 'time': f'{user.study_reminder_minutes // 60:02d}:{user.study_reminder_minutes % 60:02d}',
-            } if user else {'enabled': False, 'minutes': 1080, 'time': '18:00'}),
+                'scope': _study_reminder_scope(user),
+            } if user else {
+                'enabled': False, 'minutes': 1080, 'time': '18:00',
+                'scope': '',
+            }),
             'csrf_token': _csrf_token,
             'ensure_csrf_token': _ensure_csrf_token,
             'csrf_token_required': csrf_token_required,

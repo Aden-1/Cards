@@ -1,5 +1,8 @@
 """Focused JSON/API contract tests, independent of the browser readiness suite."""
 
+import re
+from pathlib import Path
+
 from cards.api_contract import API_PATHS, JSON_ONLY_ENDPOINTS, wants_json_success_response
 from models import Deck, Quiz, QuizOption, QuizQuestion, User, db
 from services import add_card, create_custom_quiz, create_deck
@@ -111,6 +114,24 @@ class ApiContractTests(CardsTestCase):
             self.assertEqual(user.study_reminder_minutes, 465)
         page = self.client.get('/account')
         self.assertIn(b'value="07:45"', page.data)
+        first_scope = re.search(
+            rb'"scope": "([0-9a-f]{24})"', page.data,
+        ).group(1)
+        self.user_session('second-reminder-user')
+        second_page = self.client.get('/account')
+        second_scope = re.search(
+            rb'"scope": "([0-9a-f]{24})"', second_page.data,
+        ).group(1)
+        self.assertNotEqual(first_scope, second_scope)
+        script = (
+            Path(__file__).resolve().parents[1] / 'static' / 'app.js'
+        ).read_text(encoding='utf-8')
+        self.assertIn(
+            "'cards-study-reminder-dismissed:' + studyReminder.scope", script,
+        )
+        self.assertNotIn(
+            "localStorage.getItem('cards-study-reminder-dismissed')", script,
+        )
         invalid = self.client.post(
             '/account/reminder',
             data={'enabled': 'yes', 'reminder_time': '25:00'},
