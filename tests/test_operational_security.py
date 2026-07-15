@@ -3,6 +3,7 @@
 from models import AuditLog, Card, CardAnswer, Deck, User, db
 from cards.observability import _before_send
 from cards.csv_safety import spreadsheet_safe_cell
+from scripts.check_dependency_licenses import approved
 from services import (
     _totp_code,
     begin_totp_setup,
@@ -25,6 +26,10 @@ class OperationalSecurityTests(CardsTestCase):
     def _user(self, username='operations_user'):
         user = create_user(username, 'password12345', email=f'{username}@example.test')
         return user
+
+    def test_dependency_license_policy_accepts_mit_zero_without_weakening_composites(self):
+        self.assertTrue(approved('MIT-0'))
+        self.assertFalse(approved('MIT-0 OR AGPL-3.0-only'))
 
     def test_email_verification_token_is_consumed_for_matching_account(self):
         with self.app.app_context():
