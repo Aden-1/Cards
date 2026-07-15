@@ -36,6 +36,21 @@ def wants_json_response():
     return request.is_json or request.accept_mimetypes.best == 'application/json'
 
 
+def wants_json_success_response():
+    """Return whether a successful request should be represented as JSON.
+
+    Hybrid mutation paths appear in ``API_PATHS`` so their failures use the
+    stable API error envelope.  Their browser-form successes must still
+    redirect, so path membership alone is deliberately not considered here.
+    """
+    return bool(
+        wants_json_response()
+        or request.endpoint in JSON_ONLY_ENDPOINTS
+        or request.endpoint in JSON_RESPONSE_ENDPOINTS
+        or request.path.startswith('/api/')
+    )
+
+
 def is_api_request():
     """Classify only API-oriented requests as JSON error responses."""
     return bool(

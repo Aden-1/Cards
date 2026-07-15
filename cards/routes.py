@@ -17,7 +17,13 @@ from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 from sqlalchemy.orm import joinedload, selectinload
-from .api_contract import api_error, api_response, is_api_request, request_payload
+from .api_contract import (
+    api_error,
+    api_response,
+    is_api_request,
+    request_payload,
+    wants_json_success_response,
+)
 from .static_assets import asset_url, asset_version, is_current_asset_version
 from .config import validate_rate_limit
 from .csv_safety import spreadsheet_safe_cell
@@ -442,7 +448,7 @@ def _current_user_id():
 
 
 def _wants_json():
-    return is_api_request()
+    return wants_json_success_response()
 
 
 def _login_required_response():

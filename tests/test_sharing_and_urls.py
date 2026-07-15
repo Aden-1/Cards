@@ -602,7 +602,12 @@ class SharingAndUrlTests(CardsTestCase):
         response = self.client.post(
             '/add_card', data={'deck_id': deck_id, 'question': 'Coauthor question', 'answers': 'Answer'}, headers=self.csrf()
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('#deck-editor', response.headers['Location'])
+        with self.app.app_context():
+            self.assertIsNotNone(Card.query.filter_by(
+                deck_id=deck_id, question='Coauthor question',
+            ).one_or_none())
 
         self.assertEqual(
             self.client.post('/list_cards', data={'deck_id': deck_id}, headers=self.csrf()).status_code,

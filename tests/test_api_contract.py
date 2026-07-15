@@ -1,11 +1,49 @@
 """Focused JSON/API contract tests, independent of the browser readiness suite."""
 
+from cards.api_contract import API_PATHS, JSON_ONLY_ENDPOINTS, wants_json_success_response
 from models import Deck, Quiz, QuizOption, QuizQuestion, User, db
 from services import add_card, create_custom_quiz, create_deck
 from tests.support import CardsTestCase
 
 
 class ApiContractTests(CardsTestCase):
+    def test_hybrid_browser_forms_redirect_instead_of_returning_json(self):
+        self.user_session('browser-form-contract-user')
+
+        response = self.client.post(
+            '/create_deck',
+            data={'description': 'Browser form deck'},
+            headers=self.csrf(),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/edit?', response.headers['Location'])
+        self.assertIn('#deck-editor', response.headers['Location'])
+
+    def test_hybrid_api_paths_do_not_force_json_success_for_forms(self):
+        hybrid_paths = API_PATHS.difference({
+            '/get_decks', '/list_cards', '/get_card', '/match_answer',
+            '/match_attempt', '/swap_cards', '/check_reorder', '/score_quiz',
+        })
+
+        for path in hybrid_paths:
+            with self.subTest(path=path):
+                with self.app.test_request_context(
+                    path, method='POST', content_type='application/x-www-form-urlencoded',
+                ):
+                    self.assertFalse(wants_json_success_response())
+
+        json_only_paths = {
+            'swap_cards': '/swap_cards',
+            'check_reorder': '/check_reorder',
+            'score_quiz': '/score_quiz',
+        }
+        self.assertEqual(set(json_only_paths), JSON_ONLY_ENDPOINTS)
+        for endpoint, path in json_only_paths.items():
+            with self.subTest(endpoint=endpoint):
+                with self.app.test_request_context(path, method='POST'):
+                    self.assertTrue(wants_json_success_response())
+
     def test_versioned_public_read_api_is_paginated_text_only_and_visibility_safe(self):
         owner_id = self.user_session('api-v1-owner')
         with self.app.app_context():
