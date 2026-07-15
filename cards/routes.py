@@ -61,6 +61,21 @@ def _pagination_context(endpoint):
     return {'pagination_endpoint': endpoint, 'pagination_args': values}
 
 
+def _query_page(query, page, per_page):
+    """Evaluate a bounded query page with one look-ahead row."""
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    return {
+        'items': rows[:per_page],
+        'page': page,
+        'per_page': per_page,
+        'has_prev': page > 1,
+        'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+
+
 def _include_selected_deck(items, selected_deck, user_id):
     """Keep a direct selection available without rendering more than one page."""
     if not selected_deck or any(deck['deck_id'] == selected_deck.deck_id for deck in items):
@@ -2212,9 +2227,22 @@ def creator_profile_route(username):
     except ValueError:
         abort(404)
     creator = User.query.filter_by(canonical_username=normalized_username, is_active=True).first_or_404()
-    decks = Deck.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Deck.deck_id.desc()).all()
-    quizzes = Quiz.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Quiz.quiz_id.desc()).all()
-    return render_template('creator_profile.html', creator=creator, decks=decks, quizzes=quizzes)
+    per_page = _requested_page_size()
+    deck_page = _query_page(
+        Deck.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Deck.deck_id.desc()),
+        max(1, _int_value(request.args.get('deck_page')) or 1),
+        per_page,
+    )
+    quiz_page = _query_page(
+        Quiz.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Quiz.quiz_id.desc()),
+        max(1, _int_value(request.args.get('quiz_page')) or 1),
+        per_page,
+    )
+    return render_template(
+        'creator_profile.html', creator=creator,
+        decks=deck_page['items'], quizzes=quiz_page['items'],
+        deck_page=deck_page, quiz_page=quiz_page,
+    )
 
 
 def shared_deck_route(token):

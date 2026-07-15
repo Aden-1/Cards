@@ -1,6 +1,6 @@
 """Contract tests for canonical public URLs and deck collaboration."""
 
-from models import Card, DeckCollaborator, DeckShareLink, Quiz, db
+from models import Card, Deck, DeckCollaborator, DeckShareLink, Quiz, db
 from services import add_card, create_deck, edit_deck
 from tests.support import CardsTestCase
 
@@ -22,6 +22,34 @@ class SharingAndUrlTests(CardsTestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertIn('Active+user+not+found', response.headers['Location'])
+
+    def test_creator_profile_paginates_public_decks_and_quizzes_independently(self):
+        owner_id = self.user_session('paged-creator')
+        with self.app.app_context():
+            db.session.add_all([
+                Deck(owned_by=owner_id, description=f'Profile Deck {index}', is_public=True)
+                for index in range(21)
+            ])
+            db.session.add_all([
+                Quiz(owned_by=owner_id, title=f'Profile Quiz {index}', is_public=True)
+                for index in range(21)
+            ])
+            db.session.commit()
+
+        first_page = self.client.get('/creators/paged-creator')
+        self.assertEqual(first_page.status_code, 200)
+        first_html = first_page.get_data(as_text=True)
+        self.assertIn('Profile Deck 20', first_html)
+        self.assertNotIn('Profile Deck 0<', first_html)
+        self.assertIn('Profile Quiz 20', first_html)
+        self.assertNotIn('Profile Quiz 0<', first_html)
+        self.assertIn('deck_page=2', first_html)
+        self.assertIn('quiz_page=2', first_html)
+
+        second_deck_page = self.client.get('/creators/paged-creator?deck_page=2')
+        second_html = second_deck_page.get_data(as_text=True)
+        self.assertIn('Profile Deck 0', second_html)
+        self.assertIn('Profile Quiz 20', second_html)
 
     def test_homepage_handles_featured_deck_summary_urls(self):
         owner_id = self.user_session('featured-url-owner')

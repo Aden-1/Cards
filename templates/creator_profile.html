@@ -1,6 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Cards | {{ creator.username }}{% endblock %}
 {% block content %}
+{% macro profile_pages(pagination, parameter, other_page, label) %}
+{% if pagination.has_prev or pagination.has_next %}
+<nav class="mt-4" aria-label="{{ label }} pages">
+    <div class="toolbar-row">
+        {% if pagination.has_prev %}<a class="btn-surface" href="{{ url_for('creator_profile', username=creator.username, **{parameter: pagination.prev_page, other_page.name: other_page.page, 'page_size': pagination.per_page}) }}" rel="prev">Previous {{ label|lower }} page</a>{% endif %}
+        <span class="small-muted">{{ label }} page {{ pagination.page }}</span>
+        {% if pagination.has_next %}<a class="btn-surface" href="{{ url_for('creator_profile', username=creator.username, **{parameter: pagination.next_page, other_page.name: other_page.page, 'page_size': pagination.per_page}) }}" rel="next">Next {{ label|lower }} page</a>{% endif %}
+    </div>
+</nav>
+{% endif %}
+{% endmacro %}
 <section class="page-intro"><span class="page-kicker">Creator Profile</span><h1 class="page-title">{{ creator.username }}</h1><p class="page-description">Public study sets created by {{ creator.username }}.</p></section>
-<section class="section-stack"><article class="surface p-4"><h2 class="h3">Public Decks</h2><div class="public-grid mt-3">{% for deck in decks %}<article class="public-card"><h3 class="h5">{{ deck.description }}</h3><p class="small-muted">{{ deck.tags or 'Study deck' }}</p><a class="btn-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View deck</a></article>{% else %}<p class="muted-copy">No public decks yet.</p>{% endfor %}</div></article><article class="surface p-4"><h2 class="h3">Public Quizzes</h2><div class="public-grid mt-3">{% for quiz in quizzes %}<article class="public-card"><h3 class="h5">{{ quiz.title }}</h3><a class="btn-surface" href="{{ url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)) }}">View quiz</a></article>{% else %}<p class="muted-copy">No public quizzes yet.</p>{% endfor %}</div></article></section>
+<section class="section-stack">
+    <article class="surface p-4">
+        <h2 class="h3">Public Decks</h2>
+        <div class="public-grid mt-3">{% for deck in decks %}<article class="public-card"><h3 class="h5">{{ deck.description }}</h3><p class="small-muted">{{ deck.tags or 'Study deck' }}</p><a class="btn-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View deck</a></article>{% else %}<p class="muted-copy">No public decks yet.</p>{% endfor %}</div>
+        {{ profile_pages(deck_page, 'deck_page', {'name': 'quiz_page', 'page': quiz_page.page}, 'Decks') }}
+    </article>
+    <article class="surface p-4">
+        <h2 class="h3">Public Quizzes</h2>
+        <div class="public-grid mt-3">{% for quiz in quizzes %}<article class="public-card"><h3 class="h5">{{ quiz.title }}</h3><a class="btn-surface" href="{{ url_for('public_quiz_detail', quiz_slug=quiz_url_slug(quiz)) }}">View quiz</a></article>{% else %}<p class="muted-copy">No public quizzes yet.</p>{% endfor %}</div>
+        {{ profile_pages(quiz_page, 'quiz_page', {'name': 'deck_page', 'page': deck_page.page}, 'Quizzes') }}
+    </article>
+</section>
 {% endblock %}
