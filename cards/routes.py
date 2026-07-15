@@ -1440,8 +1440,7 @@ def moderation_reports_route():
                 return jsonify({'error': 'Only open reports can be resolved or dismissed'}), 400
             resolution_note = (data.get('resolution_note') or '').strip()[:500] or None
             if action == 'unpublish':
-                report.deck.is_public = False
-                report.deck.is_featured = False
+                _suspend_moderated_content('deck', report.deck)
                 affected_reports = DeckReport.query.filter_by(
                     deck_id=report.deck_id, status='open',
                 ).all()
@@ -1540,7 +1539,7 @@ def moderation_quiz_reports_route():
                 }), 400
             resolution_note = (data.get('resolution_note') or '').strip()[:500] or None
             if action == 'unpublish':
-                report.quiz.is_public = False
+                _suspend_moderated_content('quiz', report.quiz)
                 affected_reports = QuizReport.query.filter_by(
                     quiz_id=report.quiz_id, status='open',
                 ).all()
@@ -1605,6 +1604,23 @@ def moderation_quiz_reports_route():
     )
 
 
+def _suspend_moderated_content(content_type, content):
+    """Suspend content and atomically revoke every unlisted access token."""
+    from models import DeckShareLink, QuizShareLink
+
+    content.is_public = False
+    content.is_suspended = True
+    if content_type == 'deck':
+        content.is_featured = False
+        DeckShareLink.query.filter_by(deck_id=content.deck_id).delete(
+            synchronize_session=False,
+        )
+    else:
+        QuizShareLink.query.filter_by(quiz_id=content.quiz_id).delete(
+            synchronize_session=False,
+        )
+
+
 @moderator_required
 def moderate_unpublish_route():
     """The only public-content mutation granted to moderators."""
@@ -1622,9 +1638,7 @@ def moderate_unpublish_route():
         return jsonify({'error': 'Public content not found'}), 404
 
     actor = _current_user()
-    content.is_public = False
-    if content_type == 'deck':
-        content.is_featured = False
+    _suspend_moderated_content(content_type, content)
     db.session.commit()
     audit_event(
         'public_content_unpublished',
@@ -2034,7 +2048,14 @@ def edit():
             deck for deck in get_user_decks_page(user_id, 1, 50)['items']
             if deck.deck_id != selected_deck_id
         ]
-    can_manage_sharing = _is_deck_owner(selected_deck_id, user_id)
+    selected_deck_is_suspended = bool(
+        selected_deck_record and selected_deck_record.is_suspended
+    )
+    can_change_visibility = bool(
+        _is_deck_owner(selected_deck_id, user_id)
+        and not selected_deck_is_suspended
+    )
+    can_manage_sharing = can_change_visibility
     if can_manage_sharing:
         from models import DeckCollaborator, DeckShareLink
         collaborators = DeckCollaborator.query.filter_by(deck_id=selected_deck_id).order_by(DeckCollaborator.created_at.asc()).all()
@@ -2048,6 +2069,8 @@ def edit():
         selected_cards=selected_cards,
         selected_deck_id=selected_deck_id,
         selected_deck_export_text=selected_deck_export_text,
+        selected_deck_is_suspended=selected_deck_is_suspended,
+        can_change_visibility=can_change_visibility,
         can_manage_sharing=can_manage_sharing,
         collaborators=collaborators,
         share_links=share_links,
@@ -2465,6 +2488,8 @@ def edit_deck_route():
         if visibility_supplied and is_public != bool(owned_deck.is_public):
             return jsonify({'error': 'Only the deck owner can change visibility'}), 403
         is_public = bool(owned_deck.is_public)
+    if owned_deck.is_suspended and is_public:
+        return jsonify({'error': 'Suspended decks cannot be published'}), 403
     try:
         existing_featured = bool(owned_deck.is_featured)
         deck = edit_deck(deck_id, description, sortable, is_public, existing_featured, detailed_description, tags)
@@ -3054,7 +3079,7 @@ def shared_quiz_route(token):
 
     share_link = db.session.get(QuizShareLink, token)
     quiz = get_quiz_with_content(share_link.quiz_id) if share_link else None
-    if not quiz:
+    if not quiz or quiz.is_suspended:
         return redirect(url_for('search'))
     return _render_public_quiz(
         quiz, can_copy=share_link.permission == 'copy',
@@ -3325,7 +3350,7 @@ def shared_deck_route(token):
 
     share_link = db.session.get(DeckShareLink, token)
     deck = get_deck_with_content(share_link.deck_id) if share_link else None
-    if not deck:
+    if not deck or deck.is_suspended:
         return redirect(url_for('search'))
     return render_template(
         'public_deck.html', deck=deck, user_id=_current_user_id(), share_token=share_link.token,
@@ -3453,12 +3478,16 @@ def quiz_route():
 def create_deck_share_link_route():
     if not _current_user():
         return _login_required_response()
-    from models import DeckShareLink
+    from models import Deck, DeckShareLink
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
     permission = (data.get('permission') or 'view').strip().lower()
-    if not _is_deck_owner(deck_id, _current_user_id()) or permission not in ('view', 'copy'):
+    deck = db.session.get(Deck, deck_id)
+    if (
+        not deck or deck.owned_by != _current_user_id()
+        or deck.is_suspended or permission not in ('view', 'copy')
+    ):
         return jsonify({'error': 'Only the deck owner can create a share link.'}), 403
     share_link = DeckShareLink(token=secrets.token_urlsafe(32), deck_id=deck_id, permission=permission)
     db.session.add(share_link)
@@ -3524,12 +3553,16 @@ def remove_deck_collaborator_route():
 def create_quiz_share_link_route():
     if not _current_user():
         return _login_required_response()
-    from models import QuizShareLink
+    from models import Quiz, QuizShareLink
 
     data = _request_data()
     quiz_id = _int_value(data.get('quiz_id'))
     permission = (data.get('permission') or 'view').strip().lower()
-    if not _is_quiz_owner(quiz_id, _current_user_id()) or permission not in ('view', 'copy'):
+    quiz = db.session.get(Quiz, quiz_id)
+    if (
+        not quiz or quiz.owned_by != _current_user_id()
+        or quiz.is_suspended or permission not in ('view', 'copy')
+    ):
         return jsonify({'error': 'Only the quiz owner can create a share link.'}), 403
     share_link = QuizShareLink(
         token=secrets.token_urlsafe(32), quiz_id=quiz_id, permission=permission,
@@ -3806,7 +3839,14 @@ def edit_quiz_route():
     quiz_analytics = None
     quiz_collaborators = []
     quiz_share_links = []
-    can_manage_quiz_sharing = _is_quiz_owner(selected_quiz_id, user_id)
+    selected_quiz_is_suspended = bool(
+        selected_quiz and selected_quiz.is_suspended
+    )
+    can_change_quiz_visibility = bool(
+        _is_quiz_owner(selected_quiz_id, user_id)
+        and not selected_quiz_is_suspended
+    )
+    can_manage_quiz_sharing = can_change_quiz_visibility
     if can_manage_quiz_sharing:
         from models import QuizCollaborator, QuizShareLink
         quiz_collaborators = QuizCollaborator.query.filter_by(
@@ -3833,6 +3873,8 @@ def edit_quiz_route():
         quiz_analytics=quiz_analytics, quiz_page=quiz_page,
         quiz_collaborators=quiz_collaborators,
         quiz_share_links=quiz_share_links,
+        selected_quiz_is_suspended=selected_quiz_is_suspended,
+        can_change_quiz_visibility=can_change_quiz_visibility,
         can_manage_quiz_sharing=can_manage_quiz_sharing,
         **_pagination_context('edit_quiz_route'),
     )
@@ -3874,6 +3916,8 @@ def edit_custom_quiz_metadata_route():
         if visibility_supplied and is_public != bool(owned_quiz.is_public):
             return jsonify({'error': 'Only the quiz owner can change visibility'}), 403
         is_public = bool(owned_quiz.is_public)
+    if owned_quiz.is_suspended and is_public:
+        return jsonify({'error': 'Suspended quizzes cannot be published'}), 403
     try:
         edit_custom_quiz(quiz_id, title, is_public, description, tags)
     except ValueError as exc:

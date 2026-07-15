@@ -94,6 +94,7 @@ class Deck(db.Model):
     sortable = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'), index=True)
     is_featured = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'), index=True)
+    is_suspended = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
     cards = db.relationship('Card', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     tag_rows = db.relationship('DeckTag', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     collaborators = db.relationship('DeckCollaborator', backref='deck', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
@@ -104,6 +105,7 @@ class Deck(db.Model):
         CheckConstraint('sortable IS TRUE OR sortable IS FALSE', name='ck_deck_sortable_boolean'),
         CheckConstraint('is_public IS TRUE OR is_public IS FALSE', name='ck_deck_is_public_boolean'),
         CheckConstraint('is_featured IS TRUE OR is_featured IS FALSE', name='ck_deck_is_featured_boolean'),
+        CheckConstraint('is_suspended IS TRUE OR is_suspended IS FALSE', name='ck_deck_is_suspended_boolean'),
     )
 
 
@@ -285,12 +287,14 @@ class Quiz(db.Model):
     description = db.Column(db.Text, nullable=True)
     tags = db.Column(db.String(255), nullable=True)
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'), index=True)
+    is_suspended = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
     questions = db.relationship('QuizQuestion', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     collaborators = db.relationship('QuizCollaborator', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     share_links = db.relationship('QuizShareLink', backref='quiz', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
 
     __table_args__ = (
         CheckConstraint('is_public IS TRUE OR is_public IS FALSE', name='ck_quiz_is_public_boolean'),
+        CheckConstraint('is_suspended IS TRUE OR is_suspended IS FALSE', name='ck_quiz_is_suspended_boolean'),
     )
 
 

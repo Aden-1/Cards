@@ -568,6 +568,11 @@ class SharingAndUrlTests(CardsTestCase):
                 owned_by=owner_id, title='Community Quiz', is_public=True,
             )
             db.session.add(quiz)
+            db.session.flush()
+            db.session.add(QuizShareLink(
+                token='moderated-quiz-link', quiz_id=quiz.quiz_id,
+                permission='view',
+            ))
             db.session.commit()
             quiz_id = quiz.quiz_id
 
@@ -620,10 +625,29 @@ class SharingAndUrlTests(CardsTestCase):
         )
         self.assertEqual(moderated.status_code, 302)
         with self.app.app_context():
-            self.assertFalse(db.session.get(Quiz, quiz_id).is_public)
+            quiz = db.session.get(Quiz, quiz_id)
+            self.assertFalse(quiz.is_public)
+            self.assertTrue(quiz.is_suspended)
+            self.assertIsNone(db.session.get(QuizShareLink, 'moderated-quiz-link'))
             report = db.session.get(QuizReport, report_id)
             self.assertEqual(report.status, 'resolved')
             self.assertEqual(report.resolved_by, moderator_id)
+        self.assertEqual(self.client.get('/sq/moderated-quiz-link').status_code, 302)
+
+        self._switch_user(owner_id)
+        self.assert_json_error(self.client.post(
+            '/edit_custom_quiz',
+            json={
+                'quiz_id': quiz_id, 'title': 'Community Quiz',
+                'is_public': True,
+            },
+            headers=self.csrf(),
+        ), 403)
+        self.assert_json_error(self.client.post(
+            '/quizzes/share',
+            json={'quiz_id': quiz_id, 'permission': 'view'},
+            headers=self.csrf(),
+        ), 403)
 
     def test_unlisted_copy_link_and_coauthor_access(self):
         owner_id = self.user_session('sharing-owner')

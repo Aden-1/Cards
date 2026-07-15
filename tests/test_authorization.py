@@ -1,6 +1,6 @@
 """Role and account-state authorization regression coverage."""
 
-from models import AuditLog, Deck, DeckReport, User, db
+from models import AuditLog, Deck, DeckReport, DeckShareLink, User, db
 from services import create_deck, create_user
 from tests.support import CardsTestCase
 
@@ -23,8 +23,14 @@ class AuthorizationTests(CardsTestCase):
             owner = create_user('owner', 'password12345')
             deck = Deck(owned_by=owner.user_id, description='Public', is_public=True)
             db.session.add(deck)
+            db.session.flush()
+            db.session.add(DeckShareLink(
+                token='moderated-deck-link', deck_id=deck.deck_id,
+                permission='view',
+            ))
             db.session.commit()
             deck_id = deck.deck_id
+            owner_id = owner.user_id
         self._session_for('moderator', 'moderator')
         denied = self.client.get('/admin/users', headers={'Accept': 'application/json'})
         self.assertEqual(denied.status_code, 403)
@@ -35,7 +41,34 @@ class AuthorizationTests(CardsTestCase):
         )
         self.assertEqual(response.status_code, 200)
         with self.app.app_context():
-            self.assertFalse(db.session.get(Deck, deck_id).is_public)
+            deck = db.session.get(Deck, deck_id)
+            self.assertFalse(deck.is_public)
+            self.assertTrue(deck.is_suspended)
+            self.assertIsNone(db.session.get(DeckShareLink, 'moderated-deck-link'))
+        self.assertEqual(self.client.get('/s/moderated-deck-link').status_code, 302)
+
+        with self.app.app_context():
+            owner_auth_version = db.session.get(User, owner_id).auth_version
+        with self.client.session_transaction() as current_session:
+            current_session.clear()
+            current_session.update(
+                user_id=owner_id,
+                auth_version=owner_auth_version,
+                csrf_token='contract-csrf-token',
+            )
+        self.assert_json_error(self.client.post(
+            '/edit_deck',
+            json={
+                'deck_id': deck_id, 'description': 'Public',
+                'is_public': True,
+            },
+            headers=self.csrf(),
+        ), 403)
+        self.assert_json_error(self.client.post(
+            '/decks/share',
+            json={'deck_id': deck_id, 'permission': 'view'},
+            headers=self.csrf(),
+        ), 403)
 
     def test_standard_user_cannot_reach_moderation_route_and_admin_has_parity(self):
         with self.app.app_context():

@@ -373,6 +373,7 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
         'sortable': deck.sortable,
         'is_public': deck.is_public,
         'is_featured': deck.is_featured,
+        'is_suspended': deck.is_suspended,
         'card_count': len(cards),
         'answer_count': len(flattened_answers),
         'cards': serialized_cards,
