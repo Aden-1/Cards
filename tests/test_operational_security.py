@@ -1,6 +1,6 @@
 """Coverage for operational observability and account-security upgrades."""
 
-from models import AuditLog, db
+from models import AuditLog, User, db
 from cards.observability import _before_send
 from services import (
     _totp_code,
@@ -84,3 +84,61 @@ class OperationalSecurityTests(CardsTestCase):
         self.assertEqual(response.status_code, 302)
         with self.client.session_transaction() as session:
             self.assertIn('user_id', session)
+
+    def test_pending_two_factor_challenge_is_revoked_by_auth_version_change(self):
+        with self.app.app_context():
+            user = self._user('revoked_totp_login')
+            secret, _ = begin_totp_setup(user, 'password12345')
+            self.assertTrue(confirm_totp_setup(user, _totp_code(secret)))
+            user_id = user.user_id
+
+        self.client.get('/login')
+        with self.client.session_transaction() as session:
+            csrf_token = session['csrf_token']
+        self.client.post('/login', data={
+            'username': 'revoked_totp_login',
+            'password': 'password12345',
+            'csrf_token': csrf_token,
+        })
+        with self.client.session_transaction() as session:
+            csrf_token = session['csrf_token']
+
+        with self.app.app_context():
+            user = db.session.get(User, user_id)
+            user.set_password('newpassword123')
+            user.auth_version += 1
+            db.session.commit()
+
+        response = self.client.post('/two-factor', data={
+            'code': _totp_code(secret),
+            'csrf_token': csrf_token,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/login', response.headers['Location'])
+        with self.client.session_transaction() as session:
+            self.assertNotIn('user_id', session)
+
+    def test_pending_two_factor_challenge_expires(self):
+        with self.app.app_context():
+            user = self._user('expired_totp_login')
+            secret, _ = begin_totp_setup(user, 'password12345')
+            self.assertTrue(confirm_totp_setup(user, _totp_code(secret)))
+
+        self.client.get('/login')
+        with self.client.session_transaction() as session:
+            csrf_token = session['csrf_token']
+        self.client.post('/login', data={
+            'username': 'expired_totp_login',
+            'password': 'password12345',
+            'csrf_token': csrf_token,
+        })
+        with self.client.session_transaction() as session:
+            csrf_token = session['csrf_token']
+            session['pending_two_factor_issued_at'] = 0
+
+        response = self.client.post('/two-factor', data={
+            'code': _totp_code(secret),
+            'csrf_token': csrf_token,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/login', response.headers['Location'])

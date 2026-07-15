@@ -209,6 +209,7 @@ def load_config(overrides=None):
         'EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS': _env_int('EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS', 86400),
         'TWO_FACTOR_ENCRYPTION_KEY': _env_str('TWO_FACTOR_ENCRYPTION_KEY'),
         'TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS': _env_int('TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS', 600),
+        'TWO_FACTOR_CHALLENGE_MAX_AGE_SECONDS': _env_int('TWO_FACTOR_CHALLENGE_MAX_AGE_SECONDS', 600),
         'RATELIMIT_STORAGE_URI': storage_uri,
         # Heroku KVS uses TLS with a self-signed certificate and documents
         # disabling certificate verification in redis-py. Restrict that
@@ -258,6 +259,8 @@ def load_config(overrides=None):
         raise RuntimeError('EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS must be between 60 seconds and 7 days.')
     if not 60 <= config['TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS'] <= 3600:
         raise RuntimeError('TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS must be between 60 seconds and 1 hour.')
+    if not 60 <= config['TWO_FACTOR_CHALLENGE_MAX_AGE_SECONDS'] <= 3600:
+        raise RuntimeError('TWO_FACTOR_CHALLENGE_MAX_AGE_SECONDS must be between 60 seconds and 1 hour.')
     if config['TWO_FACTOR_ENCRYPTION_KEY'] and len(config['TWO_FACTOR_ENCRYPTION_KEY']) < 32:
         raise RuntimeError('TWO_FACTOR_ENCRYPTION_KEY must be at least 32 characters.')
     config['RATE_LIMITS'] = validate_rate_limits(config['RATE_LIMITS'])

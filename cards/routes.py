@@ -1,8 +1,10 @@
 import csv
+import hmac
 import io
 import re
 import secrets
 import hashlib
+import time
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import urlsplit
@@ -202,6 +204,19 @@ def _target_key(field, namespace):
 
 def _login_target_key():
     return _target_key('username', 'login')
+
+
+def _two_factor_target_key():
+    """Rate-limit a pending challenge by account without exposing its user ID."""
+    user_id = session.get('pending_two_factor_user_id')
+    if type(user_id) is not int or user_id < 1:
+        return f'target:two-factor:missing:{_client_ip_key()}'
+    digest = hmac.new(
+        current_app.config['SECRET_KEY'].encode('utf-8'),
+        str(user_id).encode('ascii'),
+        hashlib.sha256,
+    ).hexdigest()
+    return f'target:two-factor:{digest}'
 
 
 def _registration_target_key():
@@ -544,6 +559,38 @@ def _complete_login(user):
     session['csrf_token'] = secrets.token_urlsafe(32)
 
 
+def _pending_two_factor_user():
+    """Return a live, version-bound second-factor challenge target."""
+    from models import User
+
+    user_id = session.get('pending_two_factor_user_id')
+    auth_version = session.get('pending_two_factor_auth_version')
+    method = session.get('pending_two_factor_method')
+    issued_at = session.get('pending_two_factor_issued_at')
+    if (
+        type(user_id) is not int
+        or type(auth_version) is not int
+        or type(issued_at) not in (int, float)
+        or method not in ('email', 'totp')
+    ):
+        return None
+
+    now = time.time()
+    max_age = current_app.config['TWO_FACTOR_CHALLENGE_MAX_AGE_SECONDS']
+    if issued_at > now + 60 or now - issued_at > max_age:
+        return None
+
+    user = db.session.get(User, user_id)
+    if (
+        not user
+        or not user.is_active
+        or user.auth_version != auth_version
+        or user.two_factor_method != method
+    ):
+        return None
+    return user
+
+
 def _queue_account_email(user_id, delivery_type):
     if not current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED'):
         return False
@@ -620,6 +667,9 @@ def login():
     if user.two_factor_method in ('email', 'totp'):
         session.clear()
         session['pending_two_factor_user_id'] = user.user_id
+        session['pending_two_factor_auth_version'] = user.auth_version
+        session['pending_two_factor_method'] = user.two_factor_method
+        session['pending_two_factor_issued_at'] = time.time()
         session['pending_two_factor_next'] = _safe_next_url(data.get('next'))
         session['csrf_token'] = secrets.token_urlsafe(32)
         if user.two_factor_method == 'email':
@@ -633,11 +683,10 @@ def login():
 
 
 def two_factor_challenge():
-    from models import User
     from services import verify_email_two_factor_code, verify_totp_code, _decrypt_two_factor_secret
 
-    user = db.session.get(User, session.get('pending_two_factor_user_id'))
-    if not user or not user.is_active or user.two_factor_method not in ('email', 'totp'):
+    user = _pending_two_factor_user()
+    if not user:
         session.clear()
         return redirect(url_for('login', notice='Your sign-in challenge has expired.', level='error'))
     if request.method == 'GET':
@@ -657,9 +706,9 @@ def two_factor_challenge():
 
 
 def resend_two_factor_code():
-    from models import User
-    user = db.session.get(User, session.get('pending_two_factor_user_id'))
+    user = _pending_two_factor_user()
     if not user or user.two_factor_method != 'email':
+        session.clear()
         return redirect(url_for('login', notice='Your sign-in challenge has expired.', level='error'))
     _queue_account_email(user.user_id, 'two_factor')
     audit_event('two_factor_code_resent', user, 'info')
@@ -2596,8 +2645,8 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=_anonymous_sensitive_limit(login, 'login', ['POST'], _login_target_key), methods=['GET', 'POST'])
-    app.add_url_rule('/two-factor', endpoint='two_factor_challenge', view_func=_anonymous_sensitive_limit(two_factor_challenge, 'two_factor', ['POST'], _login_target_key), methods=['GET', 'POST'])
-    app.add_url_rule('/two-factor/resend', endpoint='resend_two_factor_code', view_func=_anonymous_sensitive_limit(resend_two_factor_code, 'two_factor', ['POST'], _login_target_key), methods=['POST'])
+    app.add_url_rule('/two-factor', endpoint='two_factor_challenge', view_func=_anonymous_sensitive_limit(two_factor_challenge, 'two_factor', ['POST'], _two_factor_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/two-factor/resend', endpoint='resend_two_factor_code', view_func=_anonymous_sensitive_limit(resend_two_factor_code, 'two_factor', ['POST'], _two_factor_target_key), methods=['POST'])
     app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=_anonymous_sensitive_limit(forgot_password, 'forgot_password', ['POST'], _recovery_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/reset-password', endpoint='reset_password', view_func=_anonymous_sensitive_limit(reset_password, 'reset_password', ['POST'], _reset_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
