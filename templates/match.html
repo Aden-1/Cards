@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectedStrategy = {{ selected_strategy | tojson }};
     let selectedQuestionId = null;
     let selectedAnswerId = null;
+    let matchRequestPending = false;
     let resizeRaf = null;
     let progressiveBatchSize = PROGRESSIVE_START_SIZE;
     let hasLoadedFirstBatch = false;
@@ -381,6 +382,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }).catch(() => {});
     }
 
+    async function validateMatchAttempt(answerId, questionId) {
+        if (!window.cardsCsrfToken) {
+            return { correct: false, message: 'This game session expired. Refresh and try again.' };
+        }
+        try {
+            const response = await fetch('{{ url_for("match_answer") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.cardsCsrfToken },
+                body: JSON.stringify({ answer_id: answerId, selected_question_id: questionId })
+            });
+            const payload = await response.json();
+            return {
+                correct: response.ok && payload.success === true,
+                message: payload.error || (response.ok ? '' : 'Could not check that match.'),
+            };
+        } catch (_error) {
+            return { correct: false, message: 'Could not check that match. Try again.' };
+        }
+    }
+
     function updateTimedRecoveryTimerDisplay() {
         const timerShell = document.getElementById('matchTimerShell');
         const timerProgress = document.getElementById('matchTimerRingProgress');
@@ -417,12 +438,13 @@ document.addEventListener('DOMContentLoaded', function() {
             return [];
         }
         const correctAnswers = question.answer_objects || [];
+        const correctAnswerIdSet = new Set(correctAnswers.map((answer) => answer.answer_id));
         const correctAnswerIds = correctAnswers.length
             ? [shuffleArray(correctAnswers)[0].answer_id]
             : [];
         const distractorPool = shuffleArray(
             Array.from(answerMap.values())
-                .filter((answer) => answer.card_id !== questionId)
+                .filter((answer) => !correctAnswerIdSet.has(answer.answer_id))
                 .map((answer) => answer.answer_id)
         );
         const desiredDistractorCount = Math.max(2, TIMED_RECOVERY_CHOICE_COUNT - correctAnswerIds.length);
@@ -538,7 +560,7 @@ document.addEventListener('DOMContentLoaded', function() {
         answerStack.innerHTML = renderedAnswerIds.map((answerId) => {
             const answer = answerMap.get(answerId);
             const selectedClass = selectedAnswerId === answerId ? ' selected' : '';
-            return `<div class="match-tile answer-tile${selectedClass}" data-type="answer" data-answer-id="${answer.answer_id}" data-question-id="${answer.card_id}"><div class="tile-content"><div class="tile-label answer-label">Answer</div><div class="tile-text">${escapeHtml(answer.answer)}</div></div></div>`;
+            return `<div class="match-tile answer-tile${selectedClass}" data-type="answer" data-answer-id="${answer.answer_id}"><div class="tile-content"><div class="tile-label answer-label">Answer</div><div class="tile-text">${escapeHtml(answer.answer)}</div></div></div>`;
         }).join('');
 
         bindRenderedTileEvents();
@@ -567,16 +589,15 @@ document.addEventListener('DOMContentLoaded', function() {
         sortPendingQuestions();
     }
 
-    function handleWrongMatch(questionId, attemptedAnswerId) {
+    function handleWrongMatch(questionId, message = '') {
         queueRetryForQuestion(questionId);
         boostWeakness(questionId);
-        recordMatchAttempt(attemptedAnswerId, questionId);
         selectedQuestionId = null;
         selectedAnswerId = null;
 
         if (selectedStrategy === 'timed_recovery') {
             renderMatchBoard();
-            showFeedback(timedRecoveryMode ? 'Wrong answer. Moving to the next recovery question.' : 'Wrong match. This pair will return in timed recovery.', false);
+            showFeedback(message || (timedRecoveryMode ? 'Wrong answer. Moving to the next recovery question.' : 'Wrong match. This pair will return in timed recovery.'), false);
             if (timedRecoveryMode) {
                 advanceTimedRecoveryQuestion();
             }
@@ -584,10 +605,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         renderMatchBoard();
-        showFeedback('Wrong match', false);
+        showFeedback(message || 'Wrong match', false);
     }
 
-    function handleTileClick(tile) {
+    async function attemptServerValidatedMatch(answerId, questionId) {
+        if (matchRequestPending) {
+            return;
+        }
+        matchRequestPending = true;
+        selectedAnswerId = answerId;
+        renderMatchBoard();
+        const result = await validateMatchAttempt(answerId, questionId);
+        matchRequestPending = false;
+        if (!result.correct) {
+            handleWrongMatch(questionId, result.message);
+            return;
+        }
+        handleMatch(answerId, questionId);
+    }
+
+    async function handleTileClick(tile) {
         const tileType = tile.dataset.type;
         if (selectedStrategy === 'reverse_pressure' || timedRecoveryMode) {
             const focusQuestionId = getFocusedQuestionId();
@@ -599,15 +636,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             const answerId = parseInt(tile.dataset.answerId, 10);
-            const answer = answerMap.get(answerId);
-            if (!answer) {
+            if (!answerMap.has(answerId)) {
                 return;
             }
-            if (answer.card_id !== focusQuestionId) {
-                handleWrongMatch(focusQuestionId, answer.answer_id);
-                return;
-            }
-            handleMatch(answer.answer_id);
+            await attemptServerValidatedMatch(answerId, focusQuestionId);
             return;
         }
 
@@ -621,16 +653,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             const answerId = parseInt(tile.dataset.answerId, 10);
-            const questionId = parseInt(tile.dataset.questionId, 10);
-            if (questionId !== selectedQuestionId) {
-                handleWrongMatch(selectedQuestionId, answerId);
-                return;
-            }
-            handleMatch(answerId);
+            await attemptServerValidatedMatch(answerId, selectedQuestionId);
         }
     }
 
-    function handleMatch(answerId) {
+    function handleMatch(answerId, targetQuestionId) {
         const answer = answerMap.get(answerId);
         if (!answer) {
             return;
@@ -641,10 +668,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             activeAnswerIds = activeAnswerIds.filter((currentId) => currentId !== answerId);
         }
-        recordMatchAttempt(answerId, answer.card_id);
         showFeedback('Correct!', true);
 
-        const targetQuestionId = answer.card_id;
         const remainingAnswersForQuestion = questionMap.get(targetQuestionId).answer_objects.filter((item) => !matchedAnswerIds.has(item.answer_id)).length;
         if (timedRecoveryMode) {
             timedRecoveryQuestionSet.delete(targetQuestionId);

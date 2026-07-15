@@ -2444,14 +2444,12 @@ def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
     answer_ids = [answer['answer_id'] for card in cards for answer in card.get('answer_objects', [])]
     progress_by_answer_id = _get_match_progress_by_answer(user_id, answer_ids)
 
-    answers = []
     for card in cards:
         enriched_answers = []
         for answer in card.get('answer_objects', []):
             progress = progress_by_answer_id.get(answer['answer_id'])
             enriched_answer = {
                 **answer,
-                'card_id': card['card_id'],
                 'correct_count': progress.correct_count if progress else 0,
                 'incorrect_count': progress.incorrect_count if progress else 0,
                 'last_outcome': progress.last_outcome if progress else None,
@@ -2459,7 +2457,6 @@ def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
             enriched_answer['attempt_count'] = enriched_answer['correct_count'] + enriched_answer['incorrect_count']
             enriched_answer['match_weight'] = _match_pair_weight(enriched_answer)
             enriched_answers.append(enriched_answer)
-            answers.append(enriched_answer)
         card['answer_objects'] = enriched_answers
         card['answer_count'] = len(enriched_answers)
         card['total_attempts'] = sum(answer['attempt_count'] for answer in enriched_answers)
@@ -2477,7 +2474,6 @@ def get_match_game_data(user_id, deck_id, strategy='standard_shuffle'):
         'card_count': serialized['card_count'],
         'answer_count': serialized['answer_count'],
         'cards': ordered_cards,
-        'answers': answers,
         'strategy': normalized_strategy,
     }
 

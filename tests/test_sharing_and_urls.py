@@ -1,11 +1,31 @@
 """Contract tests for canonical public URLs and deck collaboration."""
 
 from models import Card, Deck, DeckCollaborator, DeckShareLink, Quiz, db
-from services import add_card, create_deck, edit_deck
+from services import add_card, create_deck, edit_deck, get_match_game_data
 from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_match_payload_omits_explicit_answer_mapping_and_uses_server_validator(self):
+        owner_id = self.user_session('match-payload-owner')
+        with self.app.app_context():
+            deck = create_deck(owner_id, 'Server Validated Match')
+            add_card(deck.deck_id, 'First question', ['First answer'])
+            add_card(deck.deck_id, 'Second question', ['Second answer'])
+            deck_id = deck.deck_id
+            payload = get_match_game_data(owner_id, deck_id)
+
+        self.assertNotIn('answers', payload)
+        for card in payload['cards']:
+            for answer in card['answer_objects']:
+                self.assertNotIn('card_id', answer)
+
+        response = self.client.get(f'/match?deck_id={deck_id}')
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("fetch('/match_answer'", page)
+        self.assertNotIn('answer.card_id', page)
+
     def test_invalid_creator_and_collaborator_usernames_do_not_raise_server_errors(self):
         response = self.client.get(f"/creators/{'x' * 41}")
         self.assertEqual(response.status_code, 404)
