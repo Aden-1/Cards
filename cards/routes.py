@@ -6,6 +6,7 @@ import secrets
 import hashlib
 import time
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import urlsplit
 
@@ -13,6 +14,7 @@ from flask import Response, abort, current_app, g, jsonify, redirect, render_tem
 from flask_limiter.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
+from sqlalchemy.orm import joinedload
 from .api_contract import api_error, api_response, is_api_request, request_payload
 from .static_assets import asset_url, asset_version, is_current_asset_version
 from .config import validate_rate_limit
@@ -1183,6 +1185,105 @@ def admin_audit_log():
 
 
 @moderator_required
+def moderation_reports_route():
+    """Review and resolve user-submitted public deck reports."""
+    from models import DeckReport
+
+    if request.method == 'POST':
+        data = _request_data()
+        report_id = _int_value(data.get('report_id'))
+        action = (data.get('action') or '').strip().lower()
+        report = db.session.get(DeckReport, report_id)
+        if not report:
+            return jsonify({'error': 'Report not found'}), 404
+
+        actor = _current_user()
+        if action == 'reopen':
+            report.status = 'open'
+            report.resolved_by = None
+            report.resolved_at = None
+            report.resolution_note = None
+        elif action in ('resolve', 'dismiss', 'unpublish'):
+            if report.status != 'open':
+                return jsonify({'error': 'Only open reports can be resolved or dismissed'}), 400
+            resolution_note = (data.get('resolution_note') or '').strip()[:500] or None
+            if action == 'unpublish':
+                report.deck.is_public = False
+                affected_reports = DeckReport.query.filter_by(
+                    deck_id=report.deck_id, status='open',
+                ).all()
+            else:
+                affected_reports = [report]
+            resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            for affected_report in affected_reports:
+                affected_report.status = 'dismissed' if action == 'dismiss' else 'resolved'
+                affected_report.resolved_by = actor.user_id
+                affected_report.resolved_at = resolved_at
+                affected_report.resolution_note = resolution_note
+        else:
+            return jsonify({'error': 'Choose a valid moderation action'}), 400
+
+        db.session.commit()
+        audit_event(
+            f'deck_report_{action}', actor, 'success',
+            target_type='deck_report', target_id=report.report_id,
+            deck_id=report.deck_id, status=report.status,
+        )
+        if _wants_json():
+            return jsonify({
+                'success': True,
+                'report_id': report.report_id,
+                'status': report.status,
+            })
+        return redirect(url_for(
+            'moderation_reports',
+            status=request.args.get('status', 'open'),
+            reason=request.args.get('reason', ''),
+            notice='Report updated.',
+            level='success',
+        ))
+
+    selected_status = (request.args.get('status') or 'open').strip().lower()
+    selected_reason = (request.args.get('reason') or '').strip().lower()
+    if selected_status not in ('open', 'resolved', 'dismissed', 'all'):
+        selected_status = 'open'
+    if selected_reason not in ('spam', 'copyright', 'inaccurate', 'other', ''):
+        selected_reason = ''
+
+    query = DeckReport.query.options(
+        joinedload(DeckReport.deck),
+        joinedload(DeckReport.reporter),
+        joinedload(DeckReport.resolver),
+    )
+    if selected_status != 'all':
+        query = query.filter(DeckReport.status == selected_status)
+    if selected_reason:
+        query = query.filter(DeckReport.reason == selected_reason)
+    query = query.order_by(DeckReport.created_at.asc(), DeckReport.report_id.asc())
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    reports = rows[:per_page]
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+    counts = dict(
+        db.session.query(DeckReport.status, db.func.count(DeckReport.report_id))
+        .group_by(DeckReport.status)
+        .all()
+    )
+    return render_template(
+        'moderation_reports.html', reports=reports, counts=counts,
+        selected_status=selected_status, selected_reason=selected_reason,
+        pagination=pagination, **_pagination_context('moderation_reports'),
+    )
+
+
+@moderator_required
 def moderate_unpublish_route():
     """The only public-content mutation granted to moderators."""
     from models import Deck, Quiz
@@ -2258,8 +2359,30 @@ def report_deck_route():
     data = _request_data(); deck_id = _int_value(data.get('deck_id')); reason = (data.get('reason') or '').strip(); detail = (data.get('detail') or '').strip()[:500]
     deck = db.session.get(Deck, deck_id)
     if not deck or not deck.is_public or reason not in ('spam', 'copyright', 'inaccurate', 'other'): return jsonify({'error': 'A valid public deck report is required.'}), 400
-    db.session.add(DeckReport(user_id=_current_user_id(), deck_id=deck_id, reason=reason, detail=detail or None)); db.session.commit()
-    return redirect(request.referrer or url_for('public_deck_detail', deck_slug=deck_url_slug(deck)))
+    user_id = _current_user_id()
+    if deck.owned_by == user_id:
+        return jsonify({'error': 'You cannot report your own deck.'}), 400
+    existing = DeckReport.query.filter_by(
+        user_id=user_id, deck_id=deck_id, status='open',
+    ).first()
+    if existing:
+        return redirect(url_for(
+            'public_deck_detail', deck_slug=deck_url_slug(deck),
+            notice='You already have an open report for this deck.', level='info',
+        ))
+    report = DeckReport(
+        user_id=user_id, deck_id=deck_id, reason=reason, detail=detail or None,
+    )
+    db.session.add(report)
+    db.session.commit()
+    audit_event(
+        'deck_report_submitted', _current_user(), 'info',
+        target_type='deck_report', target_id=report.report_id, deck_id=deck_id,
+    )
+    return redirect(url_for(
+        'public_deck_detail', deck_slug=deck_url_slug(deck),
+        notice='Report submitted for moderator review.', level='success',
+    ))
 
 
 def creator_profile_route(username):
@@ -2802,6 +2925,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/admin/audit-log', endpoint='admin_audit_log', view_func=admin_audit_log, methods=['GET'])
+    app.add_url_rule('/moderation/reports', endpoint='moderation_reports', view_func=_limit(moderation_reports_route, 'content_mutation', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/moderation/unpublish', endpoint='moderate_unpublish', view_func=_limit(moderate_unpublish_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)

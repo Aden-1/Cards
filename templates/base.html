@@ -64,7 +64,7 @@
                             <li><a class="dropdown-item" href="{{ url_for('admin_audit_log') }}">Audit Log</a></li>
                             {% endif %}
                             {% if current_user.role in ('moderator', 'admin') %}
-                            <li><span class="dropdown-item-text small-muted">Moderation enabled</span></li>
+                            <li><a class="dropdown-item" href="{{ url_for('moderation_reports') }}">Moderation Reports</a></li>
                             {% endif %}
                             <li><hr class="dropdown-divider"></li>
                             <li>

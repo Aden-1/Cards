@@ -76,6 +76,26 @@ class Deck(db.Model):
 when deck metadata is created or edited. `deck` also has a
 `(is_public, is_featured, deck_id)` index for the bounded featured-deck lookup.
 
+### DeckReport
+```python
+class DeckReport(db.Model):
+    report_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id'), nullable=False)
+    reason = db.Column(db.String(30), nullable=False)
+    detail = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='open')
+    resolved_by = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolution_note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+```
+
+Report status is constrained to `open`, `resolved`, or `dismissed`. Deleting
+the resolving moderator sets `resolved_by` to `NULL`; deleting the reporter or
+reported deck removes its report. The `(status, created_at)` index supports the
+oldest-first moderation queue.
+
 ### Card
 ```python
 class Card(db.Model):

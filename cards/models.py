@@ -154,9 +154,26 @@ class DeckReport(db.Model):
     deck_id = db.Column(db.Integer, db.ForeignKey('deck.deck_id', ondelete='CASCADE'), nullable=False, index=True)
     reason = db.Column(db.String(30), nullable=False)
     detail = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='open', server_default=db.text("'open'"), index=True)
+    resolved_by = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='SET NULL'), nullable=True, index=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolution_note = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    deck = db.relationship('Deck')
+    reporter = db.relationship('User', foreign_keys=[user_id])
+    resolver = db.relationship('User', foreign_keys=[resolved_by])
 
-    __table_args__ = (CheckConstraint("reason IN ('spam', 'copyright', 'inaccurate', 'other')", name='ck_deck_report_reason'),)
+    __table_args__ = (
+        CheckConstraint(
+            "reason IN ('spam', 'copyright', 'inaccurate', 'other')",
+            name='ck_deck_report_reason',
+        ),
+        CheckConstraint(
+            "status IN ('open', 'resolved', 'dismissed')",
+            name='ck_deck_report_status',
+        ),
+        db.Index('ix_deck_report_status_created_at', 'status', 'created_at'),
+    )
 
 
 class CuratedCollection(db.Model):

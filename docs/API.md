@@ -168,6 +168,27 @@ edit private content, accounts, or roles. Inactive sessions have no authority.
 Successful changes emit an audit-safe event containing only actor/target IDs,
 type, and outcome.
 
+### Moderation report queue
+**GET, POST** `/moderation/reports`
+
+Moderator- and admin-only route.
+
+GET query parameters:
+- `status`: `open` (default), `resolved`, `dismissed`, or `all`
+- `reason`: optional `spam`, `copyright`, `inaccurate`, or `other`
+- `page` and `page_size`; page size is capped at 50
+
+POST fields:
+- `report_id`
+- `action`: `resolve`, `dismiss`, `unpublish`, or `reopen`
+- `resolution_note`: optional internal note, maximum 500 characters
+
+`unpublish` makes the reported deck private and resolves every open report for
+that deck. Other resolution actions affect only the selected report. Each
+action records the moderator, timestamp, bounded internal note, and an
+audit-safe event. A user can have only one open report per deck through the
+application workflow.
+
 ### Deck Editor
 **GET** `/edit`
 - Query params: `deck_id`, `page`, `page_size` (maximum 50)
