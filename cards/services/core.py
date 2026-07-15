@@ -3146,7 +3146,9 @@ def _generate_deck_quiz_questions(deck_id, question_ids=None):
     """Build multiple-choice questions from one deck's cards and answers."""
     deck = get_deck_with_content(deck_id)
     cards = list(deck.cards) if deck else []
-    deck_answers = [answer.answer for card in cards for answer in card.answers]
+    deck_answers = list(dict.fromkeys(
+        answer.answer for card in cards for answer in card.answers
+    ))
     if not deck_answers:
         deck_answers = ['Option A', 'Option B', 'Option C', 'Option D', 'No other answers available']
 
@@ -3155,18 +3157,26 @@ def _generate_deck_quiz_questions(deck_id, question_ids=None):
     for card in cards:
         if allowed_ids is not None and str(card.card_id) not in allowed_ids:
             continue
-        correct_answers = [answer.answer for answer in card.answers]
-        chosen_correct = random.sample(correct_answers, random.randint(1, len(correct_answers))) if correct_answers else []
-        wrong_needed = max(0, 4 - len(chosen_correct))
-        if wrong_needed < 0:
-            chosen_correct = random.sample(chosen_correct, 4)
-            wrong_needed = 0
+        correct_answers = list(dict.fromkeys(answer.answer for answer in card.answers))
+        correct_count = random.randint(1, min(2, len(correct_answers))) if correct_answers else 0
+        chosen_correct = random.sample(correct_answers, correct_count)
+        wrong_needed = 4 - len(chosen_correct)
 
-        safe_distractors = [answer for answer in deck_answers if answer not in correct_answers]
+        safe_distractors = list(dict.fromkeys(
+            answer for answer in deck_answers if answer not in correct_answers
+        ))
         if len(safe_distractors) >= wrong_needed:
             chosen_wrong = random.sample(safe_distractors, wrong_needed)
         else:
-            chosen_wrong = safe_distractors + [f'Generic Distractor {index}' for index in range(wrong_needed - len(safe_distractors))]
+            chosen_wrong = list(safe_distractors)
+            generic_index = 1
+            excluded_options = set(correct_answers) | set(chosen_wrong)
+            while len(chosen_wrong) < wrong_needed:
+                candidate = f'Generic Distractor {generic_index}'
+                generic_index += 1
+                if candidate not in excluded_options:
+                    chosen_wrong.append(candidate)
+                    excluded_options.add(candidate)
 
         options = (
             [{'text': answer, 'is_correct': True} for answer in chosen_correct]

@@ -3,11 +3,39 @@
 from datetime import datetime, timedelta, timezone
 
 from models import Quiz, QuizAttempt, QuizOption, QuizQuestion, db
-from services import create_quiz_attempt, create_user, generate_quiz_data, score_quiz_attempt
+from services import (
+    add_card,
+    create_deck,
+    create_quiz_attempt,
+    create_user,
+    generate_quiz_data,
+    score_quiz_attempt,
+)
 from tests.support import CardsTestCase
 
 
 class QuizReviewModeTests(CardsTestCase):
+    def test_deck_quiz_options_are_unique_bounded_and_scorable(self):
+        with self.app.app_context():
+            user = create_user('bounded_deck_quiz_owner', 'password12345')
+            deck = create_deck(user.user_id, 'Bounded deck quiz')
+            target = add_card(
+                deck.deck_id,
+                'Select an accepted answer',
+                ['Correct A', 'Correct B', 'Correct C', 'Correct D', 'Correct E'],
+            )
+            add_card(deck.deck_id, 'Distractor source', ['Wrong answer', 'Wrong answer'])
+
+            for _ in range(20):
+                questions = generate_quiz_data(
+                    deck_id=deck.deck_id, question_ids=[target.card_id],
+                )
+                options = questions[0]['options']
+                correct_options = [option for option in options if option['is_correct']]
+                self.assertEqual(len(options), 4)
+                self.assertEqual(len({option['text'] for option in options}), 4)
+                self.assertIn(len(correct_options), (1, 2))
+
     def _typed_quiz(self):
         user = create_user('typed_quiz_owner', 'password12345')
         quiz = Quiz(owned_by=user.user_id, title='Science review')
