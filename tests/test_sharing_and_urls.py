@@ -461,6 +461,9 @@ class SharingAndUrlTests(CardsTestCase):
             headers=self.csrf(),
         )
         self.assertEqual(created_link.status_code, 302)
+        self.assertTrue(created_link.headers['Location'].endswith('#quiz-sharing'))
+        owner_editor = self.client.get(f'/edit_quiz?quiz_id={quiz_id}')
+        self.assertIn(b'id="quiz-sharing"', owner_editor.data)
         with self.app.app_context():
             self.assertIsNotNone(db.session.get(
                 QuizCollaborator, (quiz_id, collaborator_id),

@@ -91,7 +91,7 @@
                 </form>
             </article>
             {% if can_manage_quiz_sharing %}
-            <article class="editor-card">
+            <article class="editor-card" id="quiz-sharing">
                 <h3 class="h5 mb-3">Sharing and co-authors</h3>
                 <p class="muted-copy">Create an unlisted text-only link or invite another user to help edit this quiz.</p>
                 <form method="post" action="{{ url_for('create_quiz_share_link') }}" class="toolbar-row mb-3">
