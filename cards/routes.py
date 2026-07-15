@@ -1445,7 +1445,7 @@ def master():
         round_restarted=round_restarted,
         selected_strategy=selected_strategy,
         mastery_strategy_catalog=get_mastery_strategy_catalog(),
-        due_reviews=get_due_review_cards(user_id),
+        due_reviews=get_due_review_cards(user_id, limit=5),
         deck_page=deck_page,
         **_pagination_context('master'),
     )

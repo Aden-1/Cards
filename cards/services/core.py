@@ -20,7 +20,7 @@ from flask import current_app
 from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import and_, case, func, insert, or_, text
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -2926,8 +2926,14 @@ def record_mastery_rating(user_id, deck_id, card_id, rating):
 
 def get_due_review_cards(user_id, limit=50):
     """Return calendar-scheduled cards due for the signed-in learner."""
+    try:
+        limit = max(1, min(int(limit), 50))
+    except (TypeError, ValueError):
+        limit = 5
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return CardMasteryProgress.query.join(Card).join(Deck).filter(
+    return CardMasteryProgress.query.options(
+        joinedload(CardMasteryProgress.card).joinedload(Card.deck)
+    ).join(Card).join(Deck).filter(
         CardMasteryProgress.user_id == user_id,
         CardMasteryProgress.next_review_at.isnot(None),
         CardMasteryProgress.next_review_at <= now,

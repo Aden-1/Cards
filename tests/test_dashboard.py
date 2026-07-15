@@ -1,8 +1,46 @@
-from services import add_card, create_deck, record_mastery_rating
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import event
+
+from models import CardMasteryProgress, db
+from services import add_card, create_deck, get_due_review_cards, record_mastery_rating
 from tests.support import CardsTestCase
 
 
 class DashboardTests(CardsTestCase):
+    def test_due_reviews_are_bounded_and_eager_loaded(self):
+        user_id = self.user_session('due-review-owner')
+        with self.app.app_context():
+            deck = create_deck(user_id, 'Due Review Deck')
+            cards = [add_card(deck.deck_id, f'Question {index}', [f'Answer {index}']) for index in range(7)]
+            for card in cards:
+                record_mastery_rating(user_id, deck.deck_id, card.card_id, 'dont_know')
+            CardMasteryProgress.query.filter_by(user_id=user_id).update({
+                CardMasteryProgress.next_review_at: (
+                    datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+                ),
+            })
+            db.session.commit()
+
+            statements = []
+
+            def count_statement(*args):
+                statements.append(args[2])
+
+            event.listen(db.engine, 'before_cursor_execute', count_statement)
+            try:
+                due_reviews = get_due_review_cards(user_id, limit=5)
+                rendered_values = [
+                    (progress.card.question, progress.card.deck.description)
+                    for progress in due_reviews
+                ]
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', count_statement)
+
+        self.assertEqual(len(due_reviews), 5)
+        self.assertEqual(len(rendered_values), 5)
+        self.assertEqual(len(statements), 1)
+
     def test_dashboard_requires_login(self):
         response = self.client.get('/dashboard')
 
@@ -37,4 +75,3 @@ class DashboardTests(CardsTestCase):
         self.assertIn('Spanish Vocabulary', page)
         self.assertIn('1 mastered', page)
         self.assertNotIn('Private Other Deck', page)
-
