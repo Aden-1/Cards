@@ -1,5 +1,6 @@
 """Regression coverage for migration portability and reversibility."""
 
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -7,6 +8,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+from flask_migrate import upgrade
+from sqlalchemy import text
+
+from models import db
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +36,55 @@ def _run_flask(database_url, *arguments):
 
 
 class MigrationPortabilityTests(unittest.TestCase):
+    def test_canonical_identity_migration_aborts_without_merging_collisions(self):
+        from app import create_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / 'legacy.db'
+            application = create_app({
+                'TESTING': True,
+                'SQLALCHEMY_DATABASE_URI': f'sqlite:///{database_path.as_posix()}',
+                'REGISTER_ROUTES': False,
+            })
+            with application.app_context():
+                migrations = str(ROOT / 'migrations')
+                app_logger = logging.getLogger('app')
+                logger_disabled = app_logger.disabled
+                upgrade(directory=migrations, revision='20260711070000')
+                for username, email in (
+                    ('LegacyUser', 'legacy@example.test'),
+                    ('legacyuser', 'other@example.test'),
+                ):
+                    db.session.execute(text(
+                        'INSERT INTO "user" '
+                        '(username, email, password_hash, auth_version, role, theme_preference, '
+                        'mastery_strategy_preference, match_strategy_preference, is_active) '
+                        'VALUES (:username, :email, :password_hash, 0, :role, :theme, :mastery, :match, 1)'
+                    ), {
+                        'username': username, 'email': email, 'password_hash': 'x',
+                        'role': 'standard', 'theme': 'dark', 'mastery': 'spaced',
+                        'match': 'standard_shuffle',
+                    })
+                db.session.commit()
+                try:
+                    with self.assertRaises(SystemExit):
+                        upgrade(directory=migrations)
+                    self.assertEqual(
+                        db.session.execute(text('SELECT COUNT(*) FROM "user"')).scalar_one(), 2,
+                    )
+                    self.assertEqual(
+                        db.session.execute(text(
+                            "SELECT COUNT(*) FROM pragma_table_info('user') "
+                            "WHERE name='canonical_username'"
+                        )).scalar_one(),
+                        0,
+                    )
+                finally:
+                    db.session.rollback()
+                    db.session.remove()
+                    db.engine.dispose()
+                    app_logger.disabled = logger_disabled
+
     def test_postgresql_offline_upgrade_generates_without_server(self):
         result = _run_flask(
             'postgresql+psycopg://offline:offline@127.0.0.1:1/cards',

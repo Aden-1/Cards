@@ -2,6 +2,7 @@
 
 import gzip
 import os
+from pathlib import Path
 import re
 import unittest
 
@@ -50,6 +51,16 @@ class BrowserSecurityTests(unittest.TestCase):
         self.assertEqual(response.get_json(), {'status': 'ok'})
         self.assertIn('Content-Security-Policy', response.headers)
         self.assertEqual(response.headers['X-Frame-Options'], 'DENY')
+
+    def test_csp_disallows_inline_styles_and_templates_contain_none(self):
+        response = self.client.get('/')
+        csp = response.headers['Content-Security-Policy']
+        self.assertIn("style-src 'self'", csp)
+        self.assertNotIn('unsafe-inline', csp)
+        root = Path(__file__).resolve().parents[1]
+        for template in (root / 'templates').glob('*.html'):
+            source = template.read_text(encoding='utf-8')
+            self.assertIsNone(re.search(r'<style\b|\bstyle\s*=', source, re.I), template.name)
 
     def test_static_assets_use_content_hash_urls_and_immutable_cache_headers(self):
         response = self.client.get('/')
