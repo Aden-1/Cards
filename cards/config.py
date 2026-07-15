@@ -14,6 +14,7 @@ DEFAULT_RATE_LIMITS = {
     'login': '10 per 15 minutes',
     'register': '5 per hour',
     'forgot_password': '5 per hour',
+    'two_factor': '10 per 15 minutes',
     'reset_password': '10 per hour',
     'account': '10 per hour',
     'delete_account': '3 per hour',
@@ -188,6 +189,9 @@ def load_config(overrides=None):
         'MAX_ACTIVE_QUIZ_ATTEMPTS': _env_int('MAX_ACTIVE_QUIZ_ATTEMPTS', 5),
         'MAX_QUIZ_QUESTIONS': _env_int('MAX_QUIZ_QUESTIONS', 50),
         'PUBLIC_REGISTRATION_ENABLED': _env_bool('PUBLIC_REGISTRATION_ENABLED', default=not is_production),
+        'SENTRY_DSN': _env_str('SENTRY_DSN'),
+        'SENTRY_TRACES_SAMPLE_RATE': float(_env_str('SENTRY_TRACES_SAMPLE_RATE', '0') or 0),
+        'RELEASE_VERSION': _env_str('RELEASE_VERSION'),
         'MAIL_SERVER': _env_str('MAIL_SERVER'),
         'MAIL_PORT': _env_int('MAIL_PORT', 587),
         'MAIL_USERNAME': _env_str('MAIL_USERNAME'),
@@ -201,6 +205,10 @@ def load_config(overrides=None):
         'PASSWORD_RESET_QUEUE_URL': _env_str('PASSWORD_RESET_QUEUE_URL'),
         'PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS': _env_int('PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS', 2),
         'PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS': _env_int('PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS', 10),
+        'EMAIL_VERIFICATION_URL_BASE': _env_str('EMAIL_VERIFICATION_URL_BASE'),
+        'EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS': _env_int('EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS', 86400),
+        'TWO_FACTOR_ENCRYPTION_KEY': _env_str('TWO_FACTOR_ENCRYPTION_KEY'),
+        'TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS': _env_int('TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS', 600),
         'RATELIMIT_STORAGE_URI': storage_uri,
         # Heroku KVS uses TLS with a self-signed certificate and documents
         # disabling certificate verification in redis-py. Restrict that
@@ -244,6 +252,14 @@ def load_config(overrides=None):
     for name, maximum in (('PASSWORD_RESET_QUEUE_TIMEOUT_SECONDS', 5), ('PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS', 30)):
         if not 1 <= config[name] <= maximum:
             raise RuntimeError(f'{name} must be between 1 and {maximum}.')
+    if not 0 <= config['SENTRY_TRACES_SAMPLE_RATE'] <= 1:
+        raise RuntimeError('SENTRY_TRACES_SAMPLE_RATE must be between 0 and 1.')
+    if not 60 <= config['EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS'] <= 604800:
+        raise RuntimeError('EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS must be between 60 seconds and 7 days.')
+    if not 60 <= config['TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS'] <= 3600:
+        raise RuntimeError('TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS must be between 60 seconds and 1 hour.')
+    if config['TWO_FACTOR_ENCRYPTION_KEY'] and len(config['TWO_FACTOR_ENCRYPTION_KEY']) < 32:
+        raise RuntimeError('TWO_FACTOR_ENCRYPTION_KEY must be at least 32 characters.')
     config['RATE_LIMITS'] = validate_rate_limits(config['RATE_LIMITS'])
     if not config['PASSWORD_RESET_QUEUE_URL'] and storage_uri.startswith(('redis://', 'rediss://')):
         config['PASSWORD_RESET_QUEUE_URL'] = storage_uri

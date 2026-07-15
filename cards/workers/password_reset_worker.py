@@ -4,7 +4,7 @@ from redis import Redis
 from rq import Queue, Worker
 from rq.serializers import JSONSerializer
 
-from .jobs import PASSWORD_RESET_QUEUE_NAME
+from .jobs import ACCOUNT_EMAIL_QUEUE_NAME, PASSWORD_RESET_QUEUE_NAME
 
 
 def main():
@@ -21,9 +21,12 @@ def main():
         socket_timeout=timeout,
         **worker_app.config.get('PASSWORD_RESET_REDIS_OPTIONS', {}),
     )
-    queue = Queue(PASSWORD_RESET_QUEUE_NAME, connection=connection, serializer=JSONSerializer)
+    queues = [
+        Queue(PASSWORD_RESET_QUEUE_NAME, connection=connection, serializer=JSONSerializer),
+        Queue(ACCOUNT_EMAIL_QUEUE_NAME, connection=connection, serializer=JSONSerializer),
+    ]
     with worker_app.app_context():
-        Worker([queue], connection=connection, serializer=JSONSerializer).work(with_scheduler=True)
+        Worker(queues, connection=connection, serializer=JSONSerializer).work(with_scheduler=True)
 
 
 if __name__ == '__main__':

@@ -30,6 +30,7 @@ from cards.models import (
 )
 from cards.services import register_cli_commands
 from cards.urls import deck_url_slug, quiz_url_slug
+from cards.observability import configure_error_tracking
 
 
 def _upgrade_local_sqlite_database(flask_app):
@@ -67,6 +68,7 @@ def create_app(config=None):
     flask_app.config.from_mapping(load_config(config))
     flask_app.jinja_env.globals.update(deck_url_slug=deck_url_slug, quiz_url_slug=quiz_url_slug)
     configure_logging(flask_app.config['IS_PRODUCTION'])
+    configure_error_tracking(flask_app)
 
     db.init_app(flask_app)
     with flask_app.app_context():

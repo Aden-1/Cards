@@ -1,4 +1,7 @@
+import base64
 import csv
+import hashlib
+import hmac
 import io
 import json
 import random
@@ -8,6 +11,7 @@ import smtplib
 import sys
 import time
 import unicodedata
+from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -17,7 +21,8 @@ from itsdangerous import BadSignature, BadTimeSignature, SignatureExpired, URLSa
 from sqlalchemy import and_, case, func, insert, or_, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
+from cryptography.fernet import Fernet, InvalidToken
 
 from ..identity import canonical_email, canonical_username, display_username, recovery_email_digest
 from .authorization import audit_event
@@ -921,9 +926,17 @@ def update_user_account(user_id, username, email=None, password=None):
     user.username = display_username(username)
     user.canonical_username = canonical_username(user.username)
     email = normalize_password_reset_email(email) or None
+    email_changed = user.canonical_email != email
     user.email = email
     user.canonical_email = email
     user.recovery_email_digest = password_reset_target_digest(email) if email else None
+    if email_changed:
+        user.email_verified_at = None
+        user.email_verification_version += 1
+        if user.two_factor_method == 'email':
+            user.two_factor_method = 'none'
+            user.two_factor_email_code_hash = None
+            user.two_factor_email_code_expires_at = None
     if password:
         user.set_password(password)
         user.auth_version += 1
@@ -1022,20 +1035,17 @@ def enqueue_password_reset_email(target_digest, request_id):
     return enqueue_job(target_digest, request_id)
 
 
-def send_password_reset_email(user, reset_url):
+def enqueue_account_email(user_id, delivery_type, request_id):
+    from ..workers.jobs import enqueue_account_email as enqueue_job
+    return enqueue_job(user_id, delivery_type, request_id)
+
+
+def _send_email(recipient, subject, body):
     message = EmailMessage()
-    message['Subject'] = 'Reset your Cards password'
+    message['Subject'] = subject
     message['From'] = current_app.config['MAIL_DEFAULT_SENDER']
-    message['To'] = user.email
-    message.set_content(
-        (
-            f"Hello {user.username},\n\n"
-            "We received a request to reset your Cards password.\n"
-            f"Use this link within {current_app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] // 60} minutes:\n\n"
-            f"{reset_url}\n\n"
-            "If you did not request this, you can ignore this email."
-        )
-    )
+    message['To'] = recipient
+    message.set_content(body)
 
     smtp_host = current_app.config['MAIL_SERVER']
     smtp_port = current_app.config['MAIL_PORT']
@@ -1055,6 +1065,192 @@ def send_password_reset_email(user, reset_url):
         if smtp_username:
             smtp.login(smtp_username, smtp_password or '')
         smtp.send_message(message)
+
+
+def send_password_reset_email(user, reset_url):
+    _send_email(
+        user.email,
+        'Reset your Cards password',
+        (
+            f"Hello {user.username},\n\n"
+            "We received a request to reset your Cards password.\n"
+            f"Use this link within {current_app.config['PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS'] // 60} minutes:\n\n"
+            f"{reset_url}\n\n"
+            "If you did not request this, you can ignore this email."
+        ),
+    )
+
+
+def generate_email_verification_token(user):
+    return _account_token_serializer().dumps({
+        'user_id': user.user_id,
+        'email': user.canonical_email,
+        'verification_version': user.email_verification_version,
+        'purpose': 'email_verification',
+    })
+
+
+def verify_email_with_token(token):
+    try:
+        payload = _account_token_serializer().loads(
+            token, max_age=current_app.config['EMAIL_VERIFICATION_TOKEN_MAX_AGE_SECONDS'],
+        )
+    except (BadSignature, BadTimeSignature, SignatureExpired):
+        return None
+    if payload.get('purpose') != 'email_verification':
+        return None
+    user = db.session.get(User, payload.get('user_id'))
+    if (
+        not user or not user.is_active or not user.canonical_email
+        or user.canonical_email != payload.get('email')
+        or user.email_verification_version != payload.get('verification_version')
+    ):
+        return None
+    user.email_verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.session.commit()
+    return user
+
+
+def build_email_verification_url(token):
+    configured_base = current_app.config.get('EMAIL_VERIFICATION_URL_BASE')
+    return f"{configured_base.rstrip('/')}?token={token}" if configured_base else None
+
+
+def send_email_verification_email(user, verification_url):
+    _send_email(
+        user.email,
+        'Verify your Cards email address',
+        (
+            f"Hello {user.username},\n\n"
+            "Verify this email address for your Cards account:\n\n"
+            f"{verification_url}\n\n"
+            "If you did not create or update this account, you can ignore this email."
+        ),
+    )
+
+
+def _two_factor_cipher():
+    material = current_app.config.get('TWO_FACTOR_ENCRYPTION_KEY') or current_app.config['SECRET_KEY']
+    key = base64.urlsafe_b64encode(hashlib.sha256(material.encode('utf-8')).digest())
+    return Fernet(key)
+
+
+def _encrypt_two_factor_secret(secret):
+    return _two_factor_cipher().encrypt(secret.encode('ascii')).decode('ascii')
+
+
+def _decrypt_two_factor_secret(secret):
+    try:
+        return _two_factor_cipher().decrypt(secret.encode('ascii')).decode('ascii')
+    except (InvalidToken, UnicodeDecodeError):
+        return None
+
+
+def generate_totp_secret():
+    return base64.b32encode(secrets.token_bytes(20)).decode('ascii').rstrip('=')
+
+
+def _totp_code(secret, at_time=None):
+    padded_secret = secret + '=' * (-len(secret) % 8)
+    counter = int((at_time if at_time is not None else time.time()) // 30)
+    digest = hmac.new(base64.b32decode(padded_secret, casefold=True), counter.to_bytes(8, 'big'), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = (int.from_bytes(digest[offset:offset + 4], 'big') & 0x7FFFFFFF) % 1_000_000
+    return f'{value:06d}'
+
+
+def verify_totp_code(secret, code):
+    code = str(code or '').strip()
+    if not code.isdigit() or len(code) != 6:
+        return False
+    now = time.time()
+    return any(hmac.compare_digest(_totp_code(secret, now + offset * 30), code) for offset in (-1, 0, 1))
+
+
+def begin_totp_setup(user, password):
+    if not user.check_password(password):
+        return None
+    secret = generate_totp_secret()
+    user.two_factor_totp_pending_secret = _encrypt_two_factor_secret(secret)
+    db.session.commit()
+    issuer = quote('Cards', safe='')
+    label = quote(f'Cards:{user.username}', safe='')
+    return secret, f'otpauth://totp/{label}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30'
+
+
+def confirm_totp_setup(user, code):
+    secret = _decrypt_two_factor_secret(user.two_factor_totp_pending_secret or '')
+    if not secret or not verify_totp_code(secret, code):
+        return False
+    user.two_factor_totp_secret = user.two_factor_totp_pending_secret
+    user.two_factor_totp_pending_secret = None
+    user.two_factor_method = 'totp'
+    user.auth_version += 1
+    db.session.commit()
+    return True
+
+
+def enable_email_two_factor(user, password):
+    if not user.check_password(password) or not user.email or not user.email_verified_at:
+        return False
+    user.two_factor_method = 'email'
+    user.two_factor_totp_secret = None
+    user.two_factor_totp_pending_secret = None
+    user.auth_version += 1
+    db.session.commit()
+    return True
+
+
+def disable_two_factor(user, password):
+    if not user.check_password(password):
+        return False
+    user.two_factor_method = 'none'
+    user.two_factor_totp_secret = None
+    user.two_factor_totp_pending_secret = None
+    user.two_factor_email_code_hash = None
+    user.two_factor_email_code_expires_at = None
+    user.auth_version += 1
+    db.session.commit()
+    return True
+
+
+def issue_email_two_factor_code(user):
+    if not user.email or user.two_factor_method != 'email':
+        return None
+    code = f'{secrets.randbelow(1_000_000):06d}'
+    user.two_factor_email_code_hash = generate_password_hash(code)
+    user.two_factor_email_code_expires_at = (
+        datetime.now(timezone.utc).replace(tzinfo=None)
+        + timedelta(seconds=current_app.config['TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS'])
+    )
+    db.session.commit()
+    return code
+
+
+def verify_email_two_factor_code(user, code):
+    expires_at = user.two_factor_email_code_expires_at
+    if (
+        not user.two_factor_email_code_hash or not expires_at
+        or expires_at < datetime.now(timezone.utc).replace(tzinfo=None)
+        or not check_password_hash(user.two_factor_email_code_hash, str(code or '').strip())
+    ):
+        return False
+    user.two_factor_email_code_hash = None
+    user.two_factor_email_code_expires_at = None
+    db.session.commit()
+    return True
+
+
+def send_email_two_factor_code(user, code):
+    _send_email(
+        user.email,
+        'Your Cards sign-in code',
+        (
+            f"Hello {user.username},\n\nYour Cards sign-in code is: {code}\n\n"
+            f"It expires in {current_app.config['TWO_FACTOR_EMAIL_CODE_MAX_AGE_SECONDS'] // 60} minutes. "
+            "If you did not try to sign in, change your password."
+        ),
+    )
 
 
 def delete_user_account(user_id):

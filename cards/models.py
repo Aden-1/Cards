@@ -16,8 +16,15 @@ class User(db.Model):
     # Keyed digest used by the password-reset worker; it is not reversible and
     # keeps the raw recovery address out of queue payloads.
     recovery_email_digest = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    email_verified_at = db.Column(db.DateTime, nullable=True)
+    email_verification_version = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
     password_hash = db.Column(db.String(255), nullable=False)
     auth_version = db.Column(db.Integer, nullable=False, default=0, server_default=db.text('0'))
+    two_factor_method = db.Column(db.String(10), nullable=False, default='none', server_default=db.text("'none'"))
+    two_factor_totp_secret = db.Column(db.Text, nullable=True)
+    two_factor_totp_pending_secret = db.Column(db.Text, nullable=True)
+    two_factor_email_code_hash = db.Column(db.String(255), nullable=True)
+    two_factor_email_code_expires_at = db.Column(db.DateTime, nullable=True)
     role = db.Column(db.String(20), nullable=False, default='standard', server_default=db.text("'standard'"))
     theme_preference = db.Column(db.String(10), nullable=False, default='dark', server_default=db.text("'dark'"))
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced', server_default=db.text("'spaced'"))
@@ -37,6 +44,8 @@ class User(db.Model):
         CheckConstraint("mastery_strategy_preference IN ('linear', 'weakest_first', 'spaced', 'mastery_mix', 'random')", name='ck_user_mastery_strategy'),
         CheckConstraint("match_strategy_preference IN ('standard_shuffle', 'retry_misses', 'progressive_build', 'reverse_pressure', 'timed_recovery', 'weakest_first', 'mastery_mix')", name='ck_user_match_strategy'),
         CheckConstraint('auth_version >= 0', name='ck_user_auth_version_nonnegative'),
+        CheckConstraint('email_verification_version >= 0', name='ck_user_email_verification_version_nonnegative'),
+        CheckConstraint("two_factor_method IN ('none', 'email', 'totp')", name='ck_user_two_factor_method'),
         CheckConstraint('is_active IS TRUE OR is_active IS FALSE', name='ck_user_is_active_boolean'),
     )
 
@@ -49,6 +58,24 @@ class User(db.Model):
     @property
     def is_admin(self):
         return self.is_active and self.role == 'admin'
+
+
+class AuditLog(db.Model):
+    """Append-only operational audit records retained independently of accounts."""
+    log_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    occurred_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
+    actor_id = db.Column(db.Integer, nullable=True, index=True)
+    event = db.Column(db.String(80), nullable=False, index=True)
+    outcome = db.Column(db.String(20), nullable=False, index=True)
+    target_type = db.Column(db.String(40), nullable=True, index=True)
+    target_id = db.Column(db.String(80), nullable=True, index=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    metadata_json = db.Column(db.Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("outcome IN ('success', 'failure', 'info')", name='ck_audit_log_outcome'),
+        db.Index('ix_audit_log_event_occurred_at', 'event', 'occurred_at'),
+    )
 
 
 # Flashcard models.

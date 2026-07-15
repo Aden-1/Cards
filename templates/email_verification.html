@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}Cards | Email Verification{% endblock %}
+{% block content %}<section class="auth-grid fade-in"><article class="auth-card"><span class="page-kicker">Email verification</span>{% if verified %}<h1 class="h2">Your email is verified</h1><p class="muted-copy">You can now use email-based two-factor authentication.</p><a class="btn-primary-surface" href="{{ url_for('account') if current_user else url_for('login') }}">Continue</a>{% else %}<h1 class="h2">This link is invalid or expired</h1><p class="muted-copy">Sign in to your account to request another verification link.</p><a class="btn-primary-surface" href="{{ url_for('login') }}">Log in</a>{% endif %}</article></section>{% endblock %}

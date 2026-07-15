@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from flask import current_app
+from flask import current_app, has_request_context, request
 
 
 ROLE_STANDARD = 'standard'
@@ -40,3 +40,25 @@ def audit_event(event, actor, outcome, *, target_type=None, target_id=None, **fi
         'audit_event=%s',
         json.dumps(payload, sort_keys=True, separators=(',', ':')),
     )
+    # Operational audit history must remain queryable after its actor or
+    # target account is deleted, so the model intentionally has no foreign
+    # keys. Never let logging failure undo a completed user action.
+    try:
+        from ..models import AuditLog, db
+
+        metadata = json.dumps(fields, sort_keys=True, separators=(',', ':')) if fields else None
+        db.session.add(AuditLog(
+            actor_id=payload['actor_id'], event=event, outcome=outcome,
+            target_type=target_type, target_id=str(target_id) if target_id is not None else None,
+            ip_address=(request.remote_addr if has_request_context() else None),
+            metadata_json=metadata,
+        ))
+        db.session.commit()
+    except Exception:
+        # The structured application log remains available if the database is
+        # unavailable. Avoid exposing or re-raising operational logging errors.
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception('audit_log_persistence_failed event=%s', event)

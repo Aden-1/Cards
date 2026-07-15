@@ -10,6 +10,7 @@ from rq.serializers import JSONSerializer
 
 
 PASSWORD_RESET_QUEUE_NAME = 'password-reset-email'
+ACCOUNT_EMAIL_QUEUE_NAME = 'account-email'
 PASSWORD_RESET_RETRY_INTERVALS_SECONDS = [30, 120, 300]
 _TARGET_DIGEST_PATTERN = re.compile(r'^[0-9a-f]{64}$')
 _LOCAL_DELIVERED_REQUESTS = set()
@@ -109,6 +110,25 @@ def enqueue_password_reset_email(target_digest, request_id):
         ),
         result_ttl=0,
         failure_ttl=86400,
+    )
+    return job.id
+
+
+def enqueue_account_email(user_id, delivery_type, request_id):
+    """Queue an account email using only identifiers, never code or address."""
+    if not isinstance(user_id, int) or user_id < 1:
+        raise ValueError('Invalid account email target.')
+    if delivery_type not in ('verification', 'two_factor'):
+        raise ValueError('Invalid account email type.')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', str(request_id)):
+        raise ValueError('Invalid account email request ID.')
+    queue = Queue(ACCOUNT_EMAIL_QUEUE_NAME, connection=_password_reset_redis(), serializer=JSONSerializer)
+    delivery_timeout = _application().config['PASSWORD_RESET_DELIVERY_TIMEOUT_SECONDS']
+    job = queue.enqueue(
+        'jobs.deliver_account_email', user_id, delivery_type, request_id,
+        job_id=f'{delivery_type}-{request_id}', job_timeout=delivery_timeout + 5,
+        retry=Retry(max=len(PASSWORD_RESET_RETRY_INTERVALS_SECONDS), interval=PASSWORD_RESET_RETRY_INTERVALS_SECONDS),
+        result_ttl=0, failure_ttl=86400,
     )
     return job.id
 
@@ -217,3 +237,49 @@ def deliver_password_reset_email(target_digest, request_id):
             request_id,
             user.user_id,
         )
+
+
+def deliver_account_email(user_id, delivery_type, request_id):
+    """Deliver verification links and email-2FA codes from the background worker."""
+    from ..models import User, db
+
+    app = _application()
+    with app.app_context():
+        user = db.session.get(User, user_id) if isinstance(user_id, int) else None
+        if not user or not user.is_active or not user.email:
+            app.logger.info('account_email_skipped request_id=%s reason=account_unavailable', request_id)
+            return
+        if not app.config['PASSWORD_RESET_EMAILS_ENABLED']:
+            raise PasswordResetDeliveryError('EmailDisabled')
+        claim = _claim_delivery(f'{delivery_type}-{request_id}')
+        if claim is None:
+            return
+        try:
+            if delivery_type == 'verification':
+                from ..services import build_email_verification_url, generate_email_verification_token, send_email_verification_email
+
+                verification_url = build_email_verification_url(generate_email_verification_token(user))
+                if not verification_url:
+                    raise PasswordResetDeliveryError('VerificationUrlNotConfigured')
+                send_email_verification_email(user, verification_url)
+            elif delivery_type == 'two_factor':
+                from ..services import issue_email_two_factor_code, send_email_two_factor_code
+
+                code = issue_email_two_factor_code(user)
+                if not code:
+                    return
+                send_email_two_factor_code(user, code)
+            else:
+                raise PasswordResetDeliveryError('InvalidDeliveryType')
+            _finish_delivery(claim, f'{delivery_type}-{request_id}', succeeded=True)
+        except Exception as exc:
+            try:
+                _finish_delivery(claim, f'{delivery_type}-{request_id}', succeeded=False)
+            except PasswordResetDeliveryError:
+                pass
+            app.logger.error(
+                'account_email_delivery_failed request_id=%s user_id=%s type=%s failure_class=%s',
+                request_id, user.user_id, delivery_type, type(exc).__name__,
+            )
+            raise PasswordResetDeliveryError(type(exc).__name__) from None
+        app.logger.info('account_email_delivered request_id=%s user_id=%s type=%s', request_id, user.user_id, delivery_type)

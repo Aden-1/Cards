@@ -1,3 +1,5 @@
+import csv
+import io
 import re
 import secrets
 import hashlib
@@ -534,6 +536,29 @@ def readyz():
         return api_error('Service not ready.', 503)
 
 
+def _complete_login(user):
+    session.clear()
+    session.permanent = True
+    session['user_id'] = user.user_id
+    session['auth_version'] = user.auth_version
+    session['csrf_token'] = secrets.token_urlsafe(32)
+
+
+def _queue_account_email(user_id, delivery_type):
+    if not current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED'):
+        return False
+    from services import enqueue_account_email
+    try:
+        enqueue_account_email(user_id, delivery_type, secrets.token_hex(12))
+        return True
+    except Exception as exc:
+        current_app.logger.error(
+            'account_email_queue_enqueue_failed user_id=%s type=%s failure_class=%s',
+            user_id, delivery_type, type(exc).__name__,
+        )
+        return False
+
+
 def register():
     from services import create_user, get_user, get_user_by_email
     from models import db
@@ -571,11 +596,10 @@ def register():
     except (IntegrityError, ValueError):
         db.session.rollback()
         return render_template('register.html', error='That username or email is already in use.'), 400
-    session.clear()
-    session.permanent = True
-    session['user_id'] = user.user_id
-    session['auth_version'] = user.auth_version
-    session['csrf_token'] = secrets.token_urlsafe(32)
+    _complete_login(user)
+    if user.email:
+        _queue_account_email(user.user_id, 'verification')
+    audit_event('account_registered', user, 'success', target_type='user', target_id=user.user_id)
     return redirect(url_for('edit', notice='Account created', level='success'))
 
 
@@ -590,14 +614,65 @@ def login():
     password = data.get('password') or ''
     user = get_user(username)
     if not user or not user.is_active or not user.check_password(password):
+        audit_event('login', user, 'failure')
         return render_template('login.html', error='Invalid username or password.', next=data.get('next', '')), 401
 
-    session.clear()
-    session.permanent = True
-    session['user_id'] = user.user_id
-    session['auth_version'] = user.auth_version
-    session['csrf_token'] = secrets.token_urlsafe(32)
+    if user.two_factor_method in ('email', 'totp'):
+        session.clear()
+        session['pending_two_factor_user_id'] = user.user_id
+        session['pending_two_factor_next'] = _safe_next_url(data.get('next'))
+        session['csrf_token'] = secrets.token_urlsafe(32)
+        if user.two_factor_method == 'email':
+            _queue_account_email(user.user_id, 'two_factor')
+        audit_event('login_password_accepted', user, 'info')
+        return redirect(url_for('two_factor_challenge'))
+
+    _complete_login(user)
+    audit_event('login', user, 'success')
     return redirect(_safe_next_url(data.get('next')))
+
+
+def two_factor_challenge():
+    from models import User
+    from services import verify_email_two_factor_code, verify_totp_code, _decrypt_two_factor_secret
+
+    user = db.session.get(User, session.get('pending_two_factor_user_id'))
+    if not user or not user.is_active or user.two_factor_method not in ('email', 'totp'):
+        session.clear()
+        return redirect(url_for('login', notice='Your sign-in challenge has expired.', level='error'))
+    if request.method == 'GET':
+        return render_template('two_factor_challenge.html', method=user.two_factor_method)
+    code = (_request_data().get('code') or '').strip()
+    valid = (
+        verify_email_two_factor_code(user, code) if user.two_factor_method == 'email'
+        else bool(_decrypt_two_factor_secret(user.two_factor_totp_secret or '') and verify_totp_code(_decrypt_two_factor_secret(user.two_factor_totp_secret), code))
+    )
+    if not valid:
+        audit_event('two_factor_challenge', user, 'failure', method=user.two_factor_method)
+        return render_template('two_factor_challenge.html', method=user.two_factor_method, error='That code is invalid or expired.'), 401
+    next_url = session.get('pending_two_factor_next')
+    _complete_login(user)
+    audit_event('login', user, 'success', method=user.two_factor_method)
+    return redirect(_safe_next_url(next_url))
+
+
+def resend_two_factor_code():
+    from models import User
+    user = db.session.get(User, session.get('pending_two_factor_user_id'))
+    if not user or user.two_factor_method != 'email':
+        return redirect(url_for('login', notice='Your sign-in challenge has expired.', level='error'))
+    _queue_account_email(user.user_id, 'two_factor')
+    audit_event('two_factor_code_resent', user, 'info')
+    return redirect(url_for('two_factor_challenge', notice='A new sign-in code is on its way.', level='success'))
+
+
+def verify_email():
+    from services import verify_email_with_token
+    user = verify_email_with_token((request.args.get('token') or '').strip())
+    if not user:
+        return render_template('email_verification.html', verified=False), 400
+    audit_event('email_verified', user, 'success', target_type='user', target_id=user.user_id)
+    return render_template('email_verification.html', verified=True)
 
 
 def forgot_password():
@@ -726,6 +801,7 @@ def account():
         if new_password != confirm_password:
             return render_template('account.html', user=user, error='New passwords do not match.'), 400
 
+    email_changed = user.canonical_email != email
     try:
         updated_user = update_user_account(user.user_id, username=username, email=email, password=new_password or None)
     except (IntegrityError, ValueError):
@@ -737,7 +813,68 @@ def account():
         session['user_id'] = updated_user.user_id
         session['auth_version'] = updated_user.auth_version
         session['csrf_token'] = secrets.token_urlsafe(32)
+    if email_changed and updated_user.email:
+        _queue_account_email(updated_user.user_id, 'verification')
+        audit_event('email_verification_requested', updated_user, 'info', target_type='user', target_id=updated_user.user_id)
     return render_template('account.html', user=updated_user, success='Account updated.')
+
+
+@login_required
+def resend_email_verification():
+    user = _current_user()
+    if not user.email:
+        return redirect(url_for('account', notice='Add an email address before requesting verification.', level='error'))
+    if user.email_verified_at:
+        return redirect(url_for('account', notice='Your email is already verified.', level='success'))
+    _queue_account_email(user.user_id, 'verification')
+    audit_event('email_verification_resent', user, 'info')
+    return redirect(url_for('account', notice='If delivery is configured, a verification link is on its way.', level='success'))
+
+
+@login_required
+def enable_email_two_factor_route():
+    from services import enable_email_two_factor
+    user = _current_user()
+    if not current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED'):
+        return render_template('account.html', user=user, error='Email delivery is not configured.'), 400
+    if not enable_email_two_factor(user, _request_data().get('current_password') or ''):
+        return render_template('account.html', user=user, error='Verify your email and enter your current password to enable email 2FA.'), 400
+    audit_event('two_factor_enabled', user, 'success', method='email')
+    session['auth_version'] = user.auth_version
+    return redirect(url_for('account', notice='Email two-factor authentication is enabled.', level='success'))
+
+
+@login_required
+def begin_totp_setup_route():
+    from services import begin_totp_setup
+    user = _current_user()
+    setup = begin_totp_setup(user, _request_data().get('current_password') or '')
+    if not setup:
+        return render_template('account.html', user=user, error='Enter your current password to begin authenticator-app setup.'), 400
+    secret, provisioning_uri = setup
+    return render_template('account.html', user=user, totp_setup_secret=secret, totp_provisioning_uri=provisioning_uri)
+
+
+@login_required
+def confirm_totp_setup_route():
+    from services import confirm_totp_setup
+    user = _current_user()
+    if not confirm_totp_setup(user, _request_data().get('code') or ''):
+        return render_template('account.html', user=user, error='That authenticator code is invalid. Try again.'), 400
+    audit_event('two_factor_enabled', user, 'success', method='totp')
+    session['auth_version'] = user.auth_version
+    return redirect(url_for('account', notice='Authenticator-app two-factor authentication is enabled.', level='success'))
+
+
+@login_required
+def disable_two_factor_route():
+    from services import disable_two_factor
+    user = _current_user()
+    if not disable_two_factor(user, _request_data().get('current_password') or ''):
+        return render_template('account.html', user=user, error='Enter your current password to disable two-factor authentication.'), 400
+    audit_event('two_factor_disabled', user, 'success')
+    session['auth_version'] = user.auth_version
+    return redirect(url_for('account', notice='Two-factor authentication is disabled.', level='success'))
 
 
 @login_required
@@ -855,6 +992,46 @@ def admin_users():
         return redirect(url_for('admin_users', notice='User demoted to standard.', level='success'))
 
     return redirect(url_for('admin_users', notice='Unknown admin action.', level='error'))
+
+
+@admin_required
+def admin_audit_log():
+    from models import AuditLog
+
+    event = (request.args.get('event') or '').strip()
+    actor_id = _int_value(request.args.get('actor_id'))
+    outcome = (request.args.get('outcome') or '').strip().lower()
+    query = AuditLog.query
+    if event:
+        query = query.filter(AuditLog.event == event[:80])
+    if actor_id:
+        query = query.filter(AuditLog.actor_id == actor_id)
+    if outcome in ('success', 'failure', 'info'):
+        query = query.filter(AuditLog.outcome == outcome)
+    query = query.order_by(AuditLog.occurred_at.desc(), AuditLog.log_id.desc())
+
+    if request.args.get('format') == 'csv':
+        rows = query.limit(10_000).all()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['id', 'occurred_at', 'actor_id', 'event', 'outcome', 'target_type', 'target_id', 'ip_address', 'metadata'])
+        for row in rows:
+            writer.writerow([row.log_id, row.occurred_at, row.actor_id, row.event, row.outcome, row.target_type, row.target_id, row.ip_address, row.metadata_json])
+        return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=audit-log.csv'})
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    rows = rows[:per_page]
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None, 'next_page': page + 1 if has_next else None,
+    }
+    return render_template(
+        'admin_audit_log.html', logs=rows, event=event, actor_id=actor_id or '', outcome=outcome,
+        pagination=pagination, **_pagination_context('admin_audit_log'),
+    )
 
 
 @moderator_required
@@ -2416,15 +2593,24 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/dashboard', endpoint='dashboard', view_func=dashboard, methods=['GET'])
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
+    app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])
     app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=_anonymous_sensitive_limit(login, 'login', ['POST'], _login_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/two-factor', endpoint='two_factor_challenge', view_func=_anonymous_sensitive_limit(two_factor_challenge, 'two_factor', ['POST'], _login_target_key), methods=['GET', 'POST'])
+    app.add_url_rule('/two-factor/resend', endpoint='resend_two_factor_code', view_func=_anonymous_sensitive_limit(resend_two_factor_code, 'two_factor', ['POST'], _login_target_key), methods=['POST'])
     app.add_url_rule('/forgot-password', endpoint='forgot_password', view_func=_anonymous_sensitive_limit(forgot_password, 'forgot_password', ['POST'], _recovery_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/reset-password', endpoint='reset_password', view_func=_anonymous_sensitive_limit(reset_password, 'reset_password', ['POST'], _reset_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/logout', endpoint='logout', view_func=logout, methods=['POST'])
     app.add_url_rule('/account', endpoint='account', view_func=_limit(account, 'account', ['POST']), methods=['GET', 'POST'])
     app.add_url_rule('/account/delete', endpoint='delete_account', view_func=_limit(delete_account, 'delete_account', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/verify-email', endpoint='resend_email_verification', view_func=_limit(resend_email_verification, 'two_factor', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/two-factor/email', endpoint='enable_email_two_factor', view_func=_limit(enable_email_two_factor_route, 'two_factor', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/two-factor/totp/start', endpoint='begin_totp_setup', view_func=_limit(begin_totp_setup_route, 'two_factor', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/two-factor/totp/confirm', endpoint='confirm_totp_setup', view_func=_limit(confirm_totp_setup_route, 'two_factor', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/two-factor/disable', endpoint='disable_two_factor', view_func=_limit(disable_two_factor_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])
+    app.add_url_rule('/admin/audit-log', endpoint='admin_audit_log', view_func=admin_audit_log, methods=['GET'])
     app.add_url_rule('/moderation/unpublish', endpoint='moderate_unpublish', view_func=_limit(moderate_unpublish_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit', endpoint='edit', view_func=edit)
     app.add_url_rule('/view', endpoint='view', view_func=view)
