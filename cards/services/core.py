@@ -978,6 +978,7 @@ def update_user_account(user_id, username, email=None, password=None):
             user.two_factor_method = 'none'
             user.two_factor_email_code_hash = None
             user.two_factor_email_code_expires_at = None
+            user.two_factor_recovery_code_hashes = None
     if password:
         user.set_password(password)
         user.auth_version += 1
@@ -1208,6 +1209,85 @@ def verify_totp_code(secret, code):
     return any(hmac.compare_digest(_totp_code(secret, now + offset * 30), code) for offset in (-1, 0, 1))
 
 
+_RECOVERY_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+_RECOVERY_CODE_COUNT = 8
+
+
+def _normalized_recovery_code(code):
+    normalized = re.sub(r'[\s-]', '', str(code or '').upper())
+    if not re.fullmatch(r'[A-Z2-9]{12}', normalized):
+        return None
+    return normalized
+
+
+def _recovery_code_digest(code):
+    return hmac.new(
+        current_app.config['SECRET_KEY'].encode('utf-8'),
+        f'cards-two-factor-recovery:{code}'.encode('ascii'),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _replace_two_factor_recovery_codes(user):
+    codes = [
+        '-'.join(
+            ''.join(secrets.choice(_RECOVERY_CODE_ALPHABET) for _ in range(4))
+            for _ in range(3)
+        )
+        for _ in range(_RECOVERY_CODE_COUNT)
+    ]
+    user.two_factor_recovery_code_hashes = json.dumps([
+        _recovery_code_digest(_normalized_recovery_code(code)) for code in codes
+    ])
+    return codes
+
+
+def regenerate_two_factor_recovery_codes(user, password):
+    """Replace all recovery codes after confirming the account password."""
+    if user.two_factor_method not in ('email', 'totp') or not user.check_password(password):
+        return None
+    codes = _replace_two_factor_recovery_codes(user)
+    user.auth_version += 1
+    db.session.commit()
+    return codes
+
+
+def consume_two_factor_recovery_code(user, code):
+    """Atomically consume one recovery code, preventing concurrent reuse."""
+    normalized = _normalized_recovery_code(code)
+    if not normalized:
+        return False
+    locked_user = User.query.filter_by(user_id=user.user_id).with_for_update().one_or_none()
+    if not locked_user:
+        return False
+    original_hashes = locked_user.two_factor_recovery_code_hashes
+    try:
+        stored_hashes = json.loads(original_hashes or '[]')
+    except (TypeError, json.JSONDecodeError):
+        stored_hashes = []
+    if not isinstance(stored_hashes, list):
+        stored_hashes = []
+    supplied_digest = _recovery_code_digest(normalized)
+    for index, stored_hash in enumerate(stored_hashes[:_RECOVERY_CODE_COUNT]):
+        if isinstance(stored_hash, str) and hmac.compare_digest(stored_hash, supplied_digest):
+            del stored_hashes[index]
+            replacement = json.dumps(stored_hashes) if stored_hashes else None
+            updated = User.query.filter(
+                User.user_id == locked_user.user_id,
+                User.two_factor_recovery_code_hashes == original_hashes,
+            ).update(
+                {User.two_factor_recovery_code_hashes: replacement},
+                synchronize_session=False,
+            )
+            if updated == 1:
+                db.session.commit()
+                return True
+            db.session.rollback()
+            return False
+    db.session.rollback()
+    return False
+
+
 def begin_totp_setup(user, password):
     if not user.check_password(password):
         return None
@@ -1226,9 +1306,10 @@ def confirm_totp_setup(user, code):
     user.two_factor_totp_secret = user.two_factor_totp_pending_secret
     user.two_factor_totp_pending_secret = None
     user.two_factor_method = 'totp'
+    recovery_codes = _replace_two_factor_recovery_codes(user)
     user.auth_version += 1
     db.session.commit()
-    return True
+    return recovery_codes
 
 
 def enable_email_two_factor(user, password):
@@ -1237,9 +1318,10 @@ def enable_email_two_factor(user, password):
     user.two_factor_method = 'email'
     user.two_factor_totp_secret = None
     user.two_factor_totp_pending_secret = None
+    recovery_codes = _replace_two_factor_recovery_codes(user)
     user.auth_version += 1
     db.session.commit()
-    return True
+    return recovery_codes
 
 
 def disable_two_factor(user, password):
@@ -1250,6 +1332,7 @@ def disable_two_factor(user, password):
     user.two_factor_totp_pending_secret = None
     user.two_factor_email_code_hash = None
     user.two_factor_email_code_expires_at = None
+    user.two_factor_recovery_code_hashes = None
     user.auth_version += 1
     db.session.commit()
     return True

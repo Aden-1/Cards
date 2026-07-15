@@ -734,7 +734,12 @@ def login():
 
 
 def two_factor_challenge():
-    from services import verify_email_two_factor_code, verify_totp_code, _decrypt_two_factor_secret
+    from services import (
+        _decrypt_two_factor_secret,
+        consume_two_factor_recovery_code,
+        verify_email_two_factor_code,
+        verify_totp_code,
+    )
 
     user = _pending_two_factor_user()
     if not user:
@@ -743,16 +748,24 @@ def two_factor_challenge():
     if request.method == 'GET':
         return render_template('two_factor_challenge.html', method=user.two_factor_method)
     code = (_request_data().get('code') or '').strip()
-    valid = (
-        verify_email_two_factor_code(user, code) if user.two_factor_method == 'email'
-        else bool(_decrypt_two_factor_secret(user.two_factor_totp_secret or '') and verify_totp_code(_decrypt_two_factor_secret(user.two_factor_totp_secret), code))
-    )
+    if user.two_factor_method == 'email':
+        valid = verify_email_two_factor_code(user, code)
+    else:
+        totp_secret = _decrypt_two_factor_secret(user.two_factor_totp_secret or '')
+        valid = bool(totp_secret and verify_totp_code(totp_secret, code))
+    recovery_code_used = False
+    if not valid:
+        recovery_code_used = consume_two_factor_recovery_code(user, code)
+        valid = recovery_code_used
     if not valid:
         audit_event('two_factor_challenge', user, 'failure', method=user.two_factor_method)
-        return render_template('two_factor_challenge.html', method=user.two_factor_method, error='That code is invalid or expired.'), 401
+        return render_template('two_factor_challenge.html', method=user.two_factor_method, error='That verification or recovery code is invalid or expired.'), 401
     next_url = session.get('pending_two_factor_next')
     _complete_login(user)
-    audit_event('login', user, 'success', method=user.two_factor_method)
+    audit_event(
+        'login', user, 'success',
+        method='recovery_code' if recovery_code_used else user.two_factor_method,
+    )
     return redirect(_safe_next_url(next_url))
 
 
@@ -937,11 +950,15 @@ def enable_email_two_factor_route():
     user = _current_user()
     if not current_app.config.get('PASSWORD_RESET_EMAILS_ENABLED'):
         return render_template('account.html', user=user, error='Email delivery is not configured.'), 400
-    if not enable_email_two_factor(user, _request_data().get('current_password') or ''):
+    recovery_codes = enable_email_two_factor(user, _request_data().get('current_password') or '')
+    if not recovery_codes:
         return render_template('account.html', user=user, error='Verify your email and enter your current password to enable email 2FA.'), 400
     audit_event('two_factor_enabled', user, 'success', method='email')
     session['auth_version'] = user.auth_version
-    return redirect(url_for('account', notice='Email two-factor authentication is enabled.', level='success'))
+    return render_template(
+        'account.html', user=user, recovery_codes=recovery_codes,
+        success='Email two-factor authentication is enabled. Save your recovery codes now.',
+    )
 
 
 @login_required
@@ -959,11 +976,36 @@ def begin_totp_setup_route():
 def confirm_totp_setup_route():
     from services import confirm_totp_setup
     user = _current_user()
-    if not confirm_totp_setup(user, _request_data().get('code') or ''):
+    recovery_codes = confirm_totp_setup(user, _request_data().get('code') or '')
+    if not recovery_codes:
         return render_template('account.html', user=user, error='That authenticator code is invalid. Try again.'), 400
     audit_event('two_factor_enabled', user, 'success', method='totp')
     session['auth_version'] = user.auth_version
-    return redirect(url_for('account', notice='Authenticator-app two-factor authentication is enabled.', level='success'))
+    return render_template(
+        'account.html', user=user, recovery_codes=recovery_codes,
+        success='Authenticator-app two-factor authentication is enabled. Save your recovery codes now.',
+    )
+
+
+@login_required
+def regenerate_two_factor_recovery_codes_route():
+    from services import regenerate_two_factor_recovery_codes
+
+    user = _current_user()
+    recovery_codes = regenerate_two_factor_recovery_codes(
+        user, _request_data().get('current_password') or '',
+    )
+    if not recovery_codes:
+        return render_template(
+            'account.html', user=user,
+            error='Enter your current password to replace your recovery codes.',
+        ), 400
+    audit_event('two_factor_recovery_codes_regenerated', user, 'success')
+    session['auth_version'] = user.auth_version
+    return render_template(
+        'account.html', user=user, recovery_codes=recovery_codes,
+        success='New recovery codes generated. All previous codes are now invalid.',
+    )
 
 
 @login_required
@@ -2755,6 +2797,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/account/two-factor/email', endpoint='enable_email_two_factor', view_func=_limit(enable_email_two_factor_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/account/two-factor/totp/start', endpoint='begin_totp_setup', view_func=_limit(begin_totp_setup_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/account/two-factor/totp/confirm', endpoint='confirm_totp_setup', view_func=_limit(confirm_totp_setup_route, 'two_factor', ['POST']), methods=['POST'])
+    app.add_url_rule('/account/two-factor/recovery-codes', endpoint='regenerate_two_factor_recovery_codes', view_func=_limit(regenerate_two_factor_recovery_codes_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/account/two-factor/disable', endpoint='disable_two_factor', view_func=_limit(disable_two_factor_route, 'two_factor', ['POST']), methods=['POST'])
     app.add_url_rule('/theme', endpoint='update_theme', view_func=_limit(update_theme_route, 'account', ['POST']), methods=['POST'])
     app.add_url_rule('/admin/users', endpoint='admin_users', view_func=_limit(admin_users, 'admin_users', ['POST']), methods=['GET', 'POST'])

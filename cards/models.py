@@ -25,6 +25,7 @@ class User(db.Model):
     two_factor_totp_pending_secret = db.Column(db.Text, nullable=True)
     two_factor_email_code_hash = db.Column(db.String(255), nullable=True)
     two_factor_email_code_expires_at = db.Column(db.DateTime, nullable=True)
+    two_factor_recovery_code_hashes = db.Column(db.Text, nullable=True)
     role = db.Column(db.String(20), nullable=False, default='standard', server_default=db.text("'standard'"))
     theme_preference = db.Column(db.String(10), nullable=False, default='dark', server_default=db.text("'dark'"))
     mastery_strategy_preference = db.Column(db.String(30), nullable=False, default='spaced', server_default=db.text("'spaced'"))

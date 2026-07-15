@@ -7,10 +7,12 @@ from services import (
     _totp_code,
     begin_totp_setup,
     confirm_totp_setup,
+    consume_two_factor_recovery_code,
     create_user,
     enable_email_two_factor,
     generate_email_verification_token,
     issue_email_two_factor_code,
+    regenerate_two_factor_recovery_codes,
     verify_email_two_factor_code,
     verify_email_with_token,
     export_deck_as_text,
@@ -45,9 +47,61 @@ class OperationalSecurityTests(CardsTestCase):
             app_user = self._user('app_2fa_user')
             secret, provisioning_uri = begin_totp_setup(app_user, 'password12345')
             self.assertIn(f'secret={secret}', provisioning_uri)
-            self.assertTrue(confirm_totp_setup(app_user, _totp_code(secret)))
+            recovery_codes = confirm_totp_setup(app_user, _totp_code(secret))
+            self.assertEqual(len(recovery_codes), 8)
             self.assertEqual(app_user.two_factor_method, 'totp')
             self.assertNotIn(secret, app_user.two_factor_totp_secret)
+            self.assertNotIn(recovery_codes[0], app_user.two_factor_recovery_code_hashes)
+
+    def test_recovery_codes_are_one_time_and_regeneration_invalidates_old_codes(self):
+        with self.app.app_context():
+            user = self._user('recovery_code_user')
+            secret, _ = begin_totp_setup(user, 'password12345')
+            original_codes = confirm_totp_setup(user, _totp_code(secret))
+
+            self.assertTrue(consume_two_factor_recovery_code(user, original_codes[0]))
+            self.assertFalse(consume_two_factor_recovery_code(user, original_codes[0]))
+            replacement_codes = regenerate_two_factor_recovery_codes(user, 'password12345')
+            self.assertEqual(len(replacement_codes), 8)
+            self.assertFalse(consume_two_factor_recovery_code(user, original_codes[1]))
+            self.assertTrue(consume_two_factor_recovery_code(user, replacement_codes[0]))
+
+    def test_recovery_code_can_complete_login_only_once(self):
+        with self.app.app_context():
+            user = self._user('recovery_login_user')
+            secret, _ = begin_totp_setup(user, 'password12345')
+            recovery_codes = confirm_totp_setup(user, _totp_code(secret))
+            recovery_code = recovery_codes[0]
+
+        def begin_login():
+            self.client.get('/login')
+            with self.client.session_transaction() as current_session:
+                csrf_token = current_session['csrf_token']
+            response = self.client.post('/login', data={
+                'username': 'recovery_login_user',
+                'password': 'password12345',
+                'csrf_token': csrf_token,
+            })
+            self.assertEqual(response.status_code, 302)
+            with self.client.session_transaction() as current_session:
+                return current_session['csrf_token']
+
+        csrf_token = begin_login()
+        response = self.client.post('/two-factor', data={
+            'code': recovery_code,
+            'csrf_token': csrf_token,
+        })
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as current_session:
+            self.assertIn('user_id', current_session)
+            current_session.clear()
+
+        csrf_token = begin_login()
+        reused = self.client.post('/two-factor', data={
+            'code': recovery_code,
+            'csrf_token': csrf_token,
+        })
+        self.assertEqual(reused.status_code, 401)
 
     def test_audit_events_are_persisted_and_admin_view_is_protected(self):
         with self.app.app_context():
