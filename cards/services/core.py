@@ -25,6 +25,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from cryptography.fernet import Fernet, InvalidToken
 
 from ..identity import canonical_email, canonical_username, display_username, recovery_email_digest
+from ..csv_safety import spreadsheet_safe_cell
 from .authorization import audit_event
 from ..models import (
     Card,
@@ -329,7 +330,10 @@ def export_deck_as_text(deck):
     cards = sorted(list(deck.cards), key=lambda card: card.position)
     for card in cards:
         for answer in card.answers:
-            writer.writerow([card.question or '', answer.answer or ''])
+            writer.writerow([
+                spreadsheet_safe_cell(card.question or ''),
+                spreadsheet_safe_cell(answer.answer or ''),
+            ])
     return buffer.getvalue().strip('\n')
 
 
@@ -2247,11 +2251,9 @@ def delete_answer(answer_id):
         db.session.delete(card)
         db.session.flush()
         _renumber_deck_cards(deck_id)
-        remaining_answers = 0
     else:
         db.session.delete(answer)
         db.session.flush()
-        remaining_answers = max(0, answer_count - 1)
 
     db.session.commit()
     return {'answer_deleted': True, 'card_deleted': card_deleted, 'card_id': card_id, 'deck_id': deck_id}

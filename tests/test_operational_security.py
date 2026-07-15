@@ -1,7 +1,8 @@
 """Coverage for operational observability and account-security upgrades."""
 
-from models import AuditLog, User, db
+from models import AuditLog, Card, CardAnswer, Deck, User, db
 from cards.observability import _before_send
+from cards.csv_safety import spreadsheet_safe_cell
 from services import (
     _totp_code,
     begin_totp_setup,
@@ -12,6 +13,7 @@ from services import (
     issue_email_two_factor_code,
     verify_email_two_factor_code,
     verify_email_with_token,
+    export_deck_as_text,
 )
 from services.authorization import audit_event
 from tests.support import CardsTestCase
@@ -59,6 +61,35 @@ class OperationalSecurityTests(CardsTestCase):
         response = self.client.get('/admin/audit-log?event=test_event')
         self.assertEqual(response.status_code, 200)
         self.assertIn('test_event', response.get_data(as_text=True))
+
+    def test_csv_exports_neutralize_spreadsheet_formulas(self):
+        self.assertEqual(spreadsheet_safe_cell('  =SUM(1,1)'), "'  =SUM(1,1)")
+        self.assertEqual(spreadsheet_safe_cell('ordinary text'), 'ordinary text')
+
+        with self.app.app_context():
+            admin = create_user('csv_admin', 'password12345', role='admin')
+            deck = Deck(owned_by=admin.user_id, description='CSV safety')
+            db.session.add(deck)
+            db.session.flush()
+            card = Card(deck_id=deck.deck_id, question='=HYPERLINK("https://bad.test")', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer=' +1+1'))
+            audit_event(
+                '=malicious_event', admin, 'success', target_type='deck',
+                target_id=deck.deck_id, supplied='@external',
+            )
+            db.session.commit()
+            exported_deck = export_deck_as_text(deck)
+            admin_id, auth_version = admin.user_id, admin.auth_version
+
+        self.assertIn("'=HYPERLINK", exported_deck)
+        self.assertIn("' +1+1", exported_deck)
+        with self.client.session_transaction() as session:
+            session.update(user_id=admin_id, auth_version=auth_version, csrf_token='contract-csrf-token')
+        response = self.client.get('/admin/audit-log?format=csv')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("'=malicious_event", response.get_data(as_text=True))
 
     def test_sentry_scrubber_removes_credentials_and_email(self):
         event = _before_send({

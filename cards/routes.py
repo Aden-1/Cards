@@ -16,6 +16,7 @@ from sqlalchemy import text
 from .api_contract import api_error, api_response, is_api_request, request_payload
 from .static_assets import asset_url, asset_version, is_current_asset_version
 from .config import validate_rate_limit
+from .csv_safety import spreadsheet_safe_cell
 from .extensions import db, limiter
 from .identity import canonical_email, canonical_username, display_username
 from .services.authorization import audit_event, has_role
@@ -1097,7 +1098,13 @@ def admin_audit_log():
         writer = csv.writer(output)
         writer.writerow(['id', 'occurred_at', 'actor_id', 'event', 'outcome', 'target_type', 'target_id', 'ip_address', 'metadata'])
         for row in rows:
-            writer.writerow([row.log_id, row.occurred_at, row.actor_id, row.event, row.outcome, row.target_type, row.target_id, row.ip_address, row.metadata_json])
+            writer.writerow([
+                spreadsheet_safe_cell(value)
+                for value in (
+                    row.log_id, row.occurred_at, row.actor_id, row.event, row.outcome,
+                    row.target_type, row.target_id, row.ip_address, row.metadata_json,
+                )
+            ])
         return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=audit-log.csv'})
 
     page = _requested_page()
