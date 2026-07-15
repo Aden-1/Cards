@@ -1377,6 +1377,39 @@ def dashboard():
     return render_template('dashboard.html', dashboard=get_dashboard_data(user.user_id))
 
 
+@login_required
+def saved_decks_route():
+    """List the signed-in user's currently public bookmarked decks."""
+    from models import Deck, DeckFavorite
+
+    page = _requested_page()
+    per_page = _requested_page_size()
+    rows = db.session.query(
+        DeckFavorite, Deck,
+    ).join(
+        Deck, Deck.deck_id == DeckFavorite.deck_id,
+    ).filter(
+        DeckFavorite.user_id == _current_user_id(),
+        Deck.is_public == True,
+    ).order_by(
+        DeckFavorite.created_at.desc(), DeckFavorite.deck_id.desc(),
+    ).limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    saved_decks = [
+        {'favorite': favorite, 'deck': deck}
+        for favorite, deck in rows[:per_page]
+    ]
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+    return render_template(
+        'saved_decks.html', saved_decks=saved_decks, pagination=pagination,
+        **_pagination_context('saved_decks'),
+    )
+
+
 # Deck editor.
 # Render the deck editor page.
 def edit():
@@ -2904,6 +2937,7 @@ def register_routes(app, app_limiter=None):
     # Main pages
     app.add_url_rule('/', endpoint='index', view_func=index)
     app.add_url_rule('/dashboard', endpoint='dashboard', view_func=dashboard, methods=['GET'])
+    app.add_url_rule('/saved', endpoint='saved_decks', view_func=saved_decks_route, methods=['GET'])
     app.add_url_rule('/healthz', endpoint='healthz', view_func=healthz, methods=['GET'])
     app.add_url_rule('/readyz', endpoint='readyz', view_func=readyz, methods=['GET'])
     app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])

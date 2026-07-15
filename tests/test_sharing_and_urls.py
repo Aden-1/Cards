@@ -1,11 +1,71 @@
 """Contract tests for canonical public URLs and deck collaboration."""
 
-from models import Card, Deck, DeckCollaborator, DeckShareLink, Quiz, db
+from models import Card, Deck, DeckCollaborator, DeckFavorite, DeckShareLink, Quiz, db
 from services import add_card, create_deck, edit_deck, get_match_game_data
 from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_saved_deck_library_is_paginated_user_scoped_and_public_only(self):
+        owner_id = self.user_session('bookmark-owner')
+        with self.app.app_context():
+            public_decks = [
+                Deck(
+                    owned_by=owner_id,
+                    description=f'Bookmark {index:02d}',
+                    is_public=True,
+                )
+                for index in range(21)
+            ]
+            private_deck = Deck(
+                owned_by=owner_id, description='Hidden Bookmark', is_public=False,
+            )
+            other_user_deck = Deck(
+                owned_by=owner_id, description='Other User Bookmark', is_public=True,
+            )
+            db.session.add_all([*public_decks, private_deck, other_user_deck])
+            db.session.flush()
+            public_ids = [deck.deck_id for deck in public_decks]
+            private_id = private_deck.deck_id
+            other_user_deck_id = other_user_deck.deck_id
+            db.session.commit()
+
+        saver_id = self.user_session('bookmark-reader')
+        with self.app.app_context():
+            db.session.add_all([
+                DeckFavorite(user_id=saver_id, deck_id=deck_id)
+                for deck_id in [*public_ids, private_id]
+            ])
+            db.session.add(DeckFavorite(
+                user_id=owner_id, deck_id=other_user_deck_id,
+            ))
+            db.session.commit()
+
+        first_page = self.client.get('/saved')
+        self.assertEqual(first_page.status_code, 200)
+        first_html = first_page.get_data(as_text=True)
+        self.assertIn('Bookmark 20', first_html)
+        self.assertNotIn('Bookmark 00</h3>', first_html)
+        self.assertNotIn('Hidden Bookmark', first_html)
+        self.assertNotIn('Other User Bookmark', first_html)
+        self.assertIn('page=2', first_html)
+
+        second_page = self.client.get('/saved?page=2')
+        self.assertEqual(second_page.status_code, 200)
+        self.assertIn(b'Bookmark 00', second_page.data)
+
+        removed = self.client.post(
+            '/decks/favorite',
+            data={'deck_id': public_ids[-1]},
+            headers={**self.csrf(), 'Referer': 'http://localhost/saved'},
+        )
+        self.assertEqual(removed.status_code, 302)
+        self.assertNotIn(b'Bookmark 20', self.client.get('/saved').data)
+
+        with self.client.session_transaction() as current_session:
+            current_session.clear()
+        self.assertEqual(self.client.get('/saved').status_code, 302)
+
     def test_match_payload_omits_explicit_answer_mapping_and_uses_server_validator(self):
         owner_id = self.user_session('match-payload-owner')
         with self.app.app_context():

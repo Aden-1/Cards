@@ -88,6 +88,7 @@ GPL-3.0 license policy are documented in
 - `/register`, `/login`, `/logout`, and `/account` manage authentication and profile settings
 - `/theme` saves the signed-in user's light/dark preference
 - `/dashboard` shows a signed-in user's progress and recommended study deck
+- `/saved` lists the signed-in user's bookmarked public decks
 - `/admin/users` provides admin-only user management
 - `/edit` manages decks and cards
 - `/view` shows study mode

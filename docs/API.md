@@ -52,6 +52,14 @@ Response:
 
 Requires login. Returns the signed-in user's mastery, matching summary, deck-health cards, and recommended next deck.
 
+### Saved Decks
+**GET** `/saved`
+
+Requires login. Returns the signed-in user's bookmarked decks that are still
+public, newest bookmark first. Accepts `page` and `page_size`; page size is
+capped at 50. Bookmarks belonging to other users and decks that have become
+private are never rendered.
+
 ### Register
 **GET, POST** `/register`
 
