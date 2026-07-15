@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Cards | Quiz Result{% endblock %}
+{% block content %}
+<section class="page-intro"><span class="page-kicker">Attempt Review</span><h1 class="page-title">{{ result.source_title }}</h1><p class="page-description">Score: {{ result.score }} / {{ result.question_count }} · Completed {{ result.completed_at }}</p></section>
+<section class="surface p-4 fade-in"><div class="section-stack">{% for item in question_results %}<article class="card-editor-item"><div class="panel-header"><h2 class="h5 mb-0">{{ loop.index }}. {{ item.question or 'Question unavailable' }}</h2><span class="status-chip {{ 'public' if item.is_correct else 'danger' }}">{{ 'Correct' if item.is_correct else 'Incorrect' }}</span></div></article>{% else %}<div class="empty-card">Question-level results are unavailable for this attempt.</div>{% endfor %}</div><a class="btn-surface mt-4" href="{{ url_for('quiz_history') }}">Back to History</a></section>
+{% endblock %}

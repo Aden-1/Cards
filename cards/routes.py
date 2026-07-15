@@ -1,6 +1,7 @@
 import csv
 import hmac
 import io
+import json
 import re
 import secrets
 import hashlib
@@ -2753,6 +2754,10 @@ def _quiz_launcher_context(source_data):
         'selected_deck_id': selected_deck_id,
         'selected_custom_quiz_id': selected_custom_quiz_id,
         'selected_source': selected_source,
+        'selected_source_title': (
+            selected_deck_record.description if selected_deck_record
+            else selected_quiz_record.title if selected_custom_quiz_id else None
+        ),
         'deck_page': deck_page,
         'quiz_page': quiz_page,
         'available_question_pools': available_question_pools,
@@ -2903,6 +2908,9 @@ def start_quiz_route():
         attempt_token, display_questions, active_tokens = create_quiz_attempt(
             context['user_id'], quiz_session_id, quiz_questions,
             question_limit=question_count, time_limit_seconds=time_limit_seconds,
+            source_type='deck' if context['selected_deck_id'] else 'custom',
+            source_id=context['selected_deck_id'] or context['selected_custom_quiz_id'],
+            source_title=context['selected_source_title'],
         )
     except ValueError as exc:
         return render_template(
@@ -2956,6 +2964,56 @@ def score_quiz_route():
     session['quiz_attempt_tokens'] = active_attempt_tokens
     return jsonify(result)
 
+
+@login_required
+def quiz_history_route():
+    from models import QuizResult
+
+    user_id = _current_user_id()
+    page = _requested_page()
+    per_page = _requested_page_size()
+    query = QuizResult.query.filter_by(user_id=user_id).order_by(
+        QuizResult.completed_at.desc(), QuizResult.result_id.desc(),
+    )
+    rows = query.limit(per_page + 1).offset((page - 1) * per_page).all()
+    has_next = len(rows) > per_page
+    results = rows[:per_page]
+    count, average_percent, best_percent = db.session.query(
+        db.func.count(QuizResult.result_id),
+        db.func.avg(QuizResult.score * 100.0 / QuizResult.question_count),
+        db.func.max(QuizResult.score * 100.0 / QuizResult.question_count),
+    ).filter(QuizResult.user_id == user_id).one()
+    pagination = {
+        'page': page, 'per_page': per_page, 'has_prev': page > 1, 'has_next': has_next,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if has_next else None,
+    }
+    return render_template(
+        'quiz_history.html', results=results,
+        stats={
+            'count': int(count or 0),
+            'average_percent': round(float(average_percent or 0)),
+            'best_percent': round(float(best_percent or 0)),
+        },
+        pagination=pagination, **_pagination_context('quiz_history'),
+    )
+
+
+@login_required
+def quiz_result_detail_route(result_id):
+    from models import QuizResult
+
+    result = QuizResult.query.filter_by(
+        result_id=result_id, user_id=_current_user_id(),
+    ).first_or_404()
+    try:
+        question_results = json.loads(result.question_results_json)
+    except (TypeError, ValueError):
+        question_results = []
+    return render_template(
+        'quiz_result_detail.html', result=result, question_results=question_results,
+    )
+
 # Render the custom quiz editor.
 def edit_quiz_route():
     if not _current_user():
@@ -2973,7 +3031,25 @@ def edit_quiz_route():
             selected_quiz = None
     quizzes = _include_selected_quiz(quizzes, selected_quiz)
             
-    return render_template('edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz, quiz_page=quiz_page, **_pagination_context('edit_quiz_route'))
+    quiz_analytics = None
+    if selected_quiz:
+        from models import QuizResult
+
+        count, average_percent, best_percent = db.session.query(
+            db.func.count(QuizResult.result_id),
+            db.func.avg(QuizResult.score * 100.0 / QuizResult.question_count),
+            db.func.max(QuizResult.score * 100.0 / QuizResult.question_count),
+        ).filter_by(source_type='custom', source_id=selected_quiz.quiz_id).one()
+        quiz_analytics = {
+            'count': int(count or 0),
+            'average_percent': round(float(average_percent or 0)),
+            'best_percent': round(float(best_percent or 0)),
+        }
+    return render_template(
+        'edit_quiz.html', quizzes=quizzes, selected_quiz=selected_quiz,
+        quiz_analytics=quiz_analytics, quiz_page=quiz_page,
+        **_pagination_context('edit_quiz_route'),
+    )
 
 # Create a custom quiz.
 def create_custom_quiz_route():
@@ -3202,6 +3278,8 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/quizzes/<quiz_slug>', endpoint='public_quiz_detail', view_func=public_quiz_detail_route, methods=['GET'])
     app.add_url_rule('/copy_public_quiz', endpoint='copy_public_quiz', view_func=_limit(copy_public_quiz_route, 'public_copy', ['POST']), methods=['POST'])
     app.add_url_rule('/quiz', endpoint='quiz', view_func=quiz_route, methods=['GET'])
+    app.add_url_rule('/quiz/history', endpoint='quiz_history', view_func=quiz_history_route, methods=['GET'])
+    app.add_url_rule('/quiz/history/<int:result_id>', endpoint='quiz_result_detail', view_func=quiz_result_detail_route, methods=['GET'])
     app.add_url_rule('/quiz/start', endpoint='start_quiz', view_func=_limit(start_quiz_route, 'start_quiz', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_quiz', endpoint='edit_quiz_route', view_func=edit_quiz_route, methods=['GET'])
     

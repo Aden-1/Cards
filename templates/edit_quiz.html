@@ -58,6 +58,7 @@
     {% if selected_quiz %}
     <article class="surface p-4" id="quiz-editor">
         <div class="panel-header mb-3"><div><span class="page-kicker">Editing</span><h2 class="h3 mb-1">{{ selected_quiz.title }}</h2><p class="muted-copy mb-0">{{ selected_quiz.questions|length }} questions</p></div><a class="btn-surface" href="{{ url_for('edit_quiz_route') }}#quizzes-section">Done</a></div>
+        {% if quiz_analytics %}<div class="metrics-grid mb-4"><article class="metric-card"><span class="metric-value">{{ quiz_analytics.count }}</span><span class="metric-label">Completed attempts</span></article><article class="metric-card"><span class="metric-value">{{ quiz_analytics.average_percent }}%</span><span class="metric-label">Average score</span></article><article class="metric-card"><span class="metric-value">{{ quiz_analytics.best_percent }}%</span><span class="metric-label">Best score</span></article></div>{% endif %}
         <div class="section-stack">
             <article class="editor-card">
                 <h3 class="h5 mb-3">Quiz Settings</h3>

@@ -100,6 +100,7 @@ GPL-3.0 license policy are documented in
 - `/public_deck` and `/public_quiz` show read-only public content detail pages
 - `/collections/<id>` shows a public collection or its owner-only private preview
 - `/quiz` launches deck or custom quizzes
+- `/quiz/history` shows a signed-in learner's retained quiz scores and question outcomes
 - `/edit_quiz` manages custom quizzes
 
 ## Local Development Notes

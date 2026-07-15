@@ -42,6 +42,7 @@ from ..models import (
     QuizAttempt,
     QuizOption,
     QuizQuestion,
+    QuizResult,
     User,
     db,
 )
@@ -3194,7 +3195,10 @@ def delete_expired_quiz_attempts(max_age_seconds=None):
     return deleted_rows
 
 
-def create_quiz_attempt(user_id, session_id, quiz_questions, *, question_limit=None, time_limit_seconds=None):
+def create_quiz_attempt(
+    user_id, session_id, quiz_questions, *, question_limit=None,
+    time_limit_seconds=None, source_type=None, source_id=None, source_title=None,
+):
     """Create one bounded attempt and return browser-safe questions."""
     if user_id is None and not session_id:
         raise ValueError('Anonymous quiz attempts require a session identifier.')
@@ -3221,6 +3225,12 @@ def create_quiz_attempt(user_id, session_id, quiz_questions, *, question_limit=N
             raise ValueError('Time limit must be a whole number of seconds.') from exc
         if time_limit_seconds not in (300, 600, 1200, 1800):
             raise ValueError('Choose a supported time limit.')
+    if source_type is not None:
+        if source_type not in ('deck', 'custom') or not source_id or not source_title:
+            raise ValueError('Quiz source metadata is invalid.')
+        source_title = _validate_text_length(
+            'Quiz source title', source_title, 255, required=True,
+        )
 
     cutoff = _quiz_attempt_cutoff()
     QuizAttempt.query.filter(QuizAttempt.created_at < cutoff).delete(synchronize_session=False)
@@ -3256,6 +3266,7 @@ def create_quiz_attempt(user_id, session_id, quiz_questions, *, question_limit=N
             'answers': [option['text'] for option in question['options'] if option.get('is_correct')],
             'answer_mode': question.get('answer_mode', 'choice'),
             'explanation': question.get('explanation') or '',
+            'question': question.get('question') or '',
         }
         for question in quiz_questions
     }
@@ -3266,6 +3277,9 @@ def create_quiz_attempt(user_id, session_id, quiz_questions, *, question_limit=N
         correct_answers_json=json.dumps(correct_answers),
         question_count=len(quiz_questions),
         time_limit_seconds=time_limit_seconds,
+        source_type=source_type,
+        source_id=source_id,
+        source_title=source_title,
     )
     db.session.add(attempt)
     db.session.commit()
@@ -3310,7 +3324,10 @@ def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
     for question_id, answer_spec in correct_answers.items():
         # Attempts created before advanced modes stored a bare answer list.
         if isinstance(answer_spec, list):
-            answer_spec = {'answers': answer_spec, 'answer_mode': 'choice', 'explanation': ''}
+            answer_spec = {
+                'answers': answer_spec, 'answer_mode': 'choice',
+                'explanation': '', 'question': '',
+            }
         answers = answer_spec.get('answers', [])
         answer_mode = answer_spec.get('answer_mode', 'choice')
         selected_values = submitted_answers.get(question_id, [])
@@ -3332,6 +3349,7 @@ def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
             'is_correct': is_correct,
             'correct_answers': list(answers),
             'explanation': answer_spec.get('explanation') or '',
+            'question': answer_spec.get('question') or '',
         })
 
     result = {
@@ -3342,6 +3360,27 @@ def score_quiz_attempt(attempt_token, user_id, session_id, submitted_answers):
         'timed_out': timed_out,
         'missed_question_ids': [result['id'] for result in results if not result['is_correct']],
     }
+    if user_id is not None and attempt.source_type and attempt.source_id and attempt.source_title:
+        history = QuizResult(
+            user_id=user_id,
+            source_type=attempt.source_type,
+            source_id=attempt.source_id,
+            source_title=attempt.source_title,
+            score=score,
+            question_count=attempt.question_count,
+            timed_out=timed_out,
+            question_results_json=json.dumps([
+                {
+                    'id': item['id'],
+                    'question': item['question'],
+                    'is_correct': item['is_correct'],
+                }
+                for item in results
+            ]),
+        )
+        db.session.add(history)
+        db.session.flush()
+        result['result_id'] = history.result_id
     db.session.delete(attempt)
     db.session.commit()
     return result

@@ -38,6 +38,7 @@ class User(db.Model):
     mastery_progress = db.relationship('CardMasteryProgress', backref='user', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     match_progress = db.relationship('MatchPairProgress', backref='user', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
     quiz_attempts = db.relationship('QuizAttempt', backref='user', lazy=True, passive_deletes=True)
+    quiz_results = db.relationship('QuizResult', backref='user', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
 
     __table_args__ = (
         CheckConstraint("role IN ('standard', 'moderator', 'admin')", name='ck_user_role'),
@@ -322,10 +323,39 @@ class QuizAttempt(db.Model):
     correct_answers_json = db.Column(db.Text, nullable=False)
     question_count = db.Column(db.Integer, nullable=False)
     time_limit_seconds = db.Column(db.Integer, nullable=True)
+    source_type = db.Column(db.String(10), nullable=True)
+    source_id = db.Column(db.Integer, nullable=True)
+    source_title = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
 
     __table_args__ = (
         CheckConstraint('question_count > 0', name='ck_quiz_attempt_question_count_positive'),
+        CheckConstraint(
+            "source_type IS NULL OR source_type IN ('deck', 'custom')",
+            name='ck_quiz_attempt_source_type',
+        ),
+    )
+
+
+class QuizResult(db.Model):
+    result_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    source_type = db.Column(db.String(10), nullable=False)
+    source_id = db.Column(db.Integer, nullable=False)
+    source_title = db.Column(db.String(255), nullable=False)
+    score = db.Column(db.Integer, nullable=False)
+    question_count = db.Column(db.Integer, nullable=False)
+    timed_out = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text('false'))
+    question_results_json = db.Column(db.Text, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        CheckConstraint("source_type IN ('deck', 'custom')", name='ck_quiz_result_source_type'),
+        CheckConstraint('question_count > 0', name='ck_quiz_result_question_count_positive'),
+        CheckConstraint('score >= 0 AND score <= question_count', name='ck_quiz_result_score_range'),
+        CheckConstraint('timed_out IS TRUE OR timed_out IS FALSE', name='ck_quiz_result_timed_out_boolean'),
+        db.Index('ix_quiz_result_user_completed_at', 'user_id', 'completed_at'),
+        db.Index('ix_quiz_result_source', 'source_type', 'source_id'),
     )
 
 

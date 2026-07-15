@@ -6,6 +6,87 @@ from tests.production_support import *
 
 
 class QuizIntegrityTests(ProductionTestCase):
+    def test_signed_in_quiz_result_is_persisted_without_answer_keys(self):
+        with cards_app.app.app_context():
+            user = cards_app.create_user('history-learner', 'password12345')
+            deck = cards_app.create_deck(
+                user.user_id, 'History Deck', is_public=True,
+            )
+            card = Card(deck_id=deck.deck_id, question='Two plus two?', position=1)
+            db.session.add(card)
+            db.session.flush()
+            db.session.add(CardAnswer(card_id=card.card_id, answer='Four'))
+            db.session.commit()
+            user_id = user.user_id
+            deck_id = deck.deck_id
+            card_id = card.card_id
+
+        self._login_session(user_id)
+        started = self._start_quiz(f'deck:{deck_id}')
+        self.assertEqual(started.status_code, 200)
+        with self.client.session_transaction() as current_session:
+            attempt_token = current_session['quiz_attempt_tokens'][-1]
+
+        scored = self.client.post(
+            '/score_quiz',
+            json={
+                'attempt_token': attempt_token,
+                'answers': {str(card_id): ['Four']},
+            },
+            headers={'X-CSRFToken': 'csrf-test-token'},
+        )
+        self.assertEqual(scored.status_code, 200)
+        payload = scored.get_json()
+        self.assertEqual(payload['score'], 1)
+        self.assertIsInstance(payload['result_id'], int)
+
+        with cards_app.app.app_context():
+            result = db.session.get(QuizResult, payload['result_id'])
+            self.assertEqual(result.user_id, user_id)
+            self.assertEqual(result.source_title, 'History Deck')
+            self.assertEqual(result.score, 1)
+            self.assertIn('Two plus two?', result.question_results_json)
+            self.assertNotIn('Four', result.question_results_json)
+
+        history = self.client.get('/quiz/history')
+        self.assertEqual(history.status_code, 200)
+        self.assertIn(b'History Deck', history.data)
+        detail = self.client.get(f"/quiz/history/{payload['result_id']}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn(b'Two plus two?', detail.data)
+        self.assertIn(b'Correct', detail.data)
+
+        with cards_app.app.app_context():
+            custom_quiz = Quiz(
+                owned_by=user_id, title='Creator Analytics', is_public=True,
+            )
+            db.session.add(custom_quiz)
+            db.session.flush()
+            db.session.add(QuizResult(
+                user_id=user_id,
+                source_type='custom',
+                source_id=custom_quiz.quiz_id,
+                source_title=custom_quiz.title,
+                score=1,
+                question_count=2,
+                question_results_json='[]',
+            ))
+            db.session.commit()
+            custom_quiz_id = custom_quiz.quiz_id
+        analytics = self.client.get(f'/edit_quiz?quiz_id={custom_quiz_id}')
+        self.assertEqual(analytics.status_code, 200)
+        self.assertIn(b'Completed attempts', analytics.data)
+        self.assertIn(b'50%', analytics.data)
+
+        with cards_app.app.app_context():
+            other = cards_app.create_user('history-other', 'password12345')
+            other_id = other.user_id
+        self._login_session(other_id)
+        self.assertEqual(
+            self.client.get(f"/quiz/history/{payload['result_id']}").status_code,
+            404,
+        )
+
     def test_quiz_scoring_ignores_client_claimed_correctness(self):
         with cards_app.app.app_context():
             owner = cards_app.create_user(

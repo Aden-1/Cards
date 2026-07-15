@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import controls %}
+{% block title %}Cards | Quiz History{% endblock %}
+{% block content %}
+<section class="page-intro"><span class="page-kicker">Learning Analytics</span><h1 class="page-title">Quiz history</h1><p class="page-description">Track completed signed-in quiz attempts without retaining reusable answer keys.</p></section>
+<section class="metrics-grid stagger mb-4"><article class="metric-card"><span class="metric-value">{{ stats.count }}</span><span class="metric-label">Attempts</span></article><article class="metric-card"><span class="metric-value">{{ stats.average_percent }}%</span><span class="metric-label">Average</span></article><article class="metric-card"><span class="metric-value">{{ stats.best_percent }}%</span><span class="metric-label">Best</span></article></section>
+<section class="surface p-4 fade-in">{% if results %}<div class="section-stack">{% for result in results %}<article class="answer-row"><div class="answer-row-text"><strong>{{ result.source_title }}</strong><div class="small-muted">{{ result.completed_at }} · {{ result.source_type }}{% if result.timed_out %} · timed out{% endif %}</div></div><span class="score-chip">{{ result.score }} / {{ result.question_count }}</span><a class="btn-surface" href="{{ url_for('quiz_result_detail', result_id=result.result_id) }}">Review</a></article>{% endfor %}</div>{{ controls(pagination, pagination_endpoint, pagination_args) }}{% else %}<div class="empty-card">Complete a quiz while signed in to begin your history.</div>{% endif %}</section>
+{% endblock %}

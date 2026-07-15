@@ -36,6 +36,7 @@ from models import (
     QuizAttempt,
     QuizOption,
     QuizQuestion,
+    QuizResult,
     User,
     db,
 )

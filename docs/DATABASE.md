@@ -207,8 +207,32 @@ class QuizAttempt(db.Model):
     session_id = db.Column(db.String(64), nullable=True, index=True)
     correct_answers_json = db.Column(db.Text, nullable=False)
     question_count = db.Column(db.Integer, nullable=False)
+    source_type = db.Column(db.String(10), nullable=True)
+    source_id = db.Column(db.Integer, nullable=True)
+    source_title = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), index=True)
 ```
+
+### QuizResult
+```python
+class QuizResult(db.Model):
+    result_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.user_id'), nullable=False)
+    source_type = db.Column(db.String(10), nullable=False)
+    source_id = db.Column(db.Integer, nullable=False)
+    source_title = db.Column(db.String(255), nullable=False)
+    score = db.Column(db.Integer, nullable=False)
+    question_count = db.Column(db.Integer, nullable=False)
+    timed_out = db.Column(db.Boolean, nullable=False, default=False)
+    question_results_json = db.Column(db.Text, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+```
+
+Signed-in scoring converts the one-time attempt into a permanent result in the
+same transaction. `question_results_json` stores only question IDs, snapshotted
+question text, and correctness; correct-answer lists remain ephemeral and are
+deleted with `QuizAttempt`. Source IDs are intentionally polymorphic snapshots
+rather than foreign keys so history survives source deletion.
 
 ## Relationship Summary
 

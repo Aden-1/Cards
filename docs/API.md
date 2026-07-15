@@ -311,6 +311,19 @@ Notes:
 - Active attempts are capped per authenticated user or guest session; displaced
   attempts are deleted immediately.
 
+### Quiz History
+**GET** `/quiz/history`
+
+Requires login. Returns the signed-in learner's paginated completed attempts,
+newest first, with total-attempt, average-score, and best-score summaries.
+
+**GET** `/quiz/history/<result_id>`
+
+Requires login and ownership of the result. Shows the snapshotted question text
+and whether each response was correct. Persistent history never stores reusable
+correct-answer lists. Anonymous attempts are scored normally but are not added
+to history.
+
 ### Custom Quiz Editor
 **GET** `/edit_quiz`
 - Query params: `quiz_id`, `page`, `page_size` (maximum 50)
