@@ -91,7 +91,7 @@
     <div class="quiz-stack" id="quizForm">
         {% for q in quiz_data %}
         <article class="quiz-question-shell quiz-question" data-question-id="{{ q.id }}">
-            <h3 class="h5 mb-3">{{ loop.index }}. {{ q.question }}</h3>
+            <h3 class="h5 mb-3">{{ loop.index }}. <span data-rich-text>{{ q.question }}</span></h3>
             <div class="section-stack">
                 {% if q.answer_mode == 'typed' %}
                 <label class="form-label" for="typed_{{ q.id }}">Your answer</label>
@@ -100,7 +100,7 @@
                 {% for opt in q.options %}
                 <label class="option-row form-check">
                     <input class="form-check-input option-checkbox me-2" type="checkbox" value="{{ opt.text|escape }}" id="opt_{{ q.id }}_{{ loop.index }}">
-                    <span class="form-check-label" for="opt_{{ q.id }}_{{ loop.index }}">{{ opt.text }}</span>
+                    <span class="form-check-label" for="opt_{{ q.id }}_{{ loop.index }}" data-rich-text>{{ opt.text }}</span>
                 </label>
                 {% endfor %}
                 {% endif %}
@@ -182,13 +182,13 @@ function submitQuiz() {
                 status.textContent = 'Incorrect';
                 const correctAnswerText = document.createElement('span');
                 correctAnswerText.className = 'small-muted';
-                correctAnswerText.textContent = `Correct answers: ${res.correct_answers.join(', ')}`;
+                window.cardsApp.renderRichText(correctAnswerText, `Correct answers: ${res.correct_answers.join(', ')}`);
                 feedback.append(status, document.createTextNode(' '), correctAnswerText);
             }
             if (res.explanation) {
                 const explanation = document.createElement('p');
                 explanation.className = 'small-muted mb-0 mt-2';
-                explanation.textContent = `Explanation: ${res.explanation}`;
+                window.cardsApp.renderRichText(explanation, `Explanation: ${res.explanation}`);
                 feedback.append(explanation);
             }
         });

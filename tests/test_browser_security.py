@@ -62,6 +62,39 @@ class BrowserSecurityTests(unittest.TestCase):
             source = template.read_text(encoding='utf-8')
             self.assertIsNone(re.search(r'<style\b|\bstyle\s*=', source, re.I), template.name)
 
+    def test_rich_text_is_server_escaped_and_rendered_without_raw_html(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('rich_text_owner', 'password12345')
+            deck = cards_app.create_deck(
+                owner.user_id, 'Safe formulas', is_public=True,
+            )
+            cards_app.add_card(
+                deck.deck_id,
+                '<img src=x onerror=alert(1)> $\\frac{1}{2}$ **bold**',
+                ['<script>alert(1)</script>'],
+            )
+            deck_id = deck.deck_id
+            owner_id = owner.user_id
+
+        response = self.client.get(f'/public_deck?deck_id={deck_id}', follow_redirects=True)
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-rich-text', page)
+        self.assertIn('&lt;img src=x onerror=alert(1)&gt;', page)
+        self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;', page)
+        self.assertNotIn('<img src=x', page)
+
+        self._login_session(owner_id)
+        tsv = self.client.get(f'/decks/{deck_id}/download.tsv')
+        self.assertEqual(tsv.status_code, 200)
+        self.assertEqual(tsv.mimetype, 'text/tab-separated-values')
+        self.assertIn(b'$\\frac{1}{2}$', tsv.data)
+
+        root = Path(__file__).resolve().parents[1]
+        renderer = (root / 'static' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('element.replaceChildren(richTextFragment(value))', renderer)
+        self.assertNotIn('element.innerHTML = value', renderer)
+
     def test_static_assets_use_content_hash_urls_and_immutable_cache_headers(self):
         response = self.client.get('/')
         page = response.get_data(as_text=True)

@@ -78,7 +78,7 @@
                 <div class="flash-panels mt-3">
                     <article class="flash-pane">
                         <span class="page-kicker">Prompt</span>
-                        <div class="h4 mt-2 mb-0">{{ selected_master_card.question }}</div>
+                        <div class="h4 mt-2 mb-0" data-rich-text>{{ selected_master_card.question }}</div>
                     </article>
                     <article class="flash-pane" id="masteryAnswerCard" data-answers='{{ selected_master_card.answers | tojson | forceescape }}' data-answer-visible="false" role="button" tabindex="0">
                         <span class="page-kicker">Accepted Answers</span>
@@ -128,7 +128,7 @@
                         <article class="card-editor-item {{ 'is-active' if selected_master_card and selected_master_card.card_id == card.card_id else '' }}">
                             <div class="card-editor-head">
                                 <div>
-                                    <div class="card-item-question">{{ card.question }}</div>
+                                    <div class="card-item-question" data-rich-text>{{ card.question }}</div>
                                     <div class="small-muted mt-1">Reviewed {{ card.reviewed_count }} time{{ '' if card.reviewed_count == 1 else 's' }}</div>
                                 </div>
                                 <span class="status-chip {{ 'public' if card.status == 'mastered' else ('warning' if card.status == 'learning' else 'info') }}">{{ card.status }}</span>
@@ -174,7 +174,7 @@ function renderMasterAnswerState() {
     answers.forEach((answer) => {
         const answerDiv = document.createElement('div');
         answerDiv.className = 'master-answer-item';
-        answerDiv.textContent = answer;
+        window.cardsApp.renderRichText(answerDiv, answer);
         answersDiv.appendChild(answerDiv);
     });
     answerContent.innerHTML = '';

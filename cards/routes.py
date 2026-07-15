@@ -2781,6 +2781,20 @@ def download_deck_csv_route(deck_id):
     return Response(export_deck_as_text(deck) + '\n', mimetype='text/csv', headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
+def download_deck_tsv_route(deck_id):
+    if not _current_user() or not _owned_deck(deck_id, _current_user_id()):
+        return _login_required_response()
+    from services import export_deck_as_text
+
+    deck = _owned_deck(deck_id, _current_user_id())
+    filename = f'deck-{deck_id}.tsv'
+    return Response(
+        export_deck_as_text(deck, delimiter='\t') + '\n',
+        mimetype='text/tab-separated-values',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
 def toggle_deck_favorite_route():
     if not _current_user(): return _login_required_response()
     from models import Deck, DeckFavorite
@@ -3517,6 +3531,7 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/import_deck', endpoint='import_deck', view_func=_limit(import_deck_route, 'import_deck', ['POST']), methods=['POST'])
     app.add_url_rule('/import_deck/preview', endpoint='import_deck_preview', view_func=_limit(import_deck_preview_route, 'import_deck', ['POST']), methods=['POST'])
     app.add_url_rule('/decks/<int:deck_id>/download.csv', endpoint='download_deck_csv', view_func=download_deck_csv_route, methods=['GET'])
+    app.add_url_rule('/decks/<int:deck_id>/download.tsv', endpoint='download_deck_tsv', view_func=download_deck_tsv_route, methods=['GET'])
     app.add_url_rule('/get_decks', endpoint='get_decks', view_func=_limit(get_deck_list_route, 'api', ['POST']), methods=['POST'])
     app.add_url_rule('/delete_deck', endpoint='delete_deck', view_func=_limit(delete_deck_route, 'content_mutation', ['POST']), methods=['POST'])
     app.add_url_rule('/edit_deck', endpoint='edit_deck', view_func=_limit(edit_deck_route, 'content_mutation', ['POST']), methods=['POST'])

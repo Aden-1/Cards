@@ -14,12 +14,12 @@
 {% if current_review %}
 <section class="master-card current fade-in">
     <div class="panel-header">
-        <div><span class="page-kicker">{{ current_review.card.deck.description }}</span><h2 class="h4 mb-0">{{ current_review.card.question }}</h2></div>
+        <div><span class="page-kicker">{{ current_review.card.deck.description }}</span><h2 class="h4 mb-0" data-rich-text>{{ current_review.card.question }}</h2></div>
         <span class="score-chip">{{ remaining_count }} remaining</span>
     </div>
     <details class="detail-panel mt-4">
         <summary class="btn-surface">Reveal accepted answers</summary>
-        <div class="answer-list mt-3">{% for answer in current_review.card.answers %}<div class="answer-row"><span class="answer-row-text">{{ answer.answer }}</span></div>{% endfor %}</div>
+        <div class="answer-list mt-3">{% for answer in current_review.card.answers %}<div class="answer-row"><span class="answer-row-text" data-rich-text>{{ answer.answer }}</span></div>{% endfor %}</div>
     </details>
     <div class="master-actions mt-4">
         {% for rating, label, button_class in [('dont_know', "Don't Know", 'btn-danger-surface'), ('still_learning', 'Still Learning', 'btn-surface'), ('understood', 'Understood', 'btn-primary-surface')] %}

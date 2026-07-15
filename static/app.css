@@ -1816,3 +1816,54 @@ summary::-webkit-details-marker {
     scroll-behavior: auto !important;
   }
 }
+.rich-text code {
+  padding: 0.08em 0.32em;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--surface-soft);
+}
+
+.math-expression {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.12em;
+  margin-inline: 0.12em;
+  font-family: "Cambria Math", "STIX Two Math", Georgia, serif;
+  font-size: 1.08em;
+  white-space: nowrap;
+}
+
+.math-expression.display {
+  display: flex;
+  justify-content: center;
+  margin-block: 0.75rem;
+  font-size: 1.2em;
+}
+
+.math-fraction {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+  line-height: 1.05;
+  vertical-align: middle;
+}
+
+.math-numerator {
+  padding-inline: 0.16em;
+  border-bottom: 1px solid currentColor;
+}
+
+.math-denominator {
+  padding-inline: 0.16em;
+}
+
+.math-square-root {
+  display: inline-flex;
+  align-items: flex-start;
+}
+
+.math-radicand {
+  padding-inline: 0.12em;
+  border-top: 1px solid currentColor;
+}

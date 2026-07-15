@@ -447,6 +447,17 @@ Fields:
 
 Notes:
 - `import_text` accepts pasted CSV or tab-delimited rows.
+
+### Deck Text Exports
+
+**GET** `/decks/<deck_id>/download.csv`
+
+**GET** `/decks/<deck_id>/download.tsv`
+
+Both owner/co-author-only routes export one question-answer pair per row. The
+TSV variant is compatible with Anki's text importer. Markdown-style formatting
+and LaTeX-style math remain plain text in both formats; spreadsheet-formula
+neutralization still applies.
 - Each valid line should contain at least `question,answer`.
 - Duplicate answers for the same question are deduplicated during import.
 - Server-side limits are 2 MiB of raw text, 500 cards, 10 answers per card,

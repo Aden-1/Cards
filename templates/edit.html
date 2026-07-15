@@ -146,7 +146,7 @@
                 <div class="panel-header mb-3"><h3 class="h5 mb-0">Export Deck</h3></div>
                 <label class="form-label" for="deckExportText">Compatible export format</label>
                 <textarea class="form-control" id="deckExportText" rows="8" readonly>{{ selected_deck_export_text }}</textarea>
-                <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button><a class="btn-surface" href="{{ url_for('download_deck_csv', deck_id=selected_deck.deck_id) }}">Download CSV</a></div>
+                <div class="form-actions mt-3"><button class="btn-surface" type="button" data-toggle-copy="deckExportText">Copy Export Text</button><a class="btn-surface" href="{{ url_for('download_deck_csv', deck_id=selected_deck.deck_id) }}">Download CSV</a><a class="btn-surface" href="{{ url_for('download_deck_tsv', deck_id=selected_deck.deck_id) }}">Download Anki TSV</a></div>
             </article>
             {% if can_manage_sharing %}
             <article class="editor-card" id="sharing">
@@ -172,7 +172,7 @@
                 <div class="panel-header mb-3"><h3 class="h5 mb-0">Add Card</h3></div>
                 <form method="post" action="{{ url_for('add_card') }}" class="section-stack track-unsaved-form">
                     <input type="hidden" name="deck_id" value="{{ selected_deck.deck_id }}">
-                    <div><label class="form-label" for="question">Question</label><input class="form-control" type="text" id="question" name="question" required placeholder="e.g., What is the capital of France?"></div>
+                    <div><label class="form-label" for="question">Question</label><input class="form-control" type="text" id="question" name="question" required placeholder="e.g., What is the capital of France?"><div class="form-text">Text formatting: **bold**, *italic*, `code`, $inline math$, or $$display math$$. Common LaTeX such as \frac, \sqrt, superscripts, subscripts, and Greek symbols is supported.</div></div>
                     <div><label class="form-label" for="answersInput">Answers</label><textarea class="form-control" id="answersInput" name="answers" rows="4" required placeholder="Separate multiple answers with commas"></textarea><div class="form-text">Example: Capital city, Paris</div></div>
                     <div class="form-actions"><button class="btn-primary-surface" type="submit">Add Card</button></div>
                 </form>
@@ -204,7 +204,7 @@
                     <div class="card-editor-head">
                         <div class="form-check bulk-card-select"><input class="form-check-input" type="checkbox" form="bulkCardForm" name="card_ids" value="{{ card.card_id }}" aria-label="Select {{ card.question }}"></div>
                         <div>
-                            <div class="card-item-question">{{ card.question }}</div>
+                            <div class="card-item-question" data-rich-text>{{ card.question }}</div>
                             {% if selected_deck.sortable %}<div class="small-muted mt-1" data-role="card-position">Position {{ card.position }}</div>{% endif %}
                         </div>
                         {% if selected_deck.sortable %}<div class="drag-grip" aria-hidden="true">::</div>{% endif %}
@@ -213,7 +213,7 @@
                     <div class="answer-list mt-3">
                         {% for answer in card.answer_objects %}
                         <div class="answer-row">
-                            <span class="answer-row-text">{{ answer.answer }}</span>
+                            <span class="answer-row-text" data-rich-text>{{ answer.answer }}</span>
                             <details class="delete-confirm compact">
                                 <summary class="btn-danger-surface">Remove answer</summary>
                                 <div class="delete-confirm-panel compact">

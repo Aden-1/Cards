@@ -10,6 +10,8 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Duplicate whole decks or bulk duplicate, move, and delete selected text cards
 - Import decks from pasted CSV or tab-delimited text
 - Export deck contents as copy/paste-ready CSV text
+- Format study text with safe Markdown-style emphasis, inline code, and LaTeX-style math
+- Export Anki-compatible TSV while preserving all text formatting syntax
 - Study cards one at a time with answer reveal and keyboard shortcuts
 - Play a matching game with clickable question and answer tiles
 - Use multiple matching strategies, including progress-aware modes for signed-in users
@@ -23,6 +25,9 @@ A Flask/Python application that uses flashcards to help you learn using unique a
 - Browse featured public decks and popular tags from the home page
 - Copy public decks and public quizzes into your own account
 - Admin users can review accounts and manage roles
+
+Cards intentionally remains text-only: deck cards and quiz content do not accept
+or host image or video uploads.
 
 ## Quick Start
 

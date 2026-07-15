@@ -379,9 +379,27 @@ def _serialize_deck(deck, detailed_cards=False, shuffle_cards=False, shuffle_ans
 
 
 def _detected_import_delimiter(raw_text):
-    for line in raw_text.splitlines():
-        if line.strip():
-            return '\t' if '\t' in line else ','
+    in_quotes = False
+    comma_count = 0
+    tab_count = 0
+    index = 0
+    while index < len(raw_text):
+        character = raw_text[index]
+        if character == '"':
+            if in_quotes and index + 1 < len(raw_text) and raw_text[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if character == ',':
+                comma_count += 1
+            elif character == '\t':
+                tab_count += 1
+            elif character in ('\r', '\n') and (comma_count or tab_count):
+                break
+        index += 1
+    if tab_count:
+        return '\t'
     return ','
 
 
@@ -485,10 +503,12 @@ def parse_import_file(raw_bytes, question_column=0, answer_column=1):
     return parsed, output.getvalue()
 
 
-def export_deck_as_text(deck):
-    """Export a deck as line-based CSV text for copy/paste."""
+def export_deck_as_text(deck, delimiter=','):
+    """Export a deck as CSV or Anki-compatible TSV text."""
+    if delimiter not in (',', '\t'):
+        raise ValueError('Deck exports support comma or tab delimiters.')
     buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator='\n')
+    writer = csv.writer(buffer, delimiter=delimiter, lineterminator='\n')
     cards = sorted(list(deck.cards), key=lambda card: card.position)
     for card in cards:
         for answer in card.answers:

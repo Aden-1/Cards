@@ -119,7 +119,7 @@ function displayCurrentCard() {
     document.getElementById('progressBar').style.width = progress + '%';
     document.getElementById('progressBar').setAttribute('aria-valuenow', progress);
     document.getElementById('progressText').textContent = Math.round(progress) + '%';
-    document.getElementById('cardQuestion').textContent = currentCard.question;
+    window.cardsApp.renderRichText(document.getElementById('cardQuestion'), currentCard.question);
     hideAnswer();
     document.getElementById('prevBtn').disabled = currentCardIndex === 0;
     const nextBtn = document.getElementById('nextBtn');
@@ -144,7 +144,7 @@ function revealAnswer() {
     currentCard.answers.forEach((answer) => {
         const answerDiv = document.createElement('div');
         answerDiv.className = 'master-answer-item';
-        answerDiv.textContent = answer;
+        window.cardsApp.renderRichText(answerDiv, answer);
         answersDiv.appendChild(answerDiv);
     });
     answerContent.innerHTML = '';

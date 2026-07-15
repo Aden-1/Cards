@@ -49,7 +49,150 @@
     updateThemeButton(theme);
   }
 
+  const mathSymbols = Object.freeze({
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', theta: 'θ', lambda: 'λ',
+    mu: 'μ', pi: 'π', sigma: 'σ', phi: 'φ', omega: 'ω', Delta: 'Δ',
+    Sigma: 'Σ', Omega: 'Ω', times: '×', cdot: '·', pm: '±', le: '≤',
+    ge: '≥', ne: '≠', approx: '≈', infty: '∞', sum: '∑', int: '∫',
+    rightarrow: '→', leftarrow: '←'
+  });
+
+  function groupedMath(source, start) {
+    if (source[start] !== '{') {
+      return { value: source[start] || '', next: Math.min(source.length, start + 1) };
+    }
+    let depth = 1;
+    for (let index = start + 1; index < source.length; index += 1) {
+      if (source[index] === '{') { depth += 1; }
+      if (source[index] === '}') { depth -= 1; }
+      if (depth === 0) {
+        return { value: source.slice(start + 1, index), next: index + 1 };
+      }
+    }
+    return { value: source.slice(start + 1), next: source.length };
+  }
+
+  function appendMath(parent, source) {
+    let index = 0;
+    while (index < source.length) {
+      const character = source[index];
+      if (character === '\\') {
+        const commandMatch = source.slice(index + 1).match(/^[A-Za-z]+/);
+        if (!commandMatch) {
+          parent.append(document.createTextNode(source[index + 1] || '\\'));
+          index += source[index + 1] ? 2 : 1;
+          continue;
+        }
+        const command = commandMatch[0];
+        index += command.length + 1;
+        if (command === 'frac') {
+          const numerator = groupedMath(source, index);
+          const denominator = groupedMath(source, numerator.next);
+          const fraction = document.createElement('span');
+          fraction.className = 'math-fraction';
+          const top = document.createElement('span');
+          top.className = 'math-numerator';
+          appendMath(top, numerator.value);
+          const bottom = document.createElement('span');
+          bottom.className = 'math-denominator';
+          appendMath(bottom, denominator.value);
+          fraction.append(top, bottom);
+          parent.append(fraction);
+          index = denominator.next;
+          continue;
+        }
+        if (command === 'sqrt') {
+          const radicand = groupedMath(source, index);
+          const squareRoot = document.createElement('span');
+          squareRoot.className = 'math-square-root';
+          squareRoot.append(document.createTextNode('√'));
+          const value = document.createElement('span');
+          value.className = 'math-radicand';
+          appendMath(value, radicand.value);
+          squareRoot.append(value);
+          parent.append(squareRoot);
+          index = radicand.next;
+          continue;
+        }
+        parent.append(document.createTextNode(mathSymbols[command] || command));
+        continue;
+      }
+      if (character === '^' || character === '_') {
+        const value = groupedMath(source, index + 1);
+        const script = document.createElement(character === '^' ? 'sup' : 'sub');
+        appendMath(script, value.value);
+        parent.append(script);
+        index = value.next;
+        continue;
+      }
+      if (character === '{' || character === '}') {
+        index += 1;
+        continue;
+      }
+      parent.append(document.createTextNode(character));
+      index += 1;
+    }
+  }
+
+  function richTextFragment(value) {
+    const source = String(value ?? '');
+    const fragment = document.createDocumentFragment();
+    let index = 0;
+    while (index < source.length) {
+      const markers = [
+        { token: '$$', tag: 'math', display: true },
+        { token: '**', tag: 'strong' },
+        { token: '`', tag: 'code' },
+        { token: '$', tag: 'math', display: false },
+        { token: '*', tag: 'em' }
+      ];
+      const marker = markers.find((candidate) => source.startsWith(candidate.token, index));
+      if (marker) {
+        const end = source.indexOf(marker.token, index + marker.token.length);
+        if (end > index + marker.token.length) {
+          const content = source.slice(index + marker.token.length, end);
+          const element = document.createElement(marker.tag === 'math' ? 'span' : marker.tag);
+          if (marker.tag === 'math') {
+            element.className = `math-expression${marker.display ? ' display' : ''}`;
+            element.setAttribute('role', 'math');
+            element.setAttribute('aria-label', content);
+            appendMath(element, content);
+          } else {
+            element.textContent = content;
+          }
+          fragment.append(element);
+          index = end + marker.token.length;
+          continue;
+        }
+      }
+      if (source[index] === '\n') {
+        fragment.append(document.createElement('br'));
+      } else {
+        fragment.append(document.createTextNode(source[index]));
+      }
+      index += 1;
+    }
+    return fragment;
+  }
+
+  function renderRichText(element, value) {
+    if (!element) { return; }
+    element.replaceChildren(richTextFragment(value));
+    element.classList.add('rich-text');
+  }
+
+  function enhanceRichText(container = document) {
+    container.querySelectorAll('[data-rich-text]').forEach((element) => {
+      if (element.dataset.richRendered === 'true') { return; }
+      const value = element.textContent;
+      renderRichText(element, value);
+      element.dataset.richRendered = 'true';
+    });
+  }
+
   window.cardsApp = {
+    enhanceRichText,
+    renderRichText,
     showToast(message, level) {
       const toast = document.createElement('div');
       toast.className = `feedback-message ${level === 'error' ? 'error' : 'success'}`;
@@ -65,6 +208,7 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     updateThemeButton(root.getAttribute('data-theme') || initialTheme);
+    enhanceRichText();
 
     const siteHeader = document.querySelector('.site-header');
     const mobileHeaderQuery = window.matchMedia('(max-width: 820px)');

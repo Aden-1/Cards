@@ -53,9 +53,9 @@
         <div class="public-preview-list stagger">
             {% for card in deck.cards|sort(attribute='position') %}
             <article class="card-editor-item">
-                <div class="card-item-question"><strong>{{ loop.index }}.</strong> {{ card.question }}</div>
+                <div class="card-item-question"><strong>{{ loop.index }}.</strong> <span data-rich-text>{{ card.question }}</span></div>
                 <div class="answer-list mt-3">
-                    {% for answer in card.answers %}<div class="answer-row"><span class="answer-row-text">{{ answer.answer }}</span></div>{% endfor %}
+                    {% for answer in card.answers %}<div class="answer-row"><span class="answer-row-text" data-rich-text>{{ answer.answer }}</span></div>{% endfor %}
                 </div>
             </article>
             {% endfor %}

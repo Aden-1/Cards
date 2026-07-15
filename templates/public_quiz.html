@@ -40,9 +40,9 @@
         <div class="public-preview-list stagger">
             {% for question in quiz.questions %}
             <article class="card-editor-item">
-                <div class="card-item-question"><strong>{{ loop.index }}.</strong> {{ question.question }} <span class="status-chip info">{{ question.type }}</span></div>
+                <div class="card-item-question"><strong>{{ loop.index }}.</strong> <span data-rich-text>{{ question.question }}</span> <span class="status-chip info">{{ question.type }}</span></div>
                 <div class="answer-list mt-3">
-                    {% for option in question.options %}<div class="answer-row"><span class="answer-row-text">{{ option.text }}</span></div>{% endfor %}
+                    {% for option in question.options %}<div class="answer-row"><span class="answer-row-text" data-rich-text>{{ option.text }}</span></div>{% endfor %}
                 </div>
             </article>
             {% endfor %}

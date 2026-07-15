@@ -6,6 +6,8 @@ number of statements on SQLite and PostgreSQL. Quiz-question correlation uses
 ordered RETURNING and is capped at 50 questions.
 """
 
+import csv
+import io
 import os
 import unittest
 
@@ -19,6 +21,7 @@ from models import Card, CardAnswer, Deck, DeckTag, Quiz, QuizOption, QuizQuesti
 from services import (
     copy_public_deck_to_user,
     copy_public_quiz_to_user,
+    export_deck_as_text,
     import_deck,
     parse_import_file,
     parse_imported_deck_text,
@@ -44,6 +47,19 @@ class ImportCopyTests(unittest.TestCase):
             })
             self.assertEqual(parsed['cards'][1]['question'], 'Second question')
         self.assertEqual(parse_imported_deck_text(normalized_text)['cards'], pasted['cards'])
+
+    def test_math_and_formatting_text_round_trip_through_csv_and_anki_tsv(self):
+        question = 'Solve **carefully**: $\\frac{1}{2} + x^2$\nShow work.'
+        answer = '`x` equals $\\sqrt{2}$'
+        for delimiter in (',', '\t'):
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, delimiter=delimiter, lineterminator='\n')
+            writer.writerow([question, answer])
+            parsed, _normalized = parse_import_file(buffer.getvalue().encode('utf-8'))
+            self.assertEqual(parsed['cards'], [{
+                'question': question,
+                'answers': [answer],
+            }])
 
     def setUp(self):
         self.application = create_app({
@@ -109,6 +125,23 @@ class ImportCopyTests(unittest.TestCase):
             [(f'Question {index}', f'Answer {index}') for index in (0, 100, 200, 300, 400)],
         )
         self.assertEqual(DeckTag.query.filter_by(deck_id=deck.deck_id).count(), 1)
+
+    def test_export_supports_csv_and_anki_tsv_without_changing_rich_text(self):
+        deck = Deck(owned_by=self.owner.user_id, description='Rich text export')
+        db.session.add(deck)
+        db.session.commit()
+        question = 'Area is $A = \\pi r^2$'
+        answer = '**Pi** times `r` squared'
+        card = Card(deck_id=deck.deck_id, question=question, position=1)
+        db.session.add(card)
+        db.session.flush()
+        db.session.add(CardAnswer(card_id=card.card_id, answer=answer))
+        db.session.commit()
+
+        for delimiter in (',', '\t'):
+            exported = export_deck_as_text(deck, delimiter=delimiter)
+            rows = list(csv.reader(io.StringIO(exported), delimiter=delimiter))
+            self.assertEqual(rows, [[question, answer]])
 
     def test_public_deck_copy_has_bounded_query_and_write_budget(self):
         source = import_deck(

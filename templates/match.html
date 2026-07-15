@@ -554,14 +554,17 @@ document.addEventListener('DOMContentLoaded', function() {
         questionStack.innerHTML = renderedQuestionIds.map((questionId) => {
             const card = questionMap.get(questionId);
             const remainingCount = card.answer_objects.filter((answer) => !matchedAnswerIds.has(answer.answer_id)).length;
-            return `<div class="match-tile question-tile${selectedQuestionId === questionId ? ' selected' : ''}" data-type="question" data-question-id="${card.card_id}" data-answer-count="${remainingCount}"><div class="tile-content"><div class="tile-label question-label">Question</div><div class="tile-text">${escapeHtml(card.question)}</div></div><div class="answer-count-badge" id="badge-${card.card_id}">${remainingCount}</div></div>`;
+            return `<div class="match-tile question-tile${selectedQuestionId === questionId ? ' selected' : ''}" data-type="question" data-question-id="${card.card_id}" data-answer-count="${remainingCount}"><div class="tile-content"><div class="tile-label question-label">Question</div><div class="tile-text" data-rich-text>${escapeHtml(card.question)}</div></div><div class="answer-count-badge" id="badge-${card.card_id}">${remainingCount}</div></div>`;
         }).join('');
 
         answerStack.innerHTML = renderedAnswerIds.map((answerId) => {
             const answer = answerMap.get(answerId);
             const selectedClass = selectedAnswerId === answerId ? ' selected' : '';
-            return `<div class="match-tile answer-tile${selectedClass}" data-type="answer" data-answer-id="${answer.answer_id}"><div class="tile-content"><div class="tile-label answer-label">Answer</div><div class="tile-text">${escapeHtml(answer.answer)}</div></div></div>`;
+            return `<div class="match-tile answer-tile${selectedClass}" data-type="answer" data-answer-id="${answer.answer_id}"><div class="tile-content"><div class="tile-label answer-label">Answer</div><div class="tile-text" data-rich-text>${escapeHtml(answer.answer)}</div></div></div>`;
         }).join('');
+
+        window.cardsApp.enhanceRichText(questionStack);
+        window.cardsApp.enhanceRichText(answerStack);
 
         bindRenderedTileEvents();
         updateStats();
