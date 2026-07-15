@@ -137,7 +137,12 @@
                     <div><label class="form-label" for="editDeckTags">Tags</label><input class="form-control" type="text" id="editDeckTags" name="tags" value="{{ selected_deck.tags or '' }}"></div>
                     <div class="toolbar-row">
                         <div class="form-check"><input class="form-check-input" type="checkbox" id="editDeckSortable" name="sortable" {% if selected_deck.sortable %}checked{% endif %}><label class="form-check-label" for="editDeckSortable">Keep in order</label></div>
+                        {% if can_manage_sharing %}
                         <div class="form-check"><input class="form-check-input" type="checkbox" id="editDeckPublic" name="is_public" {% if selected_deck.is_public %}checked{% endif %}><label class="form-check-label" for="editDeckPublic">Public</label></div>
+                        {% else %}
+                        <input type="hidden" name="is_public" value="{{ 'yes' if selected_deck.is_public else '' }}">
+                        <span class="small-muted">Visibility: {{ 'public' if selected_deck.is_public else 'private' }}. Only the owner can change it.</span>
+                        {% endif %}
                     </div>
                     <div class="form-actions"><button class="btn-primary-surface" type="submit">Save Deck</button></div>
                 </form>

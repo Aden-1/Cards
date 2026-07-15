@@ -2453,6 +2453,7 @@ def edit_deck_route():
     detailed_description = data.get('detailed_description')
     tags = data.get('tags')
     sortable = _as_bool(data.get('sortable', False))
+    visibility_supplied = 'is_public' in data
     is_public = _as_bool(data.get('is_public', False))
 
     if not deck_id or not description:
@@ -2460,6 +2461,10 @@ def edit_deck_route():
     owned_deck = _owned_deck(deck_id, user_id)
     if not owned_deck:
         return jsonify({'error': 'You can only edit decks you own'}), 403
+    if owned_deck.owned_by != user_id:
+        if visibility_supplied and is_public != bool(owned_deck.is_public):
+            return jsonify({'error': 'Only the deck owner can change visibility'}), 403
+        is_public = bool(owned_deck.is_public)
     try:
         existing_featured = bool(owned_deck.is_featured)
         deck = edit_deck(deck_id, description, sortable, is_public, existing_featured, detailed_description, tags)
@@ -3860,9 +3865,15 @@ def edit_custom_quiz_metadata_route():
     title = data.get('title')
     description = data.get('description')
     tags = data.get('tags')
+    visibility_supplied = 'is_public' in data
     is_public = _as_bool(data.get('is_public', False))
-    if not _owned_quiz(quiz_id, _current_user_id()):
+    owned_quiz = _owned_quiz(quiz_id, _current_user_id())
+    if not owned_quiz:
         return jsonify({'error': 'You can only edit quizzes you own'}), 403
+    if owned_quiz.owned_by != _current_user_id():
+        if visibility_supplied and is_public != bool(owned_quiz.is_public):
+            return jsonify({'error': 'Only the quiz owner can change visibility'}), 403
+        is_public = bool(owned_quiz.is_public)
     try:
         edit_custom_quiz(quiz_id, title, is_public, description, tags)
     except ValueError as exc:

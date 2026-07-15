@@ -473,6 +473,18 @@ class SharingAndUrlTests(CardsTestCase):
         self.assertEqual(editor.status_code, 200)
         self.assertIn(b'Private Shared Quiz', editor.data)
         self.assertNotIn(b'Sharing and co-authors', editor.data)
+        self.assertIn(b'Only the owner can change it.', editor.data)
+        forbidden_publish = self.client.post(
+            '/edit_custom_quiz',
+            data={
+                'quiz_id': quiz_id, 'title': 'Private Shared Quiz',
+                'is_public': 'yes',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assert_json_error(forbidden_publish, 403)
+        with self.app.app_context():
+            self.assertFalse(db.session.get(Quiz, quiz_id).is_public)
         edited = self.client.post(
             '/edit_custom_quiz',
             data={
@@ -506,6 +518,48 @@ class SharingAndUrlTests(CardsTestCase):
                 owned_by=viewer_id, title='Co-authored Quiz (Copy)',
             ).one()
             self.assertFalse(copy.is_public)
+
+    def test_public_collaborator_metadata_edits_preserve_visibility(self):
+        owner_id = self.user_session('public-collaboration-owner')
+        with self.app.app_context():
+            collaborator = create_user('public-collaboration-editor', 'password12345')
+            deck = create_deck(owner_id, 'Public Shared Deck', is_public=True)
+            quiz = Quiz(
+                owned_by=owner_id, title='Public Shared Quiz', is_public=True,
+            )
+            db.session.add(quiz)
+            db.session.flush()
+            db.session.add_all([
+                DeckCollaborator(deck_id=deck.deck_id, user_id=collaborator.user_id),
+                QuizCollaborator(quiz_id=quiz.quiz_id, user_id=collaborator.user_id),
+            ])
+            db.session.commit()
+            collaborator_id = collaborator.user_id
+            deck_id = deck.deck_id
+            quiz_id = quiz.quiz_id
+
+        self._switch_user(collaborator_id)
+        deck_editor = self.client.get(f'/edit?deck_id={deck_id}')
+        quiz_editor = self.client.get(f'/edit_quiz?quiz_id={quiz_id}')
+        self.assertIn(b'name="is_public" value="yes"', deck_editor.data)
+        self.assertIn(b'name="is_public" value="yes"', quiz_editor.data)
+
+        deck_edit = self.client.post(
+            '/edit_deck', data={
+                'deck_id': deck_id, 'description': 'Edited Public Shared Deck',
+            }, headers=self.csrf(),
+        )
+        quiz_edit = self.client.post(
+            '/edit_custom_quiz', data={
+                'quiz_id': quiz_id, 'title': 'Edited Public Shared Quiz',
+                'is_public': 'yes',
+            }, headers=self.csrf(),
+        )
+        self.assertEqual(deck_edit.status_code, 302)
+        self.assertEqual(quiz_edit.status_code, 302)
+        with self.app.app_context():
+            self.assertTrue(db.session.get(Deck, deck_id).is_public)
+            self.assertTrue(db.session.get(Quiz, quiz_id).is_public)
 
     def test_quiz_favorites_ratings_reports_and_moderation(self):
         owner_id = self.user_session('quiz-community-owner')
@@ -599,6 +653,19 @@ class SharingAndUrlTests(CardsTestCase):
         with self.app.app_context():
             db.session.add(DeckCollaborator(deck_id=deck_id, user_id=coauthor_id))
             db.session.commit()
+        editor = self.client.get(f'/edit?deck_id={deck_id}')
+        self.assertIn(b'Only the owner can change it.', editor.data)
+        forbidden_publish = self.client.post(
+            '/edit_deck',
+            data={
+                'deck_id': deck_id, 'description': 'Private Collaboration Deck',
+                'is_public': 'yes',
+            },
+            headers={**self.csrf(), 'Accept': 'application/json'},
+        )
+        self.assert_json_error(forbidden_publish, 403)
+        with self.app.app_context():
+            self.assertFalse(db.session.get(Deck, deck_id).is_public)
         response = self.client.post(
             '/add_card', data={'deck_id': deck_id, 'question': 'Coauthor question', 'answers': 'Answer'}, headers=self.csrf()
         )

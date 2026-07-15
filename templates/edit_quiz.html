@@ -69,7 +69,11 @@
                     <div><label class="form-label" for="editQuizTitle">Title</label><input class="form-control" type="text" id="editQuizTitle" name="title" value="{{ selected_quiz.title }}" required placeholder="e.g., SAT Grammar Lightning Check"></div>
                     <div><label class="form-label" for="editQuizDescription">Description</label><textarea class="form-control" id="editQuizDescription" name="description" rows="2" placeholder="Describe the topic, difficulty, or goal of this quiz.">{{ selected_quiz.description or '' }}</textarea></div>
                     <div><label class="form-label" for="editQuizTags">Tags</label><input class="form-control" type="text" id="editQuizTags" name="tags" value="{{ selected_quiz.tags or '' }}" placeholder="e.g., SAT, grammar, punctuation"></div>
-                    <div class="toolbar-row"><div class="form-check"><input class="form-check-input" type="checkbox" id="editQuizPublic" name="is_public" {% if selected_quiz.is_public %}checked{% endif %}><label class="form-check-label" for="editQuizPublic">Public</label></div><button class="btn-primary-surface" type="submit">Save</button></div>
+                    <div class="toolbar-row">
+                        {% if can_manage_quiz_sharing %}<div class="form-check"><input class="form-check-input" type="checkbox" id="editQuizPublic" name="is_public" {% if selected_quiz.is_public %}checked{% endif %}><label class="form-check-label" for="editQuizPublic">Public</label></div>
+                        {% else %}<input type="hidden" name="is_public" value="{{ 'yes' if selected_quiz.is_public else '' }}"><span class="small-muted">Visibility: {{ 'public' if selected_quiz.is_public else 'private' }}. Only the owner can change it.</span>{% endif %}
+                        <button class="btn-primary-surface" type="submit">Save</button>
+                    </div>
                 </form>
             </article>
             <article class="editor-card">
