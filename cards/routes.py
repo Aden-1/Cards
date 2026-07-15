@@ -153,7 +153,10 @@ def _parse_quiz_question_options(data, q_type, answer_mode='choice'):
     correct_count = 0
 
     for index in range(1, 6):
-        option_text = data.get(f'option_{index}', '').strip()
+        raw_option_text = data.get(f'option_{index}', '')
+        if not isinstance(raw_option_text, str):
+            raise ValueError('Quiz options must be text.')
+        option_text = raw_option_text.strip()
         if not option_text:
             continue
 
@@ -2204,7 +2207,11 @@ def report_deck_route():
 
 def creator_profile_route(username):
     from models import Deck, Quiz, User
-    creator = User.query.filter_by(canonical_username=canonical_username(username), is_active=True).first_or_404()
+    try:
+        normalized_username = canonical_username(username)
+    except ValueError:
+        abort(404)
+    creator = User.query.filter_by(canonical_username=normalized_username, is_active=True).first_or_404()
     decks = Deck.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Deck.deck_id.desc()).all()
     quizzes = Quiz.query.filter_by(owned_by=creator.user_id, is_public=True).order_by(Quiz.quiz_id.desc()).all()
     return render_template('creator_profile.html', creator=creator, decks=decks, quizzes=quizzes)
@@ -2367,10 +2374,13 @@ def add_deck_collaborator_route():
 
     data = _request_data()
     deck_id = _int_value(data.get('deck_id'))
-    username = canonical_username(data.get('username'))
-    collaborator = User.query.filter_by(canonical_username=username).first() if username else None
     if not _is_deck_owner(deck_id, _current_user_id()):
         return jsonify({'error': 'Only the deck owner can manage collaborators.'}), 403
+    try:
+        username = canonical_username(data.get('username'))
+    except ValueError:
+        username = None
+    collaborator = User.query.filter_by(canonical_username=username).first() if username else None
     if not collaborator or collaborator.user_id == _current_user_id() or not collaborator.is_active:
         return _redirect_with_fragment('edit', deck_id=deck_id, fragment='sharing', notice='Active user not found.', level='error')
     if not db.session.get(DeckCollaborator, (deck_id, collaborator.user_id)):
@@ -2590,7 +2600,15 @@ def add_quiz_question_route():
     answer_mode = data.get('answer_mode', 'choice')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    try:
+        options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    except ValueError as exc:
+        if _wants_json():
+            return jsonify({'error': str(exc)}), 400
+        return _redirect_with_fragment(
+            'edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id,
+            notice=str(exc), level='error',
+        )
     validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count, answer_mode)
     if validation_error:
         return validation_error
@@ -2639,7 +2657,15 @@ def edit_quiz_question_route():
     answer_mode = data.get('answer_mode', 'choice')
     q_type = data.get('q_type', 'dynamic')
     
-    options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    try:
+        options_data, correct_count = _parse_quiz_question_options(data, q_type, answer_mode)
+    except ValueError as exc:
+        if _wants_json():
+            return jsonify({'error': str(exc)}), 400
+        return _redirect_with_fragment(
+            'edit_quiz_route', fragment='quiz-editor', quiz_id=quiz_id,
+            notice=str(exc), level='error',
+        )
     validation_error = _validate_quiz_question_option_count(quiz_id, q_type, options_data, correct_count, answer_mode)
     if validation_error:
         return validation_error

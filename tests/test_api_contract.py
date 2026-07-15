@@ -1,5 +1,6 @@
 """Focused JSON/API contract tests, independent of the browser readiness suite."""
 
+from services import create_custom_quiz
 from tests.support import CardsTestCase
 
 
@@ -37,6 +38,37 @@ class ApiContractTests(CardsTestCase):
         self.assertIn('card_id', card_response.get_json())
         self.assertEqual(card_response.get_json()['success'], True)
         self.assertIsNotNone(user_id)
+
+    def test_non_text_card_answers_and_quiz_options_are_client_errors(self):
+        user_id = self.user_session('input-contract-user')
+        create_response = self.client.post(
+            '/create_deck', json={'description': 'Input validation deck'}, headers=self.csrf(),
+        )
+        deck_id = create_response.get_json()['deck_id']
+
+        card_response = self.client.post(
+            '/add_card',
+            json={'deck_id': deck_id, 'question': 'Question', 'answers': [42]},
+            headers=self.csrf(),
+        )
+        self.assert_json_error(card_response, 400)
+        self.assertIn('text', card_response.get_json()['error'].lower())
+
+        with self.app.app_context():
+            quiz = create_custom_quiz(user_id, 'Input validation quiz')
+            quiz_id = quiz.quiz_id
+        quiz_response = self.client.post(
+            '/add_quiz_question',
+            json={
+                'quiz_id': quiz_id,
+                'question': 'Question',
+                'q_type': 'dynamic',
+                'option_1': 42,
+            },
+            headers=self.csrf(),
+        )
+        self.assert_json_error(quiz_response, 400)
+        self.assertIn('text', quiz_response.get_json()['error'].lower())
 
     def test_malformed_json_is_not_reinterpreted_as_form_data(self):
         self.user_session()
@@ -129,4 +161,3 @@ if __name__ == '__main__':
     import unittest
 
     unittest.main()
-

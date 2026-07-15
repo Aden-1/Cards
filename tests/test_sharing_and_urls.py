@@ -6,6 +6,23 @@ from tests.support import CardsTestCase
 
 
 class SharingAndUrlTests(CardsTestCase):
+    def test_invalid_creator_and_collaborator_usernames_do_not_raise_server_errors(self):
+        response = self.client.get(f"/creators/{'x' * 41}")
+        self.assertEqual(response.status_code, 404)
+
+        owner_id = self.user_session('validation-owner')
+        with self.app.app_context():
+            deck = create_deck(owner_id, 'Validation Deck')
+            deck_id = deck.deck_id
+        response = self.client.post(
+            '/decks/collaborators',
+            data={'deck_id': deck_id, 'username': 'x' * 41},
+            headers=self.csrf(),
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('Active+user+not+found', response.headers['Location'])
+
     def test_homepage_handles_featured_deck_summary_urls(self):
         owner_id = self.user_session('featured-url-owner')
         with self.app.app_context():

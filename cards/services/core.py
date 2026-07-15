@@ -182,7 +182,17 @@ def _normalize_answers(answers):
         return []
     if isinstance(answers, str):
         answers = [part.strip() for part in answers.split(',')]
-    return [answer.strip() for answer in answers if str(answer).strip()]
+    elif not isinstance(answers, (list, tuple)):
+        raise ValueError('Answers must be supplied as text.')
+
+    normalized = []
+    for answer in answers:
+        if not isinstance(answer, str):
+            raise ValueError('Each answer must be text.')
+        answer = answer.strip()
+        if answer:
+            normalized.append(answer)
+    return normalized
 
 
 def _serialize_card(card, detailed=False):
