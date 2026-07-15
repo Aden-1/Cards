@@ -208,6 +208,33 @@
   };
 
   document.addEventListener('DOMContentLoaded', function () {
+    const tokenExchange = document.querySelector('[data-token-exchange]');
+    if (tokenExchange) {
+      const fragment = new URLSearchParams(window.location.hash.slice(1));
+      const exchangeToken = fragment.get('token');
+      if (exchangeToken) {
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + window.location.search
+        );
+        fetch(window.location.pathname, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': window.cardsCsrfToken
+          },
+          body: JSON.stringify({ exchange_token: exchangeToken })
+        }).then(function (response) {
+          return response.json();
+        }).then(function (result) {
+          window.location.replace(result.redirect_url || window.location.pathname);
+        }).catch(function () {
+          tokenExchange.textContent = 'This secure link could not be opened. Please request a new one.';
+        });
+      }
+    }
+
     updateThemeButton(root.getAttribute('data-theme') || initialTheme);
     enhanceRichText();
 

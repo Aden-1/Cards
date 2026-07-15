@@ -289,7 +289,23 @@ def _recovery_target_key():
 
 
 def _reset_target_key():
-    return _target_key('token', 'password-reset')
+    data = _request_data()
+    token = (
+        data.get('exchange_token') or data.get('token')
+        or session.get('password_reset_token')
+    )
+    if not token:
+        return f'target:password-reset:missing:{_client_ip_key()}'
+    digest = hashlib.sha256(str(token).encode('utf-8')).hexdigest()
+    return f'target:password-reset:{digest}'
+
+
+def _verification_target_key():
+    token = _request_data().get('exchange_token')
+    if not token:
+        return f'target:email-verification:missing:{_client_ip_key()}'
+    digest = hashlib.sha256(str(token).encode('utf-8')).hexdigest()
+    return f'target:email-verification:{digest}'
 
 
 def _configured_limit(policy_name):
@@ -384,6 +400,8 @@ def _set_security_headers(response):
         "connect-src 'self'"
     )
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    if request.endpoint in {'reset_password', 'verify_email'}:
+        response.headers['Referrer-Policy'] = 'no-referrer'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Permissions-Policy'] = 'camera=(), geolocation=(), microphone=()'
@@ -510,6 +528,7 @@ def _page_needs_csrf_token(user=None):
         'register',
         'forgot_password',
         'reset_password',
+        'verify_email',
         'match',
         'reorder',
         'quiz',
@@ -920,11 +939,34 @@ def resend_two_factor_code():
 
 def verify_email():
     from services import verify_email_with_token
-    user = verify_email_with_token((request.args.get('token') or '').strip())
-    if not user:
-        return render_template('email_verification.html', verified=False), 400
-    audit_event('email_verified', user, 'success', target_type='user', target_id=user.user_id)
-    return render_template('email_verification.html', verified=True)
+
+    legacy_token = (request.args.get('token') or '').strip()
+    if request.method == 'GET' and legacy_token:
+        user = verify_email_with_token(legacy_token)
+        session['email_verification_result'] = bool(user)
+        if user:
+            audit_event(
+                'email_verified', user, 'success',
+                target_type='user', target_id=user.user_id,
+            )
+        return redirect(url_for('verify_email'))
+
+    if request.method == 'POST':
+        token = (_request_data().get('exchange_token') or '').strip()
+        user = verify_email_with_token(token)
+        session['email_verification_result'] = bool(user)
+        if user:
+            audit_event(
+                'email_verified', user, 'success',
+                target_type='user', target_id=user.user_id,
+            )
+        return jsonify({
+            'success': bool(user),
+            'redirect_url': url_for('verify_email'),
+        })
+
+    verified = session.pop('email_verification_result', None)
+    return render_template('email_verification.html', verified=verified)
 
 
 def forgot_password():
@@ -973,43 +1015,71 @@ def forgot_password():
 def reset_password():
     from services import get_user_by_password_reset_token, reset_user_password_with_token
 
-    token = (request.args.get('token') if request.method == 'GET' else _request_data().get('token') or '').strip()
+    legacy_token = (request.args.get('token') or '').strip()
+    if request.method == 'GET' and legacy_token:
+        session.pop('password_reset_token', None)
+        if get_user_by_password_reset_token(legacy_token):
+            session['password_reset_token'] = legacy_token
+        session['password_reset_exchange_attempted'] = True
+        return redirect(url_for('reset_password'))
+
+    data = _request_data() if request.method == 'POST' else {}
+    if request.method == 'POST' and 'exchange_token' in data:
+        exchanged_token = (data.get('exchange_token') or '').strip()
+        exchanged_user = get_user_by_password_reset_token(exchanged_token)
+        session.pop('password_reset_token', None)
+        if exchanged_user:
+            session['password_reset_token'] = exchanged_token
+        session['password_reset_exchange_attempted'] = True
+        return jsonify({
+            'success': bool(exchanged_user),
+            'redirect_url': url_for('reset_password'),
+        })
+
+    token = (
+        data.get('token') or session.get('password_reset_token') or ''
+    ).strip()
     user = get_user_by_password_reset_token(token)
     if request.method == 'GET':
-        return render_template('reset_password.html', token=token, token_valid=bool(user))
+        attempted = session.pop('password_reset_exchange_attempted', False)
+        if token and not user:
+            session.pop('password_reset_token', None)
+        token_valid = bool(user) if token or attempted else None
+        return render_template(
+            'reset_password.html', token_valid=token_valid,
+        )
 
-    password = _request_data().get('password') or ''
-    confirm_password = _request_data().get('confirm_password') or ''
+    password = data.get('password') or ''
+    confirm_password = data.get('confirm_password') or ''
     if not user:
+        session.pop('password_reset_token', None)
         return render_template(
             'reset_password.html',
-            token=token,
             token_valid=False,
             error='This password reset link is invalid or has expired.',
         ), 400
     if not _valid_password(password):
         return render_template(
             'reset_password.html',
-            token=token,
             token_valid=True,
             error=_password_requirements_message('Passwords'),
         ), 400
     if password != confirm_password:
         return render_template(
             'reset_password.html',
-            token=token,
             token_valid=True,
             error='Passwords do not match.',
         ), 400
 
     reset_user_id = reset_user_password_with_token(token, password)
     if not reset_user_id:
+        session.pop('password_reset_token', None)
         return render_template(
             'reset_password.html',
-            token=token,
             token_valid=False,
             error='This password reset link is invalid or has expired.',
         ), 400
+    session.pop('password_reset_token', None)
     current_app.logger.info('password_reset_completed user_id=%s', reset_user_id)
     return redirect(url_for('login', notice='Password updated. You can log in now.', level='success'))
 
@@ -4082,7 +4152,13 @@ def register_routes(app, app_limiter=None):
     app.add_url_rule('/api/v1/decks/<int:deck_id>', endpoint='api_v1_deck_detail', view_func=_limit(api_v1_deck_detail_route, 'api', ['GET']), methods=['GET'])
     app.add_url_rule('/api/v1/quizzes', endpoint='api_v1_quizzes', view_func=_limit(api_v1_quizzes_route, 'api', ['GET']), methods=['GET'])
     app.add_url_rule('/api/v1/quizzes/<int:quiz_id>', endpoint='api_v1_quiz_detail', view_func=_limit(api_v1_quiz_detail_route, 'api', ['GET']), methods=['GET'])
-    app.add_url_rule('/verify-email', endpoint='verify_email', view_func=verify_email, methods=['GET'])
+    app.add_url_rule(
+        '/verify-email', endpoint='verify_email',
+        view_func=_anonymous_sensitive_limit(
+            verify_email, 'reset_password', ['POST'], _verification_target_key,
+        ),
+        methods=['GET', 'POST'],
+    )
     app.add_url_rule('/register', endpoint='register', view_func=_anonymous_sensitive_limit(register, 'register', ['POST'], _registration_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/login', endpoint='login', view_func=_anonymous_sensitive_limit(login, 'login', ['POST'], _login_target_key), methods=['GET', 'POST'])
     app.add_url_rule('/two-factor', endpoint='two_factor_challenge', view_func=_anonymous_sensitive_limit(two_factor_challenge, 'two_factor', ['POST'], _two_factor_target_key), methods=['GET', 'POST'])

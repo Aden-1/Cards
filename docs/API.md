@@ -132,12 +132,13 @@ Response:
 **GET, POST** `/reset-password`
 
 Fields:
-- `token`
+- `exchange_token` for the one-time fragment exchange used by emailed links
+- `token` remains accepted for non-browser API clients
 - `password`
 - `confirm_password`
 
 Response:
-- `GET`: rendered HTML page for a signed reset token.
+- `GET`: rendered HTML page using a reset token previously exchanged into the HttpOnly session.
 - `POST`: redirect to `/login` on success, or rendered HTML with validation errors on failure.
 
 ### Logout

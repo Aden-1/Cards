@@ -1236,7 +1236,7 @@ def reset_user_password_with_token(token, password, max_age_seconds=None):
 def build_password_reset_url(token):
     configured_base = current_app.config.get('PASSWORD_RESET_URL_BASE')
     if configured_base:
-        return f"{configured_base.rstrip('/')}?token={token}"
+        return f"{configured_base.rstrip('/')}#token={token}"
     return None
 
 
@@ -1328,7 +1328,7 @@ def verify_email_with_token(token):
 
 def build_email_verification_url(token):
     configured_base = current_app.config.get('EMAIL_VERIFICATION_URL_BASE')
-    return f"{configured_base.rstrip('/')}?token={token}" if configured_base else None
+    return f"{configured_base.rstrip('/')}#token={token}" if configured_base else None
 
 
 def send_email_verification_email(user, verification_url):

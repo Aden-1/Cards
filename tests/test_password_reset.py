@@ -39,14 +39,33 @@ class PasswordResetTests(ProductionTestCase):
             self.assertEqual(sent_urls, [])
             jobs.deliver_password_reset_email(*queued_jobs[0])
             self.assertEqual(len(sent_urls), 1)
-            token = sent_urls[0].split("token=", 1)[1]
+            self.assertNotIn("?token=", sent_urls[0])
+            token = sent_urls[0].split("#token=", 1)[1]
 
             self._csrf()
+            landing = self.client.get("/reset-password")
+            self.assertEqual(landing.headers["Referrer-Policy"], "no-referrer")
+            self.assertIn(b'data-token-exchange="reset-password"', landing.data)
+            self.assertNotIn(token.encode(), landing.data)
+            exchange = self.client.post(
+                "/reset-password",
+                json={"exchange_token": token},
+                headers={
+                    "X-CSRFToken": "csrf-test-token",
+                    "Accept": "application/json",
+                },
+            )
+            self.assertEqual(exchange.status_code, 200)
+            self.assertTrue(exchange.get_json()["success"])
+            clean_page = self.client.get("/reset-password")
+            self.assertIn(b'Create New Password', clean_page.data)
+            self.assertNotIn(b'name="token"', clean_page.data)
+            self.assertNotIn(token.encode(), clean_page.data)
+
             reset_response = self.client.post(
                 "/reset-password",
                 data={
                     "csrf_token": "csrf-test-token",
-                    "token": token,
                     "password": "newpassword123",
                     "confirm_password": "newpassword123",
                 },

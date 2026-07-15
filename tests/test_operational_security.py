@@ -12,6 +12,7 @@ from services import (
     create_user,
     enable_email_two_factor,
     generate_email_verification_token,
+    build_email_verification_url,
     issue_email_two_factor_code,
     regenerate_two_factor_recovery_codes,
     verify_email_two_factor_code,
@@ -38,6 +39,41 @@ class OperationalSecurityTests(CardsTestCase):
             verified = verify_email_with_token(token)
             self.assertEqual(verified.user_id, user.user_id)
             self.assertIsNotNone(verified.email_verified_at)
+
+    def test_email_verification_uses_fragment_exchange_and_clean_url(self):
+        self.app.config['EMAIL_VERIFICATION_URL_BASE'] = (
+            'https://cards.example.test/verify-email'
+        )
+        with self.app.app_context():
+            user = self._user('verification_exchange_user')
+            token = generate_email_verification_token(user)
+            verification_url = build_email_verification_url(token)
+            user_id = user.user_id
+
+        self.assertIn('#token=', verification_url)
+        self.assertNotIn('?token=', verification_url)
+        with self.client.session_transaction() as current_session:
+            current_session['csrf_token'] = 'contract-csrf-token'
+        landing = self.client.get('/verify-email')
+        self.assertEqual(landing.headers['Referrer-Policy'], 'no-referrer')
+        self.assertIn(b'data-token-exchange="verify-email"', landing.data)
+        self.assertNotIn(token.encode(), landing.data)
+
+        exchanged = self.client.post(
+            '/verify-email',
+            json={'exchange_token': token},
+            headers={
+                **self.csrf(),
+                'Accept': 'application/json',
+            },
+        )
+        self.assertEqual(exchanged.status_code, 200)
+        self.assertTrue(exchanged.get_json()['success'])
+        completed = self.client.get('/verify-email')
+        self.assertIn(b'Your email is verified', completed.data)
+        self.assertNotIn(token.encode(), completed.data)
+        with self.app.app_context():
+            self.assertIsNotNone(db.session.get(User, user_id).email_verified_at)
 
     def test_email_and_totp_two_factor_codes_work(self):
         with self.app.app_context():
