@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -53,21 +54,6 @@ class MigrationPortabilityTests(unittest.TestCase):
             'Run this revision online with flask db upgrade against the populated PostgreSQL database.',
             output,
         )
-
-        downgrade = _run_flask(
-            'postgresql+psycopg://offline:offline@127.0.0.1:1/cards',
-            'db', 'downgrade', 'head:base', '--sql',
-        )
-        self.assertEqual(downgrade.returncode, 0, downgrade.stdout + downgrade.stderr)
-        self.assertNotIn('NoInspectionAvailable', downgrade.stdout + downgrade.stderr)
-
-    def test_postgresql_offline_guards_cover_populated_unsafe_sources(self):
-        result = _run_flask(
-            'postgresql+psycopg://offline:offline@127.0.0.1:1/cards',
-            'db', 'upgrade', '--sql',
-        )
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 0, output)
         for table, purpose in (
             ('deck', 'normalized deck-tag backfill'),
             ('"user"', 'recovery-email HMAC backfill'),
@@ -76,6 +62,13 @@ class MigrationPortabilityTests(unittest.TestCase):
         ):
             self.assertIn(f'IF EXISTS (SELECT 1 FROM {table} LIMIT 1)', output)
             self.assertIn(f'MESSAGE = \'Offline migration aborted: {purpose}', output)
+
+        downgrade = _run_flask(
+            'postgresql+psycopg://offline:offline@127.0.0.1:1/cards',
+            'db', 'downgrade', 'head:base', '--sql',
+        )
+        self.assertEqual(downgrade.returncode, 0, downgrade.stdout + downgrade.stderr)
+        self.assertNotIn('NoInspectionAvailable', downgrade.stdout + downgrade.stderr)
 
     def test_sqlite_upgrade_downgrade_and_reupgrade(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -88,6 +81,55 @@ class MigrationPortabilityTests(unittest.TestCase):
             ):
                 result = _run_flask(database_url, *arguments)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_development_sqlite_database_is_migrated_and_repaired_on_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / 'cards.db'
+            environment = os.environ.copy()
+            environment.update({
+                'APP_ENV': 'development',
+                'SECRET_KEY': 'test-only-secret-key',
+                'DATABASE_URL': f'sqlite:///{database_path.as_posix()}',
+            })
+
+            for _ in range(2):
+                subprocess.run(
+                    [sys.executable, '-c', 'import app'],
+                    cwd=ROOT,
+                    env=environment,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+            connection = sqlite3.connect(database_path)
+            try:
+                connection.execute('DROP TABLE deck')
+                connection.commit()
+            finally:
+                connection.close()
+
+            subprocess.run(
+                [sys.executable, '-c', 'import app'],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            connection = sqlite3.connect(database_path)
+            try:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            finally:
+                connection.close()
+            self.assertIn('deck', tables)
+            self.assertIn('alembic_version', tables)
 
 
 if __name__ == '__main__':

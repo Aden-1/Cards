@@ -11,11 +11,14 @@ import app as cards_app
 from models import db
 
 
-class DatabaseSmokeTests(unittest.TestCase):
+class PostgresSmokeTests(unittest.TestCase):
     def setUp(self):
         cards_app.app.config.update(TESTING=True)
         self.context = cards_app.app.app_context()
         self.context.push()
+        if db.engine.dialect.name != 'postgresql':
+            self.context.pop()
+            raise unittest.SkipTest('PostgreSQL smoke coverage runs only against PostgreSQL.')
         db.create_all()
 
     def tearDown(self):
