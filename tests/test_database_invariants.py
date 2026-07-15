@@ -14,6 +14,7 @@ from services import (
     add_card,
     copy_public_deck_to_user,
     create_user,
+    delete_answer,
     delete_card,
     move_card_in_deck,
     reorder_cards_in_deck,
@@ -118,6 +119,21 @@ class DatabaseInvariantTests(CardsTestCase):
         positions = [position for (position,) in db.session.query(Card.position).filter_by(deck_id=deck_id).order_by(Card.position)]
         self.assertEqual(positions, [1, 2])
         self.assertEqual(len(positions), len(set(positions)))
+
+    def test_deleting_a_final_answer_renumbers_the_remaining_cards(self):
+        user = create_user('answer-delete-owner', 'password12345')
+        deck = Deck(owned_by=user.user_id, description='Answer delete deck', sortable=True)
+        db.session.add(deck)
+        db.session.commit()
+        cards = [add_card(deck.deck_id, f'Question {index}', [f'Answer {index}']) for index in range(3)]
+        middle_answer_id = cards[1].answers[0].answer_id
+
+        result = delete_answer(middle_answer_id)
+
+        self.assertTrue(result['card_deleted'])
+        remaining = Card.query.filter_by(deck_id=deck.deck_id).order_by(Card.position).all()
+        self.assertEqual([card.card_id for card in remaining], [cards[0].card_id, cards[2].card_id])
+        self.assertEqual([card.position for card in remaining], [1, 2])
 
     def test_concurrent_card_inserts_retry_without_duplicate_positions(self):
         with TemporaryDirectory() as directory:

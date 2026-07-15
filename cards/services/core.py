@@ -2238,15 +2238,20 @@ def delete_answer(answer_id):
     card = answer.card
     deck_id = card.deck_id if card else None
     card_id = card.card_id if card else None
+    if deck_id:
+        _locked_deck(deck_id)
 
-    db.session.delete(answer)
-    db.session.flush()
-
-    card_deleted = False
-    remaining_answers = CardAnswer.query.filter_by(card_id=card_id).count() if card_id else 0
-    if card and remaining_answers == 0:
+    answer_count = CardAnswer.query.filter_by(card_id=card_id).count() if card_id else 0
+    card_deleted = bool(card and answer_count <= 1)
+    if card_deleted:
         db.session.delete(card)
-        card_deleted = True
+        db.session.flush()
+        _renumber_deck_cards(deck_id)
+        remaining_answers = 0
+    else:
+        db.session.delete(answer)
+        db.session.flush()
+        remaining_answers = max(0, answer_count - 1)
 
     db.session.commit()
     return {'answer_deleted': True, 'card_deleted': card_deleted, 'card_id': card_id, 'deck_id': deck_id}
