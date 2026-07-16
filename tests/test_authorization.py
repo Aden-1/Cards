@@ -18,6 +18,25 @@ class AuthorizationTests(CardsTestCase):
             )
         return user_id
 
+    def test_account_menu_separates_privileged_actions_from_user_actions(self):
+        self._session_for('menu-admin', 'admin')
+
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+
+        divider = page.index('account-admin-divider')
+        admin_users = page.index('Admin Users')
+        moderation_reports = page.index('Moderation Reports')
+        logout_divider = page.index('<hr class="dropdown-divider">', moderation_reports)
+        logout = page.index('Log Out')
+
+        self.assertLess(page.index('Dark Mode'), divider)
+        self.assertLess(divider, admin_users)
+        self.assertLess(admin_users, moderation_reports)
+        self.assertLess(moderation_reports, logout_divider)
+        self.assertLess(logout_divider, logout)
+
     def test_moderator_can_only_unpublish_public_content(self):
         with self.app.app_context():
             owner = create_user('owner', 'password12345')
