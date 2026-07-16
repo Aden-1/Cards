@@ -565,6 +565,8 @@ class SharingAndUrlTests(CardsTestCase):
         for text in expected_copy:
             self.assertIn(text, page)
 
+        self.assertEqual(page.count('home-hero-title'), 1)
+        self.assertEqual(page.count('home-section-title'), 3)
         self.assertLess(page.index('Popular Topics'), page.index('Learning Modes'))
         self.assertLess(page.index('Learning Modes'), page.index('Study Mode'))
         self.assertNotIn('A redesigned learning hub', page)

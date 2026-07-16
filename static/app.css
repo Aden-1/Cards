@@ -434,6 +434,17 @@ summary.btn-summary.primary {
   font-size: clamp(1.9rem, 3vw, 3rem);
 }
 
+.display-title.home-hero-title {
+  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  line-height: 1.08;
+}
+
+.page-title.home-section-title {
+  font-size: clamp(1.35rem, 2vw, 1.65rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
 .lead-copy,
 .page-description,
 .muted-copy {
