@@ -445,8 +445,9 @@ summary.btn-summary.primary {
   letter-spacing: -0.02em;
 }
 
-.info-panel .home-section-title {
-  margin-top: 0.75rem;
+.home-discovery-panels {
+  display: grid;
+  gap: 1rem;
 }
 
 .lead-copy,
