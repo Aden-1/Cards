@@ -435,7 +435,7 @@ summary.btn-summary.primary {
 }
 
 .display-title.home-hero-title {
-  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  font-size: clamp(2.2rem, 4vw, 3.4rem);
   line-height: 1.08;
 }
 
