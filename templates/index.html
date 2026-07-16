@@ -6,23 +6,21 @@
 {% block content %}
 <section class="hero-layout fade-in">
     <article class="hero-panel">
-        <span class="page-kicker">Discovery Engine</span>
-        <h1 class="display-title">Make <span class="glow-text">great decks</span> effortless to discover.</h1>
-        <p class="lead-copy">A redesigned learning hub for building decks, finding public study sets, and jumping into the right mode without friction.</p>
+        <h1 class="display-title">Create, discover, and <span class="glow-text">master</span> flashcard decks.</h1>
         <form class="hero-search home-search" action="{{ url_for('search') }}" method="get">
-            <input id="homeSearchInput" class="form-control form-control-lg" data-random-placeholder="search" type="search" name="q" placeholder="Search public decks and quizzes">
-            <button class="btn-primary-surface home-cta" type="submit">Search Library</button>
+            <input id="homeSearchInput" class="form-control form-control-lg" data-random-placeholder="search" type="search" name="q" placeholder="Search decks, quizzes, or topics">
+            <button class="btn-primary-surface home-cta" type="submit">Search</button>
         </form>
         <div class="metrics-grid stagger">
-            <div class="metric-card"><span class="metric-value">Adaptive</span><span class="metric-label">Study, game, quiz, and mastery flows</span></div>
-            <div class="metric-card"><span class="metric-value">Public</span><span class="metric-label">Searchable decks and custom quizzes</span></div>
-            <div class="metric-card"><span class="metric-value">Fast</span><span class="metric-label">Low-friction creation and instant practice</span></div>
+            <div class="metric-card"><span class="metric-value">Create</span><span class="metric-label">Build and organize your own study decks</span></div>
+            <div class="metric-card"><span class="metric-value">Discover</span><span class="metric-label">Find public decks and quizzes by topic</span></div>
+            <div class="metric-card"><span class="metric-value">Practice</span><span class="metric-label">Study, play, quiz, and track your progress</span></div>
         </div>
     </article>
     <aside class="info-panel stagger">
         <div>
-            <span class="page-kicker">Top Categories</span>
-            <h2 class="page-title">Jump into the mode that fits the moment.</h2>
+            <span class="page-kicker">Popular Topics</span>
+            <h2 class="page-title">Find a deck by subject.</h2>
         </div>
         <div class="card-rail">
             {% if featured_tags %}
@@ -33,7 +31,10 @@
                 <a class="tag-chip" href="{{ url_for('search') }}">Browse public decks</a>
             {% endif %}
         </div>
-        <p class="muted-copy mb-0">These are the most commonly used tags across public decks.</p>
+        <div>
+            <span class="page-kicker">Learning Modes</span>
+            <h2 class="page-title">Choose how you want to practice.</h2>
+        </div>
         <div class="hero-actions">
             <a class="btn-primary-surface home-cta" href="{{ url_for('edit') if current_user else url_for('register') }}">Manage Decks</a>
             <a class="btn-surface home-cta" href="{{ url_for('view') }}">Study Mode</a>
@@ -48,10 +49,10 @@
     <div class="panel-header">
         <div>
             <span class="page-kicker">Featured Decks</span>
-            <h2 class="page-title">Live public decks worth exploring.</h2>
-            <p class="muted-copy mb-0">A rotating set of public decks pulled from the current library.</p>
+            <h2 class="page-title">Explore decks from the community.</h2>
+            <p class="muted-copy mb-0">Find something interesting and start studying.</p>
         </div>
-        <a class="btn-surface" href="{{ url_for('search') }}">Search all public decks</a>
+        <a class="btn-surface" href="{{ url_for('search') }}">Browse All Decks</a>
     </div>
     <div class="deck-grid stagger mt-4" id="featuredDecks">
         {% if featured_decks %}
@@ -60,9 +61,8 @@
             {% endfor %}
         {% else %}
             <article class="deck-card">
-                <span class="status-chip warning">Unavailable</span>
-                <h3 class="h4 mb-0">No featured decks right now</h3>
-                <p class="muted-copy mb-0">Try the search page to browse the full public library.</p>
+                <h3 class="h4 mb-0">No featured decks yet</h3>
+                <p class="muted-copy mb-0">Browse the public library to find a deck.</p>
             </article>
         {% endif %}
     </div>

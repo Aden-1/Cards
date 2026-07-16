@@ -547,6 +547,29 @@ class SharingAndUrlTests(CardsTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'/decks/featured-url-deck-', response.data)
 
+        page = response.get_data(as_text=True)
+        expected_copy = (
+            'Create, discover, and',
+            'master</span> flashcard decks.',
+            'Build and organize your own study decks',
+            'Find public decks and quizzes by topic',
+            'Study, play, quiz, and track your progress',
+            'Popular Topics',
+            'Find a deck by subject.',
+            'Learning Modes',
+            'Choose how you want to practice.',
+            'Explore decks from the community.',
+            'Find something interesting and start studying.',
+            'Browse All Decks',
+        )
+        for text in expected_copy:
+            self.assertIn(text, page)
+
+        self.assertLess(page.index('Popular Topics'), page.index('Learning Modes'))
+        self.assertLess(page.index('Learning Modes'), page.index('Study Mode'))
+        self.assertNotIn('A redesigned learning hub', page)
+        self.assertNotIn('Live public decks worth exploring.', page)
+
     def test_public_deck_legacy_url_redirects_to_canonical_title_id_url(self):
         owner_id = self.user_session('url-owner')
         with self.app.app_context():
