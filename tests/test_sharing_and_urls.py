@@ -554,7 +554,7 @@ class SharingAndUrlTests(CardsTestCase):
             'Build and organize your own study decks',
             'Find public decks and quizzes by topic',
             'Study, play, quiz, and track your progress',
-            'Find a deck by subject.',
+            'Explore the most popular tags.',
             'Choose how you want to practice.',
             'Explore decks from the community.',
             'Find something interesting and start studying.',
@@ -571,6 +571,7 @@ class SharingAndUrlTests(CardsTestCase):
         self.assertLess(page.index('home-modes-panel'), page.index('Study Mode'))
         self.assertNotIn('Popular Topics', page)
         self.assertNotIn('Learning Modes', page)
+        self.assertNotIn('Find a deck by subject.', page)
         self.assertNotIn('A redesigned learning hub', page)
         self.assertNotIn('Live public decks worth exploring.', page)
 
