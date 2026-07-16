@@ -2245,7 +2245,20 @@ def check_public_search_index(limit=100):
 
 def _fallback_search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, offset=0):
     search_term = f"%{query_text}%"
-    deck_query = _deck_query_with_card_counts().filter(
+    rating_count = db.session.query(
+        func.count(DeckRating.user_id),
+    ).filter(
+        DeckRating.deck_id == Deck.deck_id,
+    ).correlate(Deck).scalar_subquery()
+    average_rating = db.session.query(
+        func.avg(DeckRating.rating),
+    ).filter(
+        DeckRating.deck_id == Deck.deck_id,
+    ).correlate(Deck).scalar_subquery()
+    deck_query = _deck_query_with_card_counts().add_columns(
+        rating_count.label('rating_count'),
+        average_rating.label('average_rating'),
+    ).filter(
         Deck.is_public == True,
         db.or_(Deck.description.ilike(search_term), Deck.detailed_description.ilike(search_term), Deck.tags.ilike(search_term)),
     ).order_by(Deck.deck_id.asc())
@@ -2266,7 +2279,26 @@ def _fallback_search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, offset=
             quiz_rows = quiz_query.limit(rows_remaining).all()
     else:
         quiz_rows = quiz_query.limit(rows_remaining).offset(offset - deck_count).all()
-    return _attach_deck_card_counts(deck_rows), _attach_quiz_question_counts(quiz_rows), total > offset + limit
+    for deck, card_count, deck_rating_count, deck_average_rating in deck_rows:
+        deck.card_count = int(card_count or 0)
+        deck.rating_count = int(deck_rating_count or 0)
+        deck.average_rating = round(float(deck_average_rating or 0), 1)
+    return (
+        [deck for deck, _card_count, _rating_count, _average_rating in deck_rows],
+        _attach_quiz_question_counts(quiz_rows),
+        total > offset + limit,
+    )
+
+
+def _public_deck_favorite_ids(deck_ids, user_id):
+    if user_id is None or not deck_ids:
+        return set()
+    return {
+        deck_id for deck_id, in db.session.query(DeckFavorite.deck_id).filter(
+            DeckFavorite.user_id == user_id,
+            DeckFavorite.deck_id.in_(deck_ids),
+        ).all()
+    }
 
 
 def get_public_deck_preview_state(deck_ids, user_id=None):
@@ -2301,19 +2333,25 @@ def get_public_deck_preview_state(deck_ids, user_id=None):
         for deck_id, card_count, rating_count, average_rating in summary_rows
     }
 
-    if user_id is not None:
-        for deck_id, in db.session.query(DeckFavorite.deck_id).filter(
-            DeckFavorite.user_id == user_id,
-            DeckFavorite.deck_id.in_(deck_ids),
-        ).all():
-            if deck_id in state:
-                state[deck_id]['is_favorite'] = True
+    for deck_id in _public_deck_favorite_ids(deck_ids, user_id):
+        if deck_id in state:
+            state[deck_id]['is_favorite'] = True
 
     return state
 
 
 def _enrich_public_deck_community_state(deck_results, user_id=None):
     """Attach shared preview state to serialized public search results."""
+    if deck_results and all(
+        'rating_count' in deck and 'average_rating' in deck for deck in deck_results
+    ):
+        favorite_ids = _public_deck_favorite_ids(
+            [deck['deck_id'] for deck in deck_results], user_id,
+        )
+        for deck in deck_results:
+            deck['is_favorite'] = deck['deck_id'] in favorite_ids
+        return
+
     state = get_public_deck_preview_state(
         (deck['deck_id'] for deck in deck_results), user_id,
     )
@@ -2511,6 +2549,8 @@ def search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, page=1, user_id=N
             'sortable': deck.sortable,
             'is_public': deck.is_public,
             'card_count': int(getattr(deck, 'card_count', 0) or 0),
+            'rating_count': int(getattr(deck, 'rating_count', 0) or 0),
+            'average_rating': float(getattr(deck, 'average_rating', 0) or 0),
             'score': 0.0,
             'match_reasons': ['fallback match'],
         } for deck in decks]
