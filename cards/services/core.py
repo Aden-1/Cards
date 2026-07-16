@@ -35,6 +35,8 @@ from ..models import (
     CuratedCollectionDeck,
     Deck,
     DeckCollaborator,
+    DeckFavorite,
+    DeckRating,
     DeckShareLink,
     DeckTag,
     MatchPairProgress,
@@ -2267,6 +2269,64 @@ def _fallback_search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, offset=
     return _attach_deck_card_counts(deck_rows), _attach_quiz_question_counts(quiz_rows), total > offset + limit
 
 
+def get_public_deck_preview_state(deck_ids, user_id=None):
+    """Return card, rating, and bookmark state with a fixed query count."""
+    deck_ids = list(dict.fromkeys(
+        int(deck_id) for deck_id in deck_ids if deck_id is not None
+    ))
+    if not deck_ids:
+        return {}
+
+    summary_rows = db.session.query(
+        Deck.deck_id,
+        func.count(func.distinct(Card.card_id)),
+        func.count(func.distinct(DeckRating.user_id)),
+        func.avg(DeckRating.rating),
+    ).outerjoin(
+        Card, Card.deck_id == Deck.deck_id,
+    ).outerjoin(
+        DeckRating, DeckRating.deck_id == Deck.deck_id,
+    ).filter(
+        Deck.deck_id.in_(deck_ids),
+    ).group_by(
+        Deck.deck_id,
+    ).all()
+    state = {
+        deck_id: {
+            'card_count': int(card_count or 0),
+            'rating_count': int(rating_count or 0),
+            'average_rating': round(float(average_rating or 0), 1),
+            'is_favorite': False,
+        }
+        for deck_id, card_count, rating_count, average_rating in summary_rows
+    }
+
+    if user_id is not None:
+        for deck_id, in db.session.query(DeckFavorite.deck_id).filter(
+            DeckFavorite.user_id == user_id,
+            DeckFavorite.deck_id.in_(deck_ids),
+        ).all():
+            if deck_id in state:
+                state[deck_id]['is_favorite'] = True
+
+    return state
+
+
+def _enrich_public_deck_community_state(deck_results, user_id=None):
+    """Attach shared preview state to serialized public search results."""
+    state = get_public_deck_preview_state(
+        (deck['deck_id'] for deck in deck_results), user_id,
+    )
+
+    for deck in deck_results:
+        deck.update(state.get(deck['deck_id'], {
+            'card_count': int(deck.get('card_count') or 0),
+            'rating_count': 0,
+            'average_rating': 0.0,
+            'is_favorite': False,
+        }))
+
+
 def search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, page=1, user_id=None):
     query_text = (query_text or '').strip()
     page, limit = _bounded_page(page, limit)
@@ -2467,6 +2527,8 @@ def search_public_content(query_text, limit=DEFAULT_PAGE_SIZE, page=1, user_id=N
             'match_reasons': ['fallback match'],
         } for quiz in quizzes]
         has_exact_match = True if (deck_results or quiz_results) else False
+
+    _enrich_public_deck_community_state(deck_results, user_id)
 
     return {
         'decks': deck_results,

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_public_deck_preview.html" import public_deck_preview with context %}
 {% block title %}Cards | {{ creator.username }}{% endblock %}
 {% block content %}
 {% macro profile_pages(pagination, parameter, other_page, label) %}
@@ -16,7 +17,7 @@
 <section class="section-stack">
     <article class="surface p-4">
         <h2 class="h3">Public Decks</h2>
-        <div class="public-grid mt-3">{% for deck in decks %}<article class="public-card"><h3 class="h5">{{ deck.description }}</h3><p class="small-muted">{{ deck.tags or 'Study deck' }}</p><a class="btn-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View deck</a></article>{% else %}<p class="muted-copy">No public decks yet.</p>{% endfor %}</div>
+        <div class="public-grid mt-3">{% for deck in decks %}{{ public_deck_preview(deck, deck_preview_state.get(deck.deck_id, {})) }}{% else %}<p class="muted-copy">No public decks yet.</p>{% endfor %}</div>
         {{ profile_pages(deck_page, 'deck_page', {'name': 'quiz_page', 'page': quiz_page.page}, 'Decks') }}
     </article>
     <article class="surface p-4">

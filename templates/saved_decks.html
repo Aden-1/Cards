@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_pagination.html" import controls %}
+{% from "_public_deck_preview.html" import public_deck_preview with context %}
 
 {% block title %}Cards | Saved Decks{% endblock %}
 
@@ -22,35 +23,12 @@
     {% if saved_decks %}
     <div class="deck-grid stagger">
         {% for item in saved_decks %}
-        <article class="deck-card">
-            <div class="panel-header">
-                <span class="status-chip public">Saved</span>
-                {% if item.deck.sortable %}<span class="score-chip">Sortable</span>{% endif %}
-            </div>
-            <h3 class="h4 mb-0">{{ item.deck.description }}</h3>
-            {% if item.deck.detailed_description %}<p class="muted-copy mb-0">{{ item.deck.detailed_description[:160] }}{{ '…' if item.deck.detailed_description|length > 160 else '' }}</p>{% endif %}
-            {% if item.deck.tags %}
-            <div class="card-rail">
-                {% for tag in item.deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}
-            </div>
-            {% endif %}
-            <p class="small-muted mb-0">Saved {{ item.favorite.created_at }}</p>
-            <div class="deck-actions mt-auto">
-                <a class="btn-primary-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(item.deck)) }}">View</a>
-                <a class="btn-surface" href="{{ url_for('view', deck_id=item.deck.deck_id) }}">Study</a>
-                <a class="btn-surface" href="{{ url_for('match', deck_id=item.deck.deck_id) }}">Match</a>
-                <form method="post" action="{{ url_for('toggle_deck_favorite') }}">
-                    <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
-                    <input type="hidden" name="deck_id" value="{{ item.deck.deck_id }}">
-                    <button class="btn-ghost-surface" type="submit">Remove</button>
-                </form>
-            </div>
-        </article>
+        {{ public_deck_preview(item.deck, deck_preview_state.get(item.deck.deck_id, {})) }}
         {% endfor %}
     </div>
     {{ controls(pagination, pagination_endpoint, pagination_args) }}
     {% else %}
-    <div class="empty-card">You have no saved public decks yet. Bookmark one from its public detail page.</div>
+    <div class="empty-card">You have no saved public decks yet. Bookmark one from any public deck preview.</div>
     {% endif %}
 </section>
 {% endblock %}

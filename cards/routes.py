@@ -1807,13 +1807,17 @@ def _accessible_answer(answer_id, user_id):
 # Page routes.
 # Render the home page.
 def index():
-    from services import get_homepage_public_data
+    from services import get_homepage_public_data, get_public_deck_preview_state
 
     homepage_data = get_homepage_public_data(featured_limit=3, tag_limit=5)
+    featured_decks = homepage_data['featured_decks']
     return render_template(
         'index.html',
-        featured_decks=homepage_data['featured_decks'],
+        featured_decks=featured_decks,
         featured_tags=homepage_data['featured_tags'],
+        deck_preview_state=get_public_deck_preview_state(
+            (deck['deck_id'] for deck in featured_decks), _current_user_id(),
+        ),
     )
 
 
@@ -1829,6 +1833,7 @@ def dashboard():
 def saved_decks_route():
     """List the signed-in user's currently public bookmarked decks."""
     from models import Deck, DeckFavorite
+    from services import get_public_deck_preview_state
 
     page = _requested_page()
     per_page = _requested_page_size()
@@ -1854,6 +1859,9 @@ def saved_decks_route():
     }
     return render_template(
         'saved_decks.html', saved_decks=saved_decks, pagination=pagination,
+        deck_preview_state=get_public_deck_preview_state(
+            (item['deck'].deck_id for item in saved_decks), _current_user_id(),
+        ),
         **_pagination_context('saved_decks'),
     )
 
@@ -2079,6 +2087,7 @@ def move_collection_deck_route():
 
 def public_collection_route(collection_id):
     from models import CuratedCollection, CuratedCollectionDeck
+    from services import get_public_deck_preview_state
 
     collection = CuratedCollection.query.options(
         selectinload(CuratedCollection.entries).joinedload(CuratedCollectionDeck.deck),
@@ -2095,6 +2104,10 @@ def public_collection_route(collection_id):
     return render_template(
         'public_collection.html', collection=collection,
         entries=visible_entries, is_owner=is_owner,
+        deck_preview_state=get_public_deck_preview_state(
+            (entry.deck_id for entry in visible_entries if entry.deck.is_public),
+            user_id,
+        ),
     )
 
 
@@ -3401,6 +3414,7 @@ def report_deck_route():
 
 def creator_profile_route(username):
     from models import CuratedCollection, Deck, Quiz, User
+    from services import get_public_deck_preview_state
     try:
         normalized_username = canonical_username(username)
     except ValueError:
@@ -3426,6 +3440,9 @@ def creator_profile_route(username):
         'creator_profile.html', creator=creator,
         decks=deck_page['items'], quizzes=quiz_page['items'],
         collections=collections, deck_page=deck_page, quiz_page=quiz_page,
+        deck_preview_state=get_public_deck_preview_state(
+            (deck.deck_id for deck in deck_page['items']), _current_user_id(),
+        ),
     )
 
 

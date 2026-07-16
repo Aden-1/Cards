@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_public_deck_preview.html" import public_deck_preview with context %}
 
 {% block title %}Cards | {{ collection.title }}{% endblock %}
 
@@ -18,6 +19,9 @@
     {% if entries %}
     <div class="deck-grid stagger">
         {% for entry in entries %}
+        {% if entry.deck.is_public %}
+        {{ public_deck_preview(entry.deck, deck_preview_state.get(entry.deck_id, {})) }}
+        {% else %}
         <article class="deck-card">
             <div class="panel-header"><span class="score-chip">{{ entry.position }}</span><span class="status-chip {{ 'public' if entry.deck.is_public else 'private' }}">{{ 'Public' if entry.deck.is_public else 'Private' }}</span></div>
             <h3 class="h4 mb-0">{{ entry.deck.description }}</h3>
@@ -27,6 +31,7 @@
                 <a class="btn-surface" href="{{ url_for('match', deck_id=entry.deck.deck_id) }}">Match</a>
             </div>
         </article>
+        {% endif %}
         {% endfor %}
     </div>
     {% else %}

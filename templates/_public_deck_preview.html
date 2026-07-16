@@ -1,0 +1,72 @@
+{% macro public_deck_preview(deck, preview) %}
+{% set is_favorite = preview.is_favorite|default(false) %}
+{% set rating_count = preview.rating_count|default(0) %}
+{% set average_rating = preview.average_rating|default(0.0) %}
+{% set card_count = preview.card_count|default(0) %}
+<article class="public-card public-deck-preview-card">
+    <div class="public-deck-preview-row public-deck-preview-heading">
+        <div class="public-deck-preview-title-group">
+            {% if current_user %}
+            <form method="post" action="{{ url_for('toggle_deck_favorite') }}" class="bookmark-form">
+                <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+                <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+                <button
+                    class="bookmark-icon-button{{ ' is-bookmarked' if is_favorite else '' }}"
+                    type="submit"
+                    title="{{ 'Remove this deck from your bookmarks' if is_favorite else 'Bookmark this deck' }}"
+                    aria-label="{{ 'Remove this deck from your bookmarks' if is_favorite else 'Bookmark this deck' }}"
+                    data-preserve-submit-label="true"
+                >
+                    <svg class="bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M6.75 3.25h10.5a1 1 0 0 1 1 1v16.1a.4.4 0 0 1-.64.32L12 16.46l-5.61 4.21a.4.4 0 0 1-.64-.32V4.25a1 1 0 0 1 1-1Z"/>
+                    </svg>
+                </button>
+            </form>
+            {% else %}
+            <a
+                class="bookmark-icon-button"
+                href="{{ url_for('login', next=request.full_path) }}"
+                title="Log in to bookmark this deck"
+                aria-label="Log in to bookmark this deck"
+            >
+                <svg class="bookmark-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M6.75 3.25h10.5a1 1 0 0 1 1 1v16.1a.4.4 0 0 1-.64.32L12 16.46l-5.61 4.21a.4.4 0 0 1-.64-.32V4.25a1 1 0 0 1 1-1Z"/>
+                </svg>
+            </a>
+            {% endif %}
+            <h3 class="public-deck-preview-title">{{ deck.description }}</h3>
+        </div>
+        <span class="status-chip public">Public</span>
+    </div>
+
+    <div class="public-deck-preview-row public-deck-preview-facts">
+        <span class="public-deck-preview-rating" aria-label="Deck rating">
+            <span class="preview-rating-star" aria-hidden="true">★</span>
+            {% if rating_count %}
+            <strong>{{ average_rating }} / 5</strong>
+            <span class="small-muted">({{ rating_count }})</span>
+            {% else %}
+            <strong>Not rated</strong>
+            {% endif %}
+        </span>
+        <span class="public-deck-preview-count"><strong>{{ card_count }}</strong> card{{ '' if card_count == 1 else 's' }}</span>
+    </div>
+
+    <div class="public-deck-preview-row public-deck-preview-description">
+        <p class="muted-copy mb-0">{{ deck.detailed_description or 'No description has been added for this deck.' }}</p>
+    </div>
+
+    <div class="public-deck-preview-row public-deck-preview-actions">
+        <a class="btn-primary-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View</a>
+        {% if current_user %}
+        <form method="post" action="{{ url_for('copy_public_deck') }}">
+            <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
+            <input type="hidden" name="deck_id" value="{{ deck.deck_id }}">
+            <button class="btn-surface" type="submit">Copy Deck</button>
+        </form>
+        {% else %}
+        <a class="btn-surface" href="{{ url_for('login', next=request.full_path) }}">Copy Deck</a>
+        {% endif %}
+    </div>
+</article>
+{% endmacro %}

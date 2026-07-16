@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_pagination.html" import controls %}
+{% from "_public_deck_preview.html" import public_deck_preview with context %}
 
 {% block title %}Cards | Search{% endblock %}
 
@@ -26,28 +27,7 @@
         {% if decks %}
         <div class="public-grid stagger">
             {% for deck in decks %}
-            <article class="public-card">
-                <div class="panel-header">
-                    <h3 class="h5 mb-0">{{ deck.description }}</h3>
-                    <span class="status-chip public">Public</span>
-                </div>
-                {% if deck.is_owned %}<div class="status-chip success">You own this deck</div>{% endif %}
-                {% if deck.tags %}
-                <div class="card-rail">
-                    {% for tag in deck.tags.split(',') %}{% if tag.strip() %}<a class="tag-chip" href="{{ url_for('search', q=tag.strip()) }}">{{ tag.strip() }}</a>{% endif %}{% endfor %}
-                </div>
-                {% endif %}
-                {% if deck.detailed_description %}<p class="muted-copy mb-0">{{ deck.detailed_description[:100] }}{{ '...' if deck.detailed_description|length > 100 else '' }}</p>{% endif %}
-                <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
-                <div class="deck-actions mt-auto">
-                    <a class="btn-primary-surface" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View</a>
-                    {% if current_user and deck.is_owned %}
-                    <a class="btn-surface" href="{{ url_for('edit', deck_id=deck.deck_id) }}">Edit</a>
-                    {% else %}
-                    <a class="btn-surface" href="{{ url_for('match', deck_id=deck.deck_id) }}">Match</a>
-                    {% endif %}
-                </div>
-            </article>
+            {{ public_deck_preview(deck, deck) }}
             {% endfor %}
         </div>
         {% else %}

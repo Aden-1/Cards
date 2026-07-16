@@ -91,6 +91,86 @@ class SharingAndUrlTests(CardsTestCase):
                 db.session.get(DeckRating, (viewer_id, deck_id)).rating, 4,
             )
 
+    def test_public_deck_previews_share_four_row_layout_and_copy_action(self):
+        owner_id = self.user_session('preview-layout-owner')
+        with self.app.app_context():
+            deck = create_deck(
+                owner_id, 'Universal Preview Layout',
+                detailed_description='The shared public preview description.',
+                is_public=True,
+            )
+            add_card(deck.deck_id, 'First question', ['First answer'])
+            add_card(deck.deck_id, 'Second question', ['Second answer'])
+            deck = db.session.get(Deck, deck.deck_id)
+            deck.is_featured = True
+            viewer = create_user('preview-layout-viewer', 'password12345')
+            collection = CuratedCollection(
+                owned_by=owner_id, title='Preview Collection', is_public=True,
+            )
+            db.session.add(collection)
+            db.session.flush()
+            db.session.add_all([
+                CuratedCollectionDeck(
+                    collection_id=collection.collection_id,
+                    deck_id=deck.deck_id,
+                    position=1,
+                ),
+                DeckFavorite(user_id=viewer.user_id, deck_id=deck.deck_id),
+                DeckRating(user_id=owner_id, deck_id=deck.deck_id, rating=5),
+                DeckRating(user_id=viewer.user_id, deck_id=deck.deck_id, rating=3),
+            ])
+            db.session.commit()
+            deck_id = deck.deck_id
+            viewer_id = viewer.user_id
+            collection_id = collection.collection_id
+
+        self._switch_user(viewer_id)
+        surfaces = (
+            '/search?q=Universal+Preview+Layout',
+            '/saved',
+            '/creators/preview-layout-owner',
+            f'/collections/{collection_id}',
+            '/',
+        )
+        for path in surfaces:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                page = response.get_data(as_text=True)
+                start = page.index(
+                    '<article class="public-card public-deck-preview-card">',
+                )
+                end = page.index('</article>', start)
+                preview = page[start:end]
+                rows = [
+                    'public-deck-preview-heading',
+                    'public-deck-preview-facts',
+                    'public-deck-preview-description',
+                    'public-deck-preview-actions',
+                ]
+                positions = [preview.index(row) for row in rows]
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn('bookmark-icon-button is-bookmarked', preview)
+                self.assertIn('Universal Preview Layout', preview)
+                self.assertIn('status-chip public', preview)
+                self.assertIn('<strong>4.0 / 5</strong>', preview)
+                self.assertIn('<strong>2</strong> cards', preview)
+                self.assertIn('The shared public preview description.', preview)
+                self.assertIn('>View<', preview)
+                self.assertIn('action="/copy_public_deck"', preview)
+                self.assertIn('>Copy Deck<', preview)
+                self.assertNotIn('>Match<', preview)
+
+        copied = self.client.post(
+            '/copy_public_deck', data={'deck_id': deck_id}, headers=self.csrf(),
+        )
+        self.assertEqual(copied.status_code, 302)
+        with self.app.app_context():
+            self.assertIsNotNone(Deck.query.filter_by(
+                owned_by=viewer_id,
+                description='Universal Preview Layout (Copy)',
+            ).one_or_none())
+
     def test_bulk_routes_enforce_source_and_destination_edit_access(self):
         owner_id = self.user_session('bulk-route-owner')
         with self.app.app_context():

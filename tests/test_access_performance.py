@@ -3,10 +3,65 @@
 # The shared fixture intentionally exports the production test dependency surface.
 # ruff: noqa: F403, F405
 from tests.production_support import *
-from models import QuizFavorite
+from models import DeckFavorite, DeckRating, QuizFavorite
 
 
 class AccessPerformanceTests(ProductionTestCase):
+    def test_public_deck_preview_state_uses_constant_query_budget(self):
+        with cards_app.app.app_context():
+            owner = cards_app.create_user('preview_state_owner', 'password12345')
+            reader = cards_app.create_user('preview_state_reader', 'password12345')
+            decks = [
+                Deck(
+                    owned_by=owner.user_id,
+                    description=f'Preview State {index:02d}',
+                    is_public=True,
+                )
+                for index in range(20)
+            ]
+            db.session.add_all(decks)
+            db.session.flush()
+            for deck in decks:
+                db.session.add(Card(
+                    deck_id=deck.deck_id, question='Question', position=1,
+                ))
+                db.session.add_all([
+                    DeckRating(
+                        user_id=owner.user_id, deck_id=deck.deck_id, rating=5,
+                    ),
+                    DeckRating(
+                        user_id=reader.user_id, deck_id=deck.deck_id, rating=3,
+                    ),
+                    DeckFavorite(user_id=reader.user_id, deck_id=deck.deck_id),
+                ])
+            db.session.commit()
+            deck_ids = [deck.deck_id for deck in decks]
+            reader_id = reader.user_id
+            db.session.remove()
+
+            statements = []
+
+            def record_statement(
+                _conn, _cursor, statement, _parameters, _context, _executemany,
+            ):
+                if statement.lstrip().upper().startswith('SELECT '):
+                    statements.append(statement)
+
+            event.listen(db.engine, 'before_cursor_execute', record_statement)
+            try:
+                state = cards_app.get_public_deck_preview_state(
+                    deck_ids, reader_id,
+                )
+            finally:
+                event.remove(db.engine, 'before_cursor_execute', record_statement)
+
+        self.assertEqual(len(state), 20)
+        self.assertLessEqual(len(statements), 2)
+        self.assertTrue(all(item['card_count'] == 1 for item in state.values()))
+        self.assertTrue(all(item['average_rating'] == 4.0 for item in state.values()))
+        self.assertTrue(all(item['rating_count'] == 2 for item in state.values()))
+        self.assertTrue(all(item['is_favorite'] for item in state.values()))
+
     def test_saved_quiz_question_counts_use_a_constant_query_budget(self):
         with cards_app.app.app_context():
             owner = cards_app.create_user('saved_quiz_owner', 'password12345')

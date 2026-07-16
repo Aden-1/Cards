@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_public_deck_preview.html" import public_deck_preview with context %}
 
 {% block title %}Cards | Discover{% endblock %}
 
@@ -55,15 +56,7 @@
     <div class="deck-grid stagger mt-4" id="featuredDecks">
         {% if featured_decks %}
             {% for deck in featured_decks %}
-            <article class="deck-card">
-                <span class="status-chip public">Featured</span>
-                <h3 class="h4 mb-0">{{ deck.description }}</h3>
-                <p class="muted-copy mb-0">{{ deck.detailed_description or 'Public study deck ready to review.' }}</p>
-                <div class="score-chip">{{ deck.card_count }} card{{ '' if deck.card_count == 1 else 's' }}</div>
-                <div class="deck-actions mt-auto">
-                    <a class="btn-primary-surface home-cta" href="{{ url_for('public_deck_detail', deck_slug=deck_url_slug(deck)) }}">View Deck</a>
-                </div>
-            </article>
+            {{ public_deck_preview(deck, deck_preview_state.get(deck.deck_id, {})) }}
             {% endfor %}
         {% else %}
             <article class="deck-card">
