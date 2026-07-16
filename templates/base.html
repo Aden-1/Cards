@@ -34,11 +34,14 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="{{ url_for('view') }}">Study Cards</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('master') if current_user else url_for('login', next=url_for('master')) }}">Master Deck</a></li>
-                            {% if current_user %}<li><a class="dropdown-item" href="{{ url_for('review_queue') }}">Due Review Queue</a></li>{% endif %}
                             <li><a class="dropdown-item" href="{{ url_for('match') }}">Matching Game</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('reorder') }}">Reorder Game</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('quiz') }}">Take a Quiz</a></li>
-                            {% if current_user %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="{{ url_for('dashboard') }}">Mastery Dashboard</a></li>{% endif %}
+                            {% if current_user %}
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard') }}">Mastery Dashboard</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('review_queue') }}">Review Queue</a></li>
+                            {% endif %}
                         </ul>
                     </div>
                     {% if current_user %}

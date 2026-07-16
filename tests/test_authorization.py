@@ -37,6 +37,23 @@ class AuthorizationTests(CardsTestCase):
         self.assertLess(moderation_reports, logout_divider)
         self.assertLess(logout_divider, logout)
 
+    def test_review_queue_is_grouped_with_mastery_dashboard(self):
+        self._session_for('learn-menu-user', 'standard')
+
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+
+        quiz = page.index('Take a Quiz')
+        dashboard = page.index('Mastery Dashboard')
+        review_queue = page.index('Review Queue')
+        divider = page.index('<hr class="dropdown-divider">', quiz)
+
+        self.assertLess(quiz, divider)
+        self.assertLess(divider, dashboard)
+        self.assertLess(dashboard, review_queue)
+        self.assertNotIn('Due Review Queue', page)
+
     def test_moderator_can_only_unpublish_public_content(self):
         with self.app.app_context():
             owner = create_user('owner', 'password12345')
