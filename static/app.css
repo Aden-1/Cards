@@ -440,7 +440,7 @@ summary.btn-summary.primary {
 }
 
 .page-title.home-section-title {
-  font-size: clamp(1.35rem, 2vw, 1.65rem);
+  font-size: clamp(1.7rem, 2.5vw, 2.05rem);
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
