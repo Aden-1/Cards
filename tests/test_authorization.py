@@ -29,13 +29,15 @@ class AuthorizationTests(CardsTestCase):
         admin_users = page.index('Admin Users')
         moderation_reports = page.index('Moderation Reports')
         logout_divider = page.index('<hr class="dropdown-divider">', moderation_reports)
+        theme_toggle = page.index('Dark Mode')
         logout = page.index('Log Out')
 
-        self.assertLess(page.index('Dark Mode'), divider)
+        self.assertLess(page.index('Quiz History'), divider)
         self.assertLess(divider, admin_users)
         self.assertLess(admin_users, moderation_reports)
         self.assertLess(moderation_reports, logout_divider)
-        self.assertLess(logout_divider, logout)
+        self.assertLess(logout_divider, theme_toggle)
+        self.assertLess(theme_toggle, logout)
 
     def test_review_queue_is_grouped_with_mastery_dashboard(self):
         self._session_for('learn-menu-user', 'standard')

@@ -551,6 +551,7 @@ summary.btn-summary.primary {
   border-radius: 12px;
   box-shadow: none;
   padding: 0.65rem 0.8rem;
+  font-size: inherit;
   text-align: left;
 }
 

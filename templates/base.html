@@ -68,7 +68,6 @@
                             <li><a class="dropdown-item" href="{{ url_for('saved_quizzes') }}">Saved Quizzes</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('collections') }}">Collections</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('quiz_history') }}">Quiz History</a></li>
-                            <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
                             {% if current_user.role in ('moderator', 'admin') %}
                             <li><hr class="dropdown-divider account-admin-divider"></li>
                             {% endif %}
@@ -82,6 +81,7 @@
                             <li><a class="dropdown-item" href="{{ url_for('moderation_quiz_reports') }}">Quiz Reports</a></li>
                             {% endif %}
                             <li><hr class="dropdown-divider"></li>
+                            <li><button id="themeToggle" class="dropdown-item theme-toggle account-theme-toggle" type="button">Dark Mode</button></li>
                             <li>
                                 <form method="post" action="{{ url_for('logout') }}">
                                     <input type="hidden" name="csrf_token" value="{{ ensure_csrf_token() }}">
